@@ -1,0 +1,16 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Generated, reproducible via scripts/make_corpus.py
+/corpus/
+
+# Trained model artifacts and compressed outputs
+*.model
+*.cz
+
+# Virtualenvs
+.venv/
+venv/
