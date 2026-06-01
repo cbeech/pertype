@@ -21,6 +21,7 @@ def test_save_load_roundtrip():
     assert m2.type_id == m.type_id
     assert m2.version == m.version
     assert m2.use_lz == m.use_lz
+    assert m2.blob == m.blob
     assert m2.dictionary.patterns == m.dictionary.patterns
     assert m2.main_model.freqs == m.main_model.freqs
     assert m2.dist_model.freqs == m.dist_model.freqs

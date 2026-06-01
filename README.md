@@ -14,10 +14,14 @@ Two intuitions, realized honestly:
   the tree as a tested building block, but the pipeline uses arithmetic coding,
   which spends fractional bits and tracks the true entropy more closely.)
 
-On top of the cross-file dictionary, the codec also uses **in-file LZ77
-back-references** (repeated lines/rows within a single file). Training decides
-*per file type* whether LZ actually pays off and records the choice in the model
-(`use_lz`), so a type already covered by the dictionary never pays for it.
+On top of the cross-file dictionary, the codec also uses **LZ77 back-references**.
+When LZ is enabled, training prepends a learned **blob** (a contiguous slice of
+corpus content) to each file's history, so matches can reach into arbitrary
+substrings of trained content — the way zstd uses a dictionary — as well as
+in-file repetition. Training decides *per file type* whether LZ+blob pays off,
+**deciding on a held-out validation slice** so the blob can't overfit the choice;
+the result is recorded in the model (`use_lz`). A type already covered by the
+atomic dictionary (e.g. logs) keeps its efficient dict-only encoding.
 
 The twist that beats general-purpose tools: the model is **trained per file type
 and shipped separately**, not embedded in every compressed file the way gzip is.
@@ -29,9 +33,9 @@ HTML pages).
 
 ```
 train(corpus)                         compress(file, model)
-  mine common patterns  ─┐              tokenize: longest of {dict match,
-  price dict-only vs LZ  ├─ model         in-file LZ match} else literal
-  build Huffman tables  ─┘                └─ Huffman-encode the token stream
+  mine patterns + blob  ─┐              tokenize: longest of {dict match,
+  price dict-only vs     ├─ model         LZ match into blob/history} else literal
+    LZ+blob on val set  ─┘                └─ arithmetic-code the token stream
   pick cheaper mode                          └─ container = header + bitstream
 ```
 
@@ -93,42 +97,44 @@ input, and bytes never seen in training — proving the lossless guarantee.
 
 Ratio = raw ÷ compressed (higher is better).
 
-| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | LZ mode |
+| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | LZ+blob |
 |------|---------|----------|----------------|----------|---------|
-| json | 1.98x | 2.02x | 5.46x | **5.38x** | off |
+| json | 1.98x | 2.02x | 5.46x | **6.03x** ✅ | on |
 | logs | 3.80x | 3.99x | 5.95x | **5.63x** | off |
-| html | 2.72x | 2.70x | 10.70x | **7.02x** | on |
+| html | 2.72x | 2.70x | 10.70x | **10.16x** | on |
 
 Takeaways:
 
-- We **beat plain gzip/zstd by 1.4–2.6×** on every type — that's the trained
+- We **beat plain gzip/zstd by 1.4–3.7×** on every type — that's the trained
   per-type dictionary doing its job.
-- We're **within ~1.5% of zstd's own trained dictionary on JSON** (the real
-  apples-to-apples competitor), close on logs, and behind it on html.
-- In-file LZ is **learned per type**: it lifts html while json and logs correctly
-  opt out, so adding it never regresses a type.
-- Switching Huffman → **arithmetic coding** gained ~1–2.5%; admitting **long
-  dictionary patterns** (up to 256 B) lifted every type, most of all logs (long
-  repeated request lines / user-agents now captured whole).
+- On **JSON we now beat zstd's own trained dictionary** (6.03x vs 5.46x), and on
+  **html we're within ~5%** (10.16x vs 10.70x) — both thanks to the contiguous
+  LZ blob letting matches reach arbitrary trained substrings.
+- The blob is **learned per type on a validation slice**: json and html adopt it
+  (genuine wins), logs declines it and keeps dict-only — so it never regresses a
+  type even though it's a big win for two of them.
+- Earlier steps compounded: long dictionary patterns lifted logs most; arithmetic
+  coding added ~1–2.5%; lazy parsing helped html.
 
-Model size is reported separately by the benchmark because it ships once; the
-per-file numbers above are the amortized cost.
+The flip side: the blob and long-pattern dictionary grow the **model** (json
+~187 KB, html ~367 KB). It ships once and is amortized across all files of the
+type, so the per-file numbers above are the real cost in the intended
+many-files-of-a-known-type scenario.
 
 ## Roadmap
 
-The remaining gap to `zstd +dict` is largest on html, where zstd's 112 KB
-contiguous COVER-trained dictionary still captures more than our atomic patterns:
+We now beat or nearly match `zstd +dict` on all three types. Remaining ideas, in
+rough order of expected payoff:
 
-- A **contiguous-blob dictionary** (any substring referenceable via LZ into a
-  preset window) instead of atomic whole-unit patterns — the most promising path
-  to close the html gap, though it must not regress the very efficient one-symbol
-  dictionary references that make json/logs strong.
-- **Cost-optimal parsing** (full shortest-path over the token graph) beyond the
-  one-byte lazy lookahead already implemented.
+- **Cost-optimal parsing** (shortest-path over the token graph) beyond the
+  one-byte lazy lookahead — should help html close the last ~5%.
+- A smarter **blob builder** (representative-segment selection à la zstd COVER,
+  most-useful content nearest the data) rather than a raw corpus slice; may also
+  let logs benefit.
 - **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
   coder, for text.
 - Port the hot path to Rust for production speed.
 
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
-in-file LZ back-references with a learned per-type on/off decision, lazy match
-parsing, and an arithmetic entropy coder.
+LZ back-references with a contiguous trained blob, a validation-gated per-type
+LZ/blob decision, lazy match parsing, and an arithmetic entropy coder.

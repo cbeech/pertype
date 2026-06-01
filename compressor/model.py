@@ -4,9 +4,17 @@
   (256 + pattern_id), and LZ length slots (LEN_BASE + slot);
 * the **distance** model codes LZ distance slots.
 
-Both drive the arithmetic coder. Training also decides, per file type, whether
-in-file LZ back-references help: it tokenizes the corpus both with and without
-LZ, prices each under its own models, and keeps the cheaper mode in ``use_lz``.
+Both drive the arithmetic coder. When LZ is used, a trained **blob** (a
+contiguous slice of corpus content) is prepended to each file's history so LZ
+matches can reach into arbitrary substrings of it — the way zstd uses a
+dictionary. Atomic dictionary patterns remain (cheap one-symbol references), so
+types that don't benefit from LZ keep their efficient encoding untouched.
+
+Training decides, per file type, whether LZ (with the blob) helps. To stop the
+blob from overfitting that decision, the choice is made on a held-out
+**validation slice**: artifacts are built on the fit slice, both modes are priced
+on the validation slice, and the cheaper wins. Final artifacts are then rebuilt
+on all samples.
 
 Every symbol that could ever be emitted gets a baseline count, so any input is
 encodable later — that is what guarantees losslessness on unseen files.
@@ -19,8 +27,11 @@ from compressor.tokenizer import (
     MAX_DIST_SLOT, MAX_LEN_SLOT, MIN_MATCH, tokenize, value_slot,
 )
 
-MAGIC = b"CMP4"
-VERSION = 4
+MAGIC = b"CMP5"
+VERSION = 5
+
+# Size cap for the trained LZ blob (contiguous corpus content).
+BLOB_CAP = 1 << 15  # 32 KiB
 
 
 def main_alphabet_base(n_patterns):
@@ -61,58 +72,90 @@ def _baseline_counts(n_patterns, len_base):
     return main, dist
 
 
-def _build_candidate(samples, dictionary, use_lz):
-    """Tokenize the corpus in one mode, build models, return (cost_bits, payload)."""
-    n_patterns = len(dictionary.patterns)
-    len_base = main_alphabet_base(n_patterns)
-    main_counts, dist_counts = _baseline_counts(n_patterns, len_base)
+def _build_blob(samples, cap=BLOB_CAP):
+    """A contiguous slice of corpus content for LZ to reference into."""
+    blob = bytearray()
+    for s in samples:
+        if len(blob) >= cap:
+            break
+        blob += s
+    return bytes(blob[:cap])
 
-    tokenized = [tokenize(s, dictionary, use_lz=use_lz) for s in samples]
-    for tokens in tokenized:
-        for tok in tokens:
+
+def _artifacts(samples, use_lz, max_patterns, min_len, max_len):
+    """Build dictionary, blob, and frequency models for one mode."""
+    dictionary = mine_patterns(
+        samples, max_patterns=max_patterns, min_len=min_len, max_len=max_len
+    )
+    blob = _build_blob(samples) if use_lz else b""
+    len_base = main_alphabet_base(len(dictionary.patterns))
+    main_counts, dist_counts = _baseline_counts(len(dictionary.patterns), len_base)
+
+    for s in samples:
+        for tok in tokenize(s, dictionary, use_lz=use_lz, prefix=blob):
             for table, sym, _ in _token_symbols(tok, len_base):
                 (main_counts if table == "main" else dist_counts)[sym] += 1
 
-    main_model = FrequencyModel.from_counts(main_counts)
-    dist_model = FrequencyModel.from_counts(dist_counts)
+    return (
+        dictionary,
+        blob,
+        FrequencyModel.from_counts(main_counts),
+        FrequencyModel.from_counts(dist_counts),
+    )
 
-    # Price the corpus: arithmetic cost per symbol plus raw extra bits.
+
+def _price(samples, dictionary, blob, main_model, dist_model, use_lz):
+    """Total arithmetic-coded bits for ``samples`` under the given artifacts."""
+    len_base = main_alphabet_base(len(dictionary.patterns))
     bits = 0.0
-    for tokens in tokenized:
-        for tok in tokens:
+    for s in samples:
+        for tok in tokenize(s, dictionary, use_lz=use_lz, prefix=blob):
             for table, sym, extra in _token_symbols(tok, len_base):
                 model = main_model if table == "main" else dist_model
                 bits += model.cost_bits(sym) + extra
-    return bits, (use_lz, main_model, dist_model)
+    return bits
 
 
 def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     samples = list(samples)
-    dictionary = mine_patterns(
-        samples, max_patterns=max_patterns, min_len=min_len, max_len=max_len
+
+    # Decide use_lz on a held-out validation slice so the blob can't overfit it.
+    if len(samples) >= 5:
+        cut = max(1, len(samples) * 4 // 5)
+        fit, val = samples[:cut], samples[cut:]
+    else:
+        fit = val = samples
+
+    best_cost, chosen = None, False
+    for use_lz in (False, True):
+        d, b, mm, dm = _artifacts(fit, use_lz, max_patterns, min_len, max_len)
+        cost = _price(val, d, b, mm, dm, use_lz)
+        if best_cost is None or cost < best_cost:
+            best_cost, chosen = cost, use_lz
+
+    # Rebuild final artifacts on all samples in the chosen mode.
+    dictionary, blob, main_model, dist_model = _artifacts(
+        samples, chosen, max_patterns, min_len, max_len
     )
-
-    # Pick the cheaper of {dict-only, dict+LZ} for this file type.
-    candidates = [_build_candidate(samples, dictionary, use_lz) for use_lz in (False, True)]
-    _, (use_lz, main_model, dist_model) = min(candidates, key=lambda c: c[0])
-
     return Model(
         type_id=type_id,
         dictionary=dictionary,
+        blob=blob,
         main_model=main_model,
         dist_model=dist_model,
-        use_lz=use_lz,
+        use_lz=chosen,
     )
 
 
 class Model:
     def __init__(self, type_id, dictionary, main_model, dist_model, use_lz,
-                 version=VERSION):
+                 blob=b"", version=VERSION):
         self.type_id = type_id
         self.dictionary = dictionary
         self.main_model = main_model
         self.dist_model = dist_model
         self.use_lz = use_lz
+        self.blob = blob
         self.version = version
 
     @property
@@ -127,13 +170,14 @@ class Model:
         tid = self.type_id.encode("utf-8")
         parts += bytes([len(tid)])
         parts += tid
-        for blob in (
+        for chunk in (
             self.dictionary.serialize(),
             self.main_model.serialize(),
             self.dist_model.serialize(),
+            self.blob,
         ):
-            parts += len(blob).to_bytes(4, "big")
-            parts += blob
+            parts += len(chunk).to_bytes(4, "big")
+            parts += chunk
         return bytes(parts)
 
     @classmethod
@@ -151,7 +195,7 @@ class Model:
         pos += tid_len
 
         chunks = []
-        for _ in range(3):
+        for _ in range(4):
             n = int.from_bytes(blob[pos : pos + 4], "big")
             pos += 4
             chunks.append(blob[pos : pos + n])
@@ -162,6 +206,7 @@ class Model:
             dictionary=Dictionary.deserialize(chunks[0]),
             main_model=FrequencyModel.deserialize(chunks[1]),
             dist_model=FrequencyModel.deserialize(chunks[2]),
+            blob=chunks[3],
             use_lz=use_lz,
             version=version,
         )

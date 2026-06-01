@@ -71,7 +71,7 @@ def _decode_tokens(dec, model, n_tokens):
 
 
 def compress(data, model):
-    tokens = tokenize(data, model.dictionary, use_lz=model.use_lz)
+    tokens = tokenize(data, model.dictionary, use_lz=model.use_lz, prefix=model.blob)
     enc = ArithmeticEncoder()
     _encode_tokens(tokens, model, enc)
     enc.finish()
@@ -119,7 +119,7 @@ def decompress(blob, model):
     try:
         dec = ArithmeticDecoder(blob[pos:])
         tokens = _decode_tokens(dec, model, n_tokens)
-        data = detokenize(tokens, model.dictionary)
+        data = detokenize(tokens, model.dictionary, prefix=model.blob)
     except (EOFError, ValueError, IndexError) as exc:
         raise ValueError(f"corrupt payload: {exc}") from exc
 

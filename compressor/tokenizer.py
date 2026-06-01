@@ -14,7 +14,7 @@ both, which is what makes the codec competitive with zstd's trained dictionary.
 ``detokenize(tokenize(data, d), d) == data`` always holds.
 """
 
-WINDOW = 1 << 16          # how far back an LZ match may reach
+WINDOW = 1 << 18          # how far back an LZ match may reach (covers blob + file)
 MIN_MATCH = 3             # shortest worthwhile match (dict or LZ)
 MAX_MATCH = 1 << 12       # cap on a single match length
 MAX_CHAIN = 64            # hash-chain search depth (speed vs. ratio)
@@ -101,12 +101,12 @@ def _decide(data, pos, dictionary, best_len, best_dist):
     return ("lit", data[pos], 1)
 
 
-def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
-             max_match=MAX_MATCH, max_chain=MAX_CHAIN):
+def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
+             min_match=MIN_MATCH, max_match=MAX_MATCH, max_chain=MAX_CHAIN):
     n = len(data)
 
     if not use_lz:
-        # Dictionary + literals only — no in-file back-references.
+        # Dictionary + literals only — no in-file back-references (prefix unused).
         tokens = []
         pos = 0
         while pos < n:
@@ -119,33 +119,44 @@ def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
                 pos += 1
         return tokens
 
+    # ``prefix`` is a trained dictionary blob prepended to the file's history, so
+    # LZ matches can reach into arbitrary substrings of it. We tokenize over the
+    # combined buffer but only emit tokens for the data region; distances run in
+    # combined-buffer space, which the decoder reproduces by seeding its output
+    # with the same prefix.
+    base = len(prefix)
+    combined = prefix + data if base else data
+    N = len(combined)
+
     tokens = []
     head = {}                 # 3-byte key -> most recent position
-    prev = [-1] * n           # position -> previous position with same 3 bytes
+    prev = [-1] * N           # position -> previous position with same 3 bytes
 
     def insert(i):
-        if i + min_match <= n:
-            key = data[i : i + min_match]
+        if i + min_match <= N:
+            key = combined[i : i + min_match]
             prev[i] = head.get(key, -1)
             head[key] = i
 
+    for i in range(base):     # preload the blob so the data can reference it
+        insert(i)
+
     def choice(at):
-        bl, bd = _find_lz(data, at, head, prev, window, max_match, max_chain)
-        return _decide(data, at, dictionary, bl, bd)
+        bl, bd = _find_lz(combined, at, head, prev, window, max_match, max_chain)
+        return _decide(combined, at, dictionary, bl, bd)
 
     # Lazy matching: when an LZ match is found, peek one byte ahead — if the next
     # position yields a strictly longer match, emit a literal now and take the
-    # better match next, rather than locking in the shorter one. Dictionary
-    # matches commit immediately (they're the cheapest token, so greedy is best).
-    pos = 0
+    # better match next. Dictionary matches commit immediately (cheapest token).
+    pos = base
     pending = None            # token already computed for the current pos
-    while pos < n:
+    while pos < N:
         tok = pending if pending is not None else choice(pos)
         pending = None
         kind = tok[0]
 
         if kind == "lit":
-            tokens.append(("lit", tok[1]))
+            tokens.append(("lit", combined[pos]))
             insert(pos)
             pos += 1
             continue
@@ -161,11 +172,11 @@ def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
         # LZ match — try the lazy one-byte lookahead.
         length = tok[1]
         insert(pos)                          # so the lookahead at pos+1 sees pos
-        if pos + 1 < n:
+        if pos + 1 < N:
             nxt = choice(pos + 1)
             nxt_len = nxt[2] if nxt[0] == "dict" else (nxt[1] if nxt[0] == "match" else 0)
             if nxt_len > length:
-                tokens.append(("lit", data[pos]))
+                tokens.append(("lit", combined[pos]))
                 pending = nxt
                 pos += 1
                 continue
@@ -178,8 +189,9 @@ def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
     return tokens
 
 
-def detokenize(tokens, dictionary):
-    out = bytearray()
+def detokenize(tokens, dictionary, prefix=b""):
+    out = bytearray(prefix)
+    base = len(prefix)
     patterns = dictionary.patterns
     for tok in tokens:
         kind = tok[0]
@@ -192,4 +204,4 @@ def detokenize(tokens, dictionary):
             start = len(out) - distance
             for k in range(length):
                 out.append(out[start + k])
-    return bytes(out)
+    return bytes(out[base:])

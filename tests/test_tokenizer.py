@@ -55,6 +55,35 @@ def test_lazy_does_not_lose_data_on_repetitive_input():
     _roundtrip(data, d)
 
 
+def _roundtrip_prefix(data, d, prefix):
+    tokens = tokenize(data, d, use_lz=True, prefix=prefix)
+    assert detokenize(tokens, d, prefix=prefix) == data, (data, tokens)
+
+
+def test_prefix_blob_roundtrips():
+    d = Dictionary([])
+    prefix = b"<html><head><title>Report</title></head><body><table>"
+    # data shares structure with the blob, so it should match back into it.
+    data = b"<html><head><title>Page 2</title></head><body><table><tr>"
+    _roundtrip_prefix(data, d, prefix)
+
+
+def test_prefix_blob_match_actually_used():
+    d = Dictionary([])
+    prefix = b"ABCDEFGHIJKLMNOP" * 4
+    data = b"zz" + b"ABCDEFGHIJKLMNOP" + b"qq"  # only matchable via the blob
+    tokens = tokenize(data, d, use_lz=True, prefix=prefix)
+    assert any(t[0] == "match" for t in tokens)
+    _roundtrip_prefix(data, d, prefix)
+
+
+def test_empty_prefix_equals_no_prefix():
+    d = Dictionary([])
+    data = b"some repeated data data data"
+    assert tokenize(data, d, use_lz=True, prefix=b"") == tokenize(data, d, use_lz=True)
+    _roundtrip(data, d)
+
+
 def test_roundtrip_with_bytes_absent_from_dictionary():
     d = Dictionary([b"abc", b"xyz"])
     data = bytes(range(256)) + b"abcxyzabc" + bytes([200, 201])
