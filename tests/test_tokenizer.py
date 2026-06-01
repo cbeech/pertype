@@ -41,6 +41,20 @@ def test_overlapping_match_roundtrips():
     _roundtrip(data, d)
 
 
+def test_lazy_match_roundtrips():
+    # Crafted so the match at pos is shorter than the match one byte later,
+    # exercising the lazy one-byte-lookahead deferral path.
+    d = Dictionary([])
+    data = b"abcXYZ" + b"_abcdefgh" + b"Qabcdefgh" + b"abcdefgh"
+    _roundtrip(data, d)
+
+
+def test_lazy_does_not_lose_data_on_repetitive_input():
+    d = Dictionary([])
+    data = (b"the quick brown fox " * 30) + b"!" + (b"the quick brown box " * 30)
+    _roundtrip(data, d)
+
+
 def test_roundtrip_with_bytes_absent_from_dictionary():
     d = Dictionary([b"abc", b"xyz"])
     data = bytes(range(256)) + b"abcxyzabc" + bytes([200, 201])

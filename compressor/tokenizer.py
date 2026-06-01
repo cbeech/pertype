@@ -58,6 +58,49 @@ MAX_LEN_SLOT = value_slot(MAX_MATCH - MIN_MATCH + 1)[0]
 MAX_DIST_SLOT = value_slot(WINDOW)[0]
 
 
+def _find_lz(data, pos, head, prev, window, max_match, max_chain):
+    """Longest in-file match at ``pos`` via hash chains over positions < pos.
+
+    Equal-length matches keep the smallest distance (chains run newest-first).
+    Returns ``(length, distance)`` with length 0 if nothing qualifies.
+    """
+    n = len(data)
+    best_len, best_dist = 0, 0
+    if pos + MIN_MATCH <= n:
+        cand = head.get(data[pos : pos + MIN_MATCH], -1)
+        chain = max_chain
+        limit = min(max_match, n - pos)
+        while cand != -1 and pos - cand <= window and chain > 0:
+            length = 0
+            while length < limit and data[cand + length] == data[pos + length]:
+                length += 1
+            if length > best_len:
+                best_len, best_dist = length, pos - cand
+                if length == limit:
+                    break
+            cand = prev[cand]
+            chain -= 1
+    return best_len, best_dist
+
+
+def _decide(data, pos, dictionary, best_len, best_dist):
+    """Pick the token for ``pos`` from the LZ match and the dictionary match.
+
+    Returns one of ``("dict", pid, length)``, ``("match", length, distance)``,
+    or ``("lit", byte, 1)`` — the third element is always the covered length.
+    """
+    dm = dictionary.match(data, pos, MIN_MATCH)
+    dict_len = dm[1] if dm else 0
+    use_dict = dict_len >= MIN_MATCH
+    lz_ok = _accept_lz(best_len, best_dist)
+
+    if use_dict and (not lz_ok or best_len < dict_len + _LZ_OVER_DICT_MARGIN):
+        return ("dict", dm[0], dict_len)
+    if lz_ok:
+        return ("match", best_len, best_dist)
+    return ("lit", data[pos], 1)
+
+
 def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
              max_match=MAX_MATCH, max_chain=MAX_CHAIN):
     n = len(data)
@@ -86,45 +129,51 @@ def tokenize(data, dictionary, use_lz=True, window=WINDOW, min_match=MIN_MATCH,
             prev[i] = head.get(key, -1)
             head[key] = i
 
+    def choice(at):
+        bl, bd = _find_lz(data, at, head, prev, window, max_match, max_chain)
+        return _decide(data, at, dictionary, bl, bd)
+
+    # Lazy matching: when an LZ match is found, peek one byte ahead — if the next
+    # position yields a strictly longer match, emit a literal now and take the
+    # better match next, rather than locking in the shorter one. Dictionary
+    # matches commit immediately (they're the cheapest token, so greedy is best).
     pos = 0
+    pending = None            # token already computed for the current pos
     while pos < n:
-        # Best in-file LZ match via hash chains.
-        best_len, best_dist = 0, 0
-        if pos + min_match <= n:
-            cand = head.get(data[pos : pos + min_match], -1)
-            chain = max_chain
-            limit = min(max_match, n - pos)
-            while cand != -1 and pos - cand <= window and chain > 0:
-                length = 0
-                while length < limit and data[cand + length] == data[pos + length]:
-                    length += 1
-                if length > best_len:
-                    best_len, best_dist = length, pos - cand
-                    if length == limit:
-                        break
-                cand = prev[cand]
-                chain -= 1
+        tok = pending if pending is not None else choice(pos)
+        pending = None
+        kind = tok[0]
 
-        # Best trained-dictionary match.
-        dm = dictionary.match(data, pos, min_match)
-        dict_len = dm[1] if dm else 0
+        if kind == "lit":
+            tokens.append(("lit", tok[1]))
+            insert(pos)
+            pos += 1
+            continue
 
-        use_dict = dict_len >= min_match
-        lz_ok = _accept_lz(best_len, best_dist)
+        if kind == "dict":
+            length = tok[2]
+            tokens.append(("dict", tok[1]))
+            for i in range(pos, pos + length):
+                insert(i)
+            pos += length
+            continue
 
-        if use_dict and (not lz_ok or best_len < dict_len + _LZ_OVER_DICT_MARGIN):
-            tokens.append(("dict", dm[0]))   # cheapest: one symbol, no distance
-            advance = dict_len
-        elif lz_ok:
-            tokens.append(("match", best_len, best_dist))
-            advance = best_len
-        else:
-            tokens.append(("lit", data[pos]))
-            advance = 1
+        # LZ match — try the lazy one-byte lookahead.
+        length = tok[1]
+        insert(pos)                          # so the lookahead at pos+1 sees pos
+        if pos + 1 < n:
+            nxt = choice(pos + 1)
+            nxt_len = nxt[2] if nxt[0] == "dict" else (nxt[1] if nxt[0] == "match" else 0)
+            if nxt_len > length:
+                tokens.append(("lit", data[pos]))
+                pending = nxt
+                pos += 1
+                continue
 
-        for i in range(pos, pos + advance):
+        tokens.append(("match", tok[1], tok[2]))
+        for i in range(pos + 1, pos + length):
             insert(i)
-        pos += advance
+        pos += length
 
     return tokens
 

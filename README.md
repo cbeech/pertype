@@ -36,8 +36,11 @@ train(corpus)                         compress(file, model)
 ```
 
 Tokens are literals, dictionary references, or `(length, distance)` LZ matches.
-Match lengths and distances are bucketed into slots (one Huffman symbol + a few
-raw "extra" bits each), with a separate Huffman table for distances.
+Match lengths and distances are bucketed into slots (one coded symbol + a few
+raw "extra" bits each), with a separate frequency model for distances. LZ
+matches use **lazy parsing** (one-byte lookahead: defer a match if the next
+position offers a longer one); dictionary matches commit greedily since they're
+the cheapest token.
 
 Decompression reverses it and verifies a CRC32, so losslessness is checked on
 every file.
@@ -94,7 +97,7 @@ Ratio = raw ÷ compressed (higher is better).
 |------|---------|----------|----------------|----------|---------|
 | json | 1.98x | 2.02x | 5.46x | **5.36x** | off |
 | logs | 3.80x | 3.99x | 5.95x | **5.41x** | off |
-| html | 2.72x | 2.70x | 10.70x | **6.92x** | on |
+| html | 2.72x | 2.70x | 10.70x | **6.94x** | on |
 
 Takeaways:
 
@@ -115,17 +118,18 @@ per-file numbers above are the amortized cost.
 
 ## Roadmap
 
-The benchmarks show the biggest lever now is **parsing and dictionary quality**,
-not entropy coding:
+The benchmarks show the biggest lever now is **dictionary quality**, not parsing
+or entropy coding:
 
-- **Lazy / cost-optimal parsing** instead of greedy match selection — likely the
-  largest remaining win, especially on html.
 - A better **dictionary trainer** (e.g. suffix-automaton or COVER-style) in place
-  of the greedy substring miner.
+  of the greedy substring miner — the largest remaining win, especially on html,
+  where zstd's 112 KB COVER-trained dictionary captures far more than ours.
+- **Cost-optimal parsing** (full shortest-path over the token graph) beyond the
+  one-byte lazy lookahead already implemented.
 - **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
   coder, for text.
 - Port the hot path to Rust for production speed.
 
 Done: trained per-type dictionary, in-file LZ back-references with a learned
-per-type on/off decision, and an arithmetic entropy coder.
+per-type on/off decision, lazy match parsing, and an arithmetic entropy coder.
 ```
