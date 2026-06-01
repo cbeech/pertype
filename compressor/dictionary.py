@@ -1,41 +1,71 @@
 """Pattern dictionary: training (mining) and longest-match lookup.
 
 The dictionary is an ordered list of byte patterns. A pattern's index is its
-id; the tokenizer references it by that id. ``mine_patterns`` learns a dictionary
-from a corpus by counting substring frequencies and greedily keeping the ones
-that save the most bytes.
+id; the tokenizer references it by that id.
+
+``mine_patterns`` ranks candidate substrings by **frequency × bytes-saved** and
+keeps the top ones. Two refinements over a naive count: it admits *long* patterns
+(up to ``max_len``), so identical boilerplate (HTML heads, footers) is captured
+whole instead of chopped into fixed-size pieces; and it generates those long
+candidates only where their leading "dmer" recurs, which keeps the candidate set
+(and memory) bounded by pruning unique content.
+
+A coverage/dedup scheme à la zstd's COVER was tried and removed: COVER assumes a
+contiguous dictionary blob where any substring is referenceable, so retiring
+covered content is harmless. Here patterns are *atomic* (matched as whole units),
+so retiring the sub-units of one long pattern wrongly suppressed the short,
+broadly useful patterns — it made every type worse. Frequency × savings, which
+lets a short high-frequency key and a long boilerplate block coexist, wins.
 """
 from collections import Counter
 
-# Approximate cost (in bytes) of referencing a pattern in the entropy-coded
-# stream. Used only to score candidates during mining; a pattern is worth
-# keeping when its length comfortably exceeds this.
+# Approximate cost (in bytes) of referencing a pattern; a pattern must be longer
+# than this to be worth keeping.
 _REFERENCE_COST = 2
 
-_DEFAULT_LENGTHS = (3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64)
+# Sub-unit length used only to prune unique long content from the candidate set.
+_DMER = 8
+
+# Candidate lengths span short tokens up to long boilerplate blocks.
+_DEFAULT_LENGTHS = (3, 4, 5, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256)
 
 
 def mine_patterns(
     samples,
     max_patterns=4096,
     min_len=3,
-    max_len=64,
+    max_len=256,
     max_mining_bytes=1_000_000,
+    dmer=_DMER,
 ):
     """Learn a :class:`Dictionary` from an iterable of byte samples."""
     blob = b"".join(samples)
     if len(blob) > max_mining_bytes:
         blob = blob[:max_mining_bytes]
+    n = len(blob)
 
+    d = min(dmer, max(1, min_len))
     lengths = [l for l in _DEFAULT_LENGTHS if min_len <= l <= max_len]
     if not lengths:
         lengths = [min_len]
 
+    # Dmer frequencies, used only to prune unique long candidates.
+    dmer_freq = Counter()
+    for i in range(n - d + 1):
+        dmer_freq[blob[i : i + d]] += 1
+
+    # Count candidate substrings. Long candidates (>= d) are only taken where the
+    # leading dmer repeats, so unique content does not explode the candidate set;
+    # short candidates are always counted.
     counts = Counter()
-    n = len(blob)
     for length in lengths:
-        for i in range(0, n - length + 1):
-            counts[blob[i : i + length]] += 1
+        if length >= d:
+            for i in range(n - length + 1):
+                if dmer_freq[blob[i : i + d]] >= 2:
+                    counts[blob[i : i + length]] += 1
+        else:
+            for i in range(n - length + 1):
+                counts[blob[i : i + length]] += 1
 
     # Score = occurrences * bytes saved per use. Keep only patterns seen more
     # than once and long enough to pay for a reference.

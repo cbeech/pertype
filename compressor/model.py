@@ -86,7 +86,7 @@ def _build_candidate(samples, dictionary, use_lz):
     return bits, (use_lz, main_model, dist_model)
 
 
-def train(samples, type_id, max_patterns=4096, min_len=3, max_len=64):
+def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     samples = list(samples)
     dictionary = mine_patterns(
         samples, max_patterns=max_patterns, min_len=min_len, max_len=max_len

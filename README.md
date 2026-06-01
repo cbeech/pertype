@@ -95,41 +95,40 @@ Ratio = raw ÷ compressed (higher is better).
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | LZ mode |
 |------|---------|----------|----------------|----------|---------|
-| json | 1.98x | 2.02x | 5.46x | **5.36x** | off |
-| logs | 3.80x | 3.99x | 5.95x | **5.41x** | off |
-| html | 2.72x | 2.70x | 10.70x | **6.94x** | on |
+| json | 1.98x | 2.02x | 5.46x | **5.38x** | off |
+| logs | 3.80x | 3.99x | 5.95x | **5.63x** | off |
+| html | 2.72x | 2.70x | 10.70x | **7.02x** | on |
 
 Takeaways:
 
 - We **beat plain gzip/zstd by 1.4–2.6×** on every type — that's the trained
   per-type dictionary doing its job.
-- We're **within ~2% of zstd's own trained dictionary on JSON** (the real
+- We're **within ~1.5% of zstd's own trained dictionary on JSON** (the real
   apples-to-apples competitor), close on logs, and behind it on html.
 - In-file LZ is **learned per type**: it lifts html while json and logs correctly
   opt out, so adding it never regresses a type.
-- Switching Huffman → **arithmetic coding** gained ~1–2.5% across types. The gain
-  is small because Huffman was already near-entropy for these alphabets; the
-  remaining gap to `zstd +dict` (especially on html) is **parse and dictionary
-  quality**, not the entropy coder — zstd uses an optimal parse and the COVER
-  dictionary trainer, where we use a greedy parse and a greedy substring miner.
+- Switching Huffman → **arithmetic coding** gained ~1–2.5%; admitting **long
+  dictionary patterns** (up to 256 B) lifted every type, most of all logs (long
+  repeated request lines / user-agents now captured whole).
 
 Model size is reported separately by the benchmark because it ships once; the
 per-file numbers above are the amortized cost.
 
 ## Roadmap
 
-The benchmarks show the biggest lever now is **dictionary quality**, not parsing
-or entropy coding:
+The remaining gap to `zstd +dict` is largest on html, where zstd's 112 KB
+contiguous COVER-trained dictionary still captures more than our atomic patterns:
 
-- A better **dictionary trainer** (e.g. suffix-automaton or COVER-style) in place
-  of the greedy substring miner — the largest remaining win, especially on html,
-  where zstd's 112 KB COVER-trained dictionary captures far more than ours.
+- A **contiguous-blob dictionary** (any substring referenceable via LZ into a
+  preset window) instead of atomic whole-unit patterns — the most promising path
+  to close the html gap, though it must not regress the very efficient one-symbol
+  dictionary references that make json/logs strong.
 - **Cost-optimal parsing** (full shortest-path over the token graph) beyond the
   one-byte lazy lookahead already implemented.
 - **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
   coder, for text.
 - Port the hot path to Rust for production speed.
 
-Done: trained per-type dictionary, in-file LZ back-references with a learned
-per-type on/off decision, lazy match parsing, and an arithmetic entropy coder.
-```
+Done: trained per-type dictionary (frequency × savings, long patterns admitted),
+in-file LZ back-references with a learned per-type on/off decision, lazy match
+parsing, and an arithmetic entropy coder.
