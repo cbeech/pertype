@@ -14,3 +14,9 @@ __pycache__/
 # Virtualenvs
 .venv/
 venv/
+
+# Real-world corpus collected locally (machine-specific)
+/corpus_real/
+
+# Local harness state
+/.claude/

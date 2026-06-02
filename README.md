@@ -75,7 +75,8 @@ every file.
 
 ```bash
 # Generate sample corpora (disjoint train/test) for json, logs, html
-python3 scripts/make_corpus.py
+python3 scripts/make_corpus.py                 # synthetic, reproducible
+python3 scripts/collect_corpus.py              # real files from this machine -> corpus_real/
 
 # Train a model for one type
 python3 -m compressor.cli train json corpus/json/train -o json.model
@@ -85,7 +86,8 @@ python3 -m compressor.cli compress some.json -m json.model -o some.json.cz
 python3 -m compressor.cli decompress some.json.cz -m json.model -o roundtrip.json
 
 # Benchmark against gzip and zstd on the held-out test set
-python3 -m compressor.cli benchmark json
+python3 -m compressor.cli benchmark json                      # synthetic corpus
+python3 -m compressor.cli benchmark json --root corpus_real   # real-world corpus
 ```
 
 ## Tests
@@ -100,9 +102,29 @@ python3 -m tests.run codec      # one module
 The codec tests include property-style round-trips over random bytes, empty
 input, and bytes never seen in training — proving the lossless guarantee.
 
-## Results (held-out test sets, synthetic corpora)
+## Results
 
-Ratio = raw ÷ compressed (higher is better).
+Ratio = raw ÷ compressed (higher is better). Two corpora: **synthetic**
+(`scripts/make_corpus.py`, reproducible) and **real-world** files collected from
+this machine (`scripts/collect_corpus.py`). The two tell different stories — read
+both.
+
+### Real-world corpora (real files, held-out) — the honest test
+
+| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
+|------|---------|----------|----------------|----------|
+| json | 5.70x | 6.18x | **9.42x** | 7.32x |
+| logs | 7.40x | 7.76x | **14.06x** | 9.19x |
+| html | 3.86x | 3.98x | **7.08x** | 5.57x |
+
+On real, heterogeneous files we **beat plain gzip / zstd -19 by 18–40%** (the core
+thesis — a per-type trained model beats general compressors — holds), but
+**`zstd -19 --train` clearly beats us** (we reach 65–79% of its ratio). zstd's
+edge on hard data comes from machinery we don't have: a COVER-trained dictionary,
+repeat-offset modeling, a deeper optimal parse, and FSE coding. The shipped model
+is also large here (html ~980 KB), so it only amortizes over many files.
+
+### Synthetic corpora — where we win (but it's partly overfit)
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | blob chosen |
 |------|---------|----------|----------------|----------|-------------|
@@ -110,45 +132,51 @@ Ratio = raw ÷ compressed (higher is better).
 | logs | 3.80x | 3.99x | 5.95x | **6.10x** ✅ | naive 32 KB |
 | html | 2.72x | 2.70x | 10.70x | **11.28x** ✅ | coverage 64 KB |
 
+On the synthetic corpus we beat `zstd +dict` on all three types — but the
+synthetic files are highly homogeneous, which flatters our approach. The
+real-world numbers above are the truer measure; the gap between the two tables is
+itself the lesson: **validate on real data.**
+
 Takeaways:
 
-- We **beat `zstd -19 --train` (its own trained dictionary) on all three types** —
-  the real apples-to-apples competitor — and beat plain gzip/zstd by 1.5–4×.
-- The wins compound across the pipeline: the contiguous **LZ blob** lets matches
-  reach arbitrary trained substrings (the big lift on json/html); **cost-optimal
-  parsing** then squeezes the parse (it justified the blob for logs); long
-  dictionary patterns, arithmetic coding, and lazy parsing each added their share.
-- The **blob builder is chosen per type on a validation slice**: html packs more
-  distinct structure with the COVER-style coverage builder at 64 KB, while json
-  and logs do better with whole-file concatenation (long contiguous runs match
-  better than fragmented coverage segments). Trying both with a naive fallback
-  means the smarter builder only ever helps — html gained (10.91x → 11.28x) with
-  no regression elsewhere.
+- The **core thesis holds on real data**: a per-type trained model beats
+  general-purpose gzip/zstd by 18–40%. The pipeline that gets there — trained
+  dictionary, contiguous LZ blob, cost-optimal parse, arithmetic coding — each
+  step compounds.
+- But **a mature engine's trained-dictionary mode (zstd --train) still wins on
+  real, heterogeneous data.** Our synthetic-corpus wins were partly overfit to
+  homogeneous files; testing on real files corrected the picture.
+- The **blob builder is chosen per type on a validation slice** (naive vs
+  COVER-style coverage, several sizes), so the smarter builder only helps where it
+  helps and never regresses a type.
 
-Two honest costs:
+Honest costs:
 
-- **Model size** grows with the blob and long-pattern dictionary (json ~187 KB,
-  html ~367 KB). It ships once and is amortized across all files of the type, so
-  the per-file numbers above are the real cost in the intended
-  many-files-of-a-known-type scenario.
-- **Training is slow** for LZ types (tens of seconds to a few minutes per type)
-  because the cost-optimal parse runs over the blob-augmented corpus. The
-  validation decision uses a shallow search depth to stay fast; only the final
-  shipped model pays full depth. Compression and decompression are unaffected.
+- **Model size** grows with the blob and dictionary (real html ~980 KB). It ships
+  once and amortizes across many files, but on heterogeneous data that amortizes
+  less well.
+- **Training is slow** and **cost-optimal parsing doesn't scale to large files**
+  in pure Python (real html — ~16 KB/file — took minutes). Compression and
+  decompression of small files are fine; large-file throughput needs work.
 
 ## Roadmap
 
-We now beat `zstd +dict` on all three types. Remaining ideas, in rough order of
+The real-world gap to `zstd --train` is the thing to close. In rough order of
 expected payoff:
 
-- **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
-  coder, for text.
-- **Faster training**: the validation gate now trains several blob candidates,
-  so training is the slow part (tens of seconds to a few minutes per type).
-  Reuse the blob's hash chains across files instead of rebuilding them, evaluate
-  candidates on a subsample, and/or port the hot parse loop to Rust.
+- **Repeat-offset modeling** (reuse recent match distances cheaply) — a big part
+  of zstd's edge, and a clean addition to the token/cost model.
+- A genuinely better **dictionary trainer for heterogeneous data** (proper COVER
+  / suffix-automaton selection) — ours is tuned to homogeneous corpora.
+- **Faster parse** (reuse blob hash chains across files, Rust hot loop) so
+  cost-optimal depth is affordable on large files.
+- **Adaptive / context-modelled** literal coding — tried (order-1 with per-file
+  adaptation); measured ~0.5% on these corpora because residual literals are
+  near-random after dict+LZ, so it was shelved. Likely worth more on
+  natural-language text.
 
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
 LZ back-references with a contiguous trained blob, two blob builders (naive and
 COVER-style coverage) chosen per type on a validation slice, lazy parsing,
-cost-optimal parsing, and arithmetic coding.
+cost-optimal parsing, and arithmetic coding. Validated on both synthetic and
+real-world corpora.
