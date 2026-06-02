@@ -162,6 +162,38 @@ Honest costs:
   in pure Python (real html — ~16 KB/file — took many minutes). Compression and
   decompression of small files are fine; large-file throughput needs work.
 
+## Image domain — a cross-domain stress test
+
+The codec is byte-oriented with no image-specific modeling (no spatial
+prediction, no channel de-mosaicing), so images map out exactly where the
+approach has value. Each image is decoded to raw pixel bytes and every method
+compresses identical data; **PNG** is the lossless-image baseline. Tools:
+`scripts/image_benchmark.py` (PIL) and `scripts/cr2_benchmark.py` (rawpy/LibRaw).
+
+| data | gzip | zstd -19 | zstd +dict | PNG | **ours** | rank |
+|------|------|----------|------------|-----|----------|------|
+| tiny icons (16–96 px, homogeneous) | 3.43x | 3.60x | 4.82x | 2.37x | **5.39x** | **1st** |
+| flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
+| Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **1.40x** | **last** |
+
+(CR2 reference: Canon's own full-frame lossless = 1.61x. Raw sensor noise is
+near-incompressible.)
+
+The result is consistent with the text findings: **we are a redundancy
+exploiter**, and we win exactly where redundancy exists.
+
+- **Icons — we beat everything, including `zstd --train` and PNG.** Tiny files
+  drown PNG in per-file overhead, and PNG compresses each image independently, so
+  it cannot use the shared palette/style across an icon theme; our cross-image
+  trained dictionary can. This is a genuine niche (sprite atlases, icon themes,
+  map tiles).
+- **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
+- **Photographic raw — we come last**, tied with PNG-16 and beaten even by gzip.
+  Sensor noise has almost no redundancy, there is no cross-image structure (the
+  trained dictionary is dead weight — `zstd +dict` even falls *below* plain
+  `zstd` here), and we have no spatial prediction. This is not a speed problem a
+  port could fix: the ratio ceiling is the missing image-domain modeling.
+
 ## Roadmap
 
 The real-world gap to `zstd --train` is the thing to close. In rough order of
