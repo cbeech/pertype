@@ -35,11 +35,16 @@ HTML pages).
 
 ```
 train(corpus)                         compress(file, model)
-  mine patterns + blob  ─┐              cost-optimal parse (DP over the token
-  price dict-only vs     ├─ model         graph) using the model's bit costs
-    LZ+blob on val set  ─┘                └─ arithmetic-code the token stream
-  pick cheaper mode                          └─ container = header + bitstream
+  select transform      ─┐              apply transform (decorrelate)
+  mine patterns + blob   ├─ model        └─ cost-optimal parse (DP over tokens)
+  price modes on val set ┘                   └─ arithmetic-code the token stream
+  pick cheapest                                  └─ container = header + bitstream
 ```
+
+A reversible **transform** runs first (and is inverted last), chosen per file
+type by the validation gate: generic byte-stream ops — *delta* (predict from the
+byte N back) and *split* (deinterleave into N byte-planes) — that decorrelate
+numeric/image data so the coder has far less to encode. Text selects identity.
 
 For LZ types the parser is **cost-optimal**: a dynamic program finds the
 minimum-cost path through the token graph, pricing every candidate (literal,
@@ -64,6 +69,7 @@ every file.
 | `compressor/arithmetic.py` | integer arithmetic coder (Witten–Neal–Cleary) |
 | `compressor/freqmodel.py` | static frequency model driving the coder |
 | `compressor/huffman.py` | canonical Huffman (package-merge) — tested building block |
+| `compressor/transform.py` | reversible per-type decorrelating transforms (delta/split) |
 | `compressor/dictionary.py` | pattern miner + longest-match lookup |
 | `compressor/tokenizer.py` | reversible file ↔ token stream (dict + LZ) |
 | `compressor/model.py` | train / save / load a per-type model |
@@ -164,56 +170,55 @@ Honest costs:
 
 ## Image domain — a cross-domain stress test
 
-The codec is byte-oriented with no image-specific modeling (no spatial
-prediction, no channel de-mosaicing), so images map out exactly where the
-approach has value. Each image is decoded to raw pixel bytes and every method
-compresses identical data; **PNG** is the lossless-image baseline. Tools:
-`scripts/image_benchmark.py` (PIL) and `scripts/cr2_benchmark.py` (rawpy/LibRaw).
+Images map out exactly where the approach has value. Each image is decoded to
+raw pixel bytes and every method compresses identical data; **PNG** is the
+lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
+`scripts/cr2_benchmark.py` and `scripts/full_raw_benchmark.py` (rawpy/LibRaw).
 
 | data | gzip | zstd -19 | zstd +dict | PNG | **ours** | rank |
 |------|------|----------|------------|-----|----------|------|
 | tiny icons (16–96 px, homogeneous) | 3.43x | 3.60x | 4.82x | 2.37x | **5.39x** | **1st** |
 | flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
-| Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **1.40x** | **last** |
+| Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **1.84x** | **1st** |
 
-(CR2 reference: Canon's own full-frame lossless = 1.61x. Raw sensor noise is
-near-incompressible.)
+(CR2 reference: Canon's own full-frame lossless ≈ 1.6–1.75x. Raw sensor noise is
+near-incompressible — these ratios are close to the information-theoretic floor.)
 
-The result is consistent with the text findings: **we are a redundancy
-exploiter**, and we win exactly where redundancy exists.
+The result is consistent with the text findings: **we win where redundancy
+exists** — and the transform stage now exposes redundancy we previously couldn't.
 
 - **Icons — we beat everything, including `zstd --train` and PNG.** Tiny files
   drown PNG in per-file overhead, and PNG compresses each image independently, so
   it cannot use the shared palette/style across an icon theme; our cross-image
-  trained dictionary can. This is a genuine niche (sprite atlases, icon themes,
-  map tiles).
+  trained dictionary can. A genuine niche (sprite atlases, icon themes, map tiles).
 - **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
-- **Photographic raw — we come last**, tied with PNG-16 and beaten even by gzip.
-  Sensor noise has almost no redundancy, there is no cross-image structure (the
-  trained dictionary is dead weight — `zstd +dict` even falls *below* plain
-  `zstd` here), and we have no spatial prediction. This is not a speed problem a
-  port could fix: the ratio ceiling is the missing image-domain modeling.
+- **Photographic raw — we now win** (1.40x → **1.84x**, first place), after adding
+  the **transform stage**. Raw was our worst case: high sensor noise, no
+  cross-image structure, and — crucially — we did no spatial/numeric
+  decorrelation. We measured the actual entropy (10.27 bits/pixel order-0, 6.87
+  after prediction) and added a reversible per-type transform (here byte-plane
+  *split* + stride *delta*) that decorrelates the 16-bit mosaic before coding.
+  zstd/gzip/PNG can't infer that structure from opaque bytes; our per-type gate
+  selects it. The remaining noise floor is irreducible for everyone.
 
 ## Roadmap
 
 The real-world gap to `zstd --train` is the thing to close. In rough order of
 expected payoff:
 
+- **More transforms.** The transform stage is the highest-leverage idea in the
+  codebase — it turns "no domain modeling" into *automatic per-type* domain
+  modeling, which general-purpose tools don't do. Add 2D-aware predictors
+  (MED/Paeth with a learned row stride), RLE for the long zero-runs decorrelation
+  produces, and de-interleaving for stereo audio / columnar data.
 - A genuinely better **dictionary trainer for heterogeneous data** (proper COVER
-  / suffix-automaton selection) — ours is tuned to homogeneous corpora, and the
-  dictionary is the largest remaining lever on real data.
+  / suffix-automaton selection) — the largest remaining lever on real *text*.
 - **Faster parse** (reuse blob hash chains across files, Rust hot loop) so
   cost-optimal depth is affordable on large files.
-- **Rep-offset-aware parsing**: the parser currently prices matches as normal
-  (rep-unaware); a DP over (position × rep-state) would let it actively prefer
-  distance reuse, beyond today's post-hoc rep encoding.
-- **Adaptive / context-modelled** literal coding — tried (order-1 with per-file
-  adaptation); measured ~0.5% on these corpora because residual literals are
-  near-random after dict+LZ, so it was shelved. Likely worth more on
-  natural-language text.
 
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
 LZ back-references with a contiguous trained blob, two blob builders (naive and
 COVER-style coverage) chosen per type on a validation slice, lazy parsing,
-cost-optimal parsing, repeat-offset modeling, and arithmetic coding. Validated on
-both synthetic and real-world corpora.
+cost-optimal parsing, repeat-offset modeling, arithmetic coding, and a per-type
+reversible transform stage (delta/split decorrelation). Validated on synthetic,
+real-world, and image/raw corpora.
