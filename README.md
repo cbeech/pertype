@@ -33,11 +33,16 @@ HTML pages).
 
 ```
 train(corpus)                         compress(file, model)
-  mine patterns + blob  ─┐              tokenize: longest of {dict match,
-  price dict-only vs     ├─ model         LZ match into blob/history} else literal
+  mine patterns + blob  ─┐              cost-optimal parse (DP over the token
+  price dict-only vs     ├─ model         graph) using the model's bit costs
     LZ+blob on val set  ─┘                └─ arithmetic-code the token stream
   pick cheaper mode                          └─ container = header + bitstream
 ```
+
+For LZ types the parser is **cost-optimal**: a dynamic program finds the
+minimum-cost path through the token graph, pricing every candidate (literal,
+dict ref, each LZ match) by its actual arithmetic-coded bit cost. Dict-only
+types keep the cheap greedy longest-match parse.
 
 Tokens are literals, dictionary references, or `(length, distance)` LZ matches.
 Match lengths and distances are bucketed into slots (one coded symbol + a few
@@ -99,42 +104,45 @@ Ratio = raw ÷ compressed (higher is better).
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | LZ+blob |
 |------|---------|----------|----------------|----------|---------|
-| json | 1.98x | 2.02x | 5.46x | **6.03x** ✅ | on |
-| logs | 3.80x | 3.99x | 5.95x | **5.63x** | off |
-| html | 2.72x | 2.70x | 10.70x | **10.16x** | on |
+| json | 1.98x | 2.02x | 5.46x | **6.47x** ✅ | on |
+| logs | 3.80x | 3.99x | 5.95x | **6.10x** ✅ | on |
+| html | 2.72x | 2.70x | 10.70x | **10.91x** ✅ | on |
 
 Takeaways:
 
-- We **beat plain gzip/zstd by 1.4–3.7×** on every type — that's the trained
-  per-type dictionary doing its job.
-- On **JSON we now beat zstd's own trained dictionary** (6.03x vs 5.46x), and on
-  **html we're within ~5%** (10.16x vs 10.70x) — both thanks to the contiguous
-  LZ blob letting matches reach arbitrary trained substrings.
-- The blob is **learned per type on a validation slice**: json and html adopt it
-  (genuine wins), logs declines it and keeps dict-only — so it never regresses a
-  type even though it's a big win for two of them.
-- Earlier steps compounded: long dictionary patterns lifted logs most; arithmetic
-  coding added ~1–2.5%; lazy parsing helped html.
+- We **beat `zstd -19 --train` (its own trained dictionary) on all three types** —
+  the real apples-to-apples competitor — and beat plain gzip/zstd by 1.5–4×.
+- The wins compound across the pipeline: the contiguous **LZ blob** lets matches
+  reach arbitrary trained substrings (the big lift on json/html); **cost-optimal
+  parsing** then squeezes the parse (it flipped logs to LZ, where lazy parsing
+  hadn't justified the blob); long dictionary patterns, arithmetic coding, and
+  lazy parsing each added their share earlier.
+- LZ+blob is **learned per type on a validation slice**, so it can never regress a
+  type — here all three adopt it because cost-optimal parsing makes it pay off.
 
-The flip side: the blob and long-pattern dictionary grow the **model** (json
-~187 KB, html ~367 KB). It ships once and is amortized across all files of the
-type, so the per-file numbers above are the real cost in the intended
-many-files-of-a-known-type scenario.
+Two honest costs:
+
+- **Model size** grows with the blob and long-pattern dictionary (json ~187 KB,
+  html ~367 KB). It ships once and is amortized across all files of the type, so
+  the per-file numbers above are the real cost in the intended
+  many-files-of-a-known-type scenario.
+- **Training is slow** for LZ types (tens of seconds to a few minutes per type)
+  because the cost-optimal parse runs over the blob-augmented corpus. The
+  validation decision uses a shallow search depth to stay fast; only the final
+  shipped model pays full depth. Compression and decompression are unaffected.
 
 ## Roadmap
 
-We now beat or nearly match `zstd +dict` on all three types. Remaining ideas, in
-rough order of expected payoff:
+We now beat `zstd +dict` on all three types. Remaining ideas, in rough order of
+expected payoff:
 
-- **Cost-optimal parsing** (shortest-path over the token graph) beyond the
-  one-byte lazy lookahead — should help html close the last ~5%.
 - A smarter **blob builder** (representative-segment selection à la zstd COVER,
-  most-useful content nearest the data) rather than a raw corpus slice; may also
-  let logs benefit.
+  most-useful content nearest the data) rather than a raw corpus slice.
 - **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
   coder, for text.
-- Port the hot path to Rust for production speed.
+- **Faster training**: reuse the blob's hash chains across files instead of
+  rebuilding them, and/or port the hot parse loop to Rust.
 
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
 LZ back-references with a contiguous trained blob, a validation-gated per-type
-LZ/blob decision, lazy match parsing, and an arithmetic entropy coder.
+LZ/blob decision, lazy parsing, cost-optimal parsing, and arithmetic coding.

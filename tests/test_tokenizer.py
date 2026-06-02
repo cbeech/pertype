@@ -2,7 +2,9 @@
 import os
 
 from compressor.dictionary import Dictionary, mine_patterns
-from compressor.tokenizer import tokenize, detokenize
+from compressor.tokenizer import (
+    MIN_MATCH, tokenize, tokenize_optimal, detokenize, value_slot,
+)
 
 
 def _roundtrip(data, d):
@@ -82,6 +84,63 @@ def test_empty_prefix_equals_no_prefix():
     data = b"some repeated data data data"
     assert tokenize(data, d, use_lz=True, prefix=b"") == tokenize(data, d, use_lz=True)
     _roundtrip(data, d)
+
+
+# A simple fixed-price cost model for exercising the optimal parser directly.
+def _flat_costs(lit=8.0, dictc=6.0):
+    def lit_cost(_byte):
+        return lit
+
+    def dict_cost(_pid):
+        return dictc
+
+    def match_cost(length, distance):
+        lslot, _ = value_slot(length - MIN_MATCH + 1)
+        dslot, _ = value_slot(distance)
+        return 6.0 + lslot + dslot  # one symbol each + extra bits
+
+    return lit_cost, dict_cost, match_cost
+
+
+def _total_cost(tokens, dictionary, costs):
+    lit_cost, dict_cost, match_cost = costs
+    total = 0.0
+    for tok in tokens:
+        if tok[0] == "lit":
+            total += lit_cost(tok[1])
+        elif tok[0] == "dict":
+            total += dict_cost(tok[1])
+        else:
+            total += match_cost(tok[1], tok[2])
+    return total
+
+
+def test_optimal_roundtrips():
+    d = Dictionary([])
+    data = b"the quick brown fox " * 20 + b"!" + b"the quick brown fox jumps " * 10
+    tokens = tokenize_optimal(data, d, _flat_costs())
+    assert detokenize(tokens, d) == data
+
+
+def test_optimal_roundtrips_with_prefix():
+    d = Dictionary([])
+    prefix = b"<html><head><title>Report</title></head><body><table><tr><td>"
+    data = b"<html><head><title>Page</title></head><body><table><tr><td>x"
+    tokens = tokenize_optimal(data, d, _flat_costs(), prefix=prefix)
+    assert detokenize(tokens, d, prefix=prefix) == data
+
+
+def test_optimal_never_costlier_than_lazy():
+    d = mine_patterns([b'{"name":"item%d","v":%d}' % (i, i) for i in range(40)])
+    costs = _flat_costs()
+    for data in (
+        b'{"name":"itemXYZ","v":999}' * 8,
+        b"abcabcabcabcabcabc def def def ghi",
+        bytes(range(256)),
+    ):
+        opt = _total_cost(tokenize_optimal(data, d, costs), d, costs)
+        lazy = _total_cost(tokenize(data, d, use_lz=True), d, costs)
+        assert opt <= lazy + 1e-9, (opt, lazy)
 
 
 def test_roundtrip_with_bytes_absent_from_dictionary():

@@ -27,7 +27,9 @@ and tables are shipped once and amortized across every file of the type.
 import zlib
 
 from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-from compressor.tokenizer import MIN_MATCH, detokenize, tokenize, value_from, value_slot
+from compressor.tokenizer import (
+    MIN_MATCH, detokenize, tokenize, tokenize_optimal, value_from, value_slot,
+)
 
 MAGIC = b"CZ"
 FMT_VERSION = 3
@@ -71,7 +73,10 @@ def _decode_tokens(dec, model, n_tokens):
 
 
 def compress(data, model):
-    tokens = tokenize(data, model.dictionary, use_lz=model.use_lz, prefix=model.blob)
+    if model.use_lz:
+        tokens = tokenize_optimal(data, model.dictionary, model.costs(), prefix=model.blob)
+    else:
+        tokens = tokenize(data, model.dictionary, use_lz=False)
     enc = ArithmeticEncoder()
     _encode_tokens(tokens, model, enc)
     enc.finish()

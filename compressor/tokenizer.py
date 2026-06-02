@@ -189,6 +189,93 @@ def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
     return tokens
 
 
+def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
+                     min_match=MIN_MATCH, max_match=MAX_MATCH, max_chain=MAX_CHAIN):
+    """Minimum-cost parse via dynamic programming.
+
+    ``costs`` is ``(lit_cost, dict_cost, match_cost)`` — callables returning the
+    bit cost of each token kind under the model. A backward pass computes, for
+    every position, the cheapest way to encode the rest of the file, choosing
+    among a literal, a dictionary reference, and the maximal LZ match at each
+    distance. This finds globally cheaper parses than greedy/lazy (e.g. taking a
+    nearer shorter match, or a literal, when it leads to a cheaper continuation).
+    """
+    lit_cost, dict_cost, match_cost = costs
+    base = len(prefix)
+    combined = prefix + data if base else data
+    N = len(combined)
+
+    head = {}
+    prev = [-1] * N
+
+    def insert(i):
+        if i + min_match <= N:
+            key = combined[i : i + min_match]
+            prev[i] = head.get(key, -1)
+            head[key] = i
+
+    for i in range(base):
+        insert(i)
+
+    # Forward pass: for each data position, the smallest distance achieving each
+    # maximal match length (chains run newest-first, so nearest wins).
+    cand_lists = [None] * N
+    for p in range(base, N):
+        found = {}
+        cand = head.get(combined[p : p + min_match], -1)
+        chain = max_chain
+        limit = min(max_match, N - p)
+        while cand != -1 and p - cand <= window and chain > 0:
+            length = 0
+            while length < limit and combined[cand + length] == combined[p + length]:
+                length += 1
+            if length >= min_match:
+                dist = p - cand
+                if length not in found or dist < found[length]:
+                    found[length] = dist
+            cand = prev[cand]
+            chain -= 1
+        cand_lists[p] = found
+        insert(p)
+
+    # Backward pass: cheapest cost to encode combined[p:].
+    cost_to_end = [0.0] * (N + 1)
+    choice = [None] * (N + 1)
+    for p in range(N - 1, base - 1, -1):
+        best = lit_cost(combined[p]) + cost_to_end[p + 1]
+        best_choice = ("lit", combined[p])
+
+        dm = dictionary.match(combined, p, min_match)
+        if dm is not None and dm[1] >= min_match:
+            c = dict_cost(dm[0]) + cost_to_end[p + dm[1]]
+            if c < best:
+                best, best_choice = c, ("dict", dm[0], dm[1])
+
+        for length, dist in cand_lists[p].items():
+            c = match_cost(length, dist) + cost_to_end[p + length]
+            if c < best:
+                best, best_choice = c, ("match", length, dist)
+
+        cost_to_end[p] = best
+        choice[p] = best_choice
+
+    # Walk the chosen path forward.
+    tokens = []
+    p = base
+    while p < N:
+        ch = choice[p]
+        if ch[0] == "lit":
+            tokens.append(("lit", ch[1]))
+            p += 1
+        elif ch[0] == "dict":
+            tokens.append(("dict", ch[1]))
+            p += ch[2]
+        else:
+            tokens.append(("match", ch[1], ch[2]))
+            p += ch[1]
+    return tokens
+
+
 def detokenize(tokens, dictionary, prefix=b""):
     out = bytearray(prefix)
     base = len(prefix)

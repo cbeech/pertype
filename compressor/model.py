@@ -24,7 +24,8 @@ from collections import Counter
 from compressor.dictionary import Dictionary, mine_patterns
 from compressor.freqmodel import FrequencyModel
 from compressor.tokenizer import (
-    MAX_DIST_SLOT, MAX_LEN_SLOT, MIN_MATCH, tokenize, value_slot,
+    MAX_CHAIN, MAX_DIST_SLOT, MAX_LEN_SLOT, MIN_MATCH,
+    tokenize, tokenize_optimal, value_slot,
 )
 
 MAGIC = b"CMP5"
@@ -32,6 +33,11 @@ VERSION = 5
 
 # Size cap for the trained LZ blob (contiguous corpus content).
 BLOB_CAP = 1 << 15  # 32 KiB
+
+# Shallow hash-chain depth for the use_lz validation *decision*, which is just a
+# binary choice and robust to search depth. The final shipped model is built with
+# the full depth (tokenizer.MAX_CHAIN) so its frequencies match compression.
+DECISION_CHAIN = 16
 
 
 def main_alphabet_base(n_patterns):
@@ -82,34 +88,85 @@ def _build_blob(samples, cap=BLOB_CAP):
     return bytes(blob[:cap])
 
 
-def _artifacts(samples, use_lz, max_patterns, min_len, max_len):
-    """Build dictionary, blob, and frequency models for one mode."""
+def _models_from_tokenized(tokenized, n_patterns, len_base):
+    main_counts, dist_counts = _baseline_counts(n_patterns, len_base)
+    for tokens in tokenized:
+        for tok in tokens:
+            for table, sym, _ in _token_symbols(tok, len_base):
+                (main_counts if table == "main" else dist_counts)[sym] += 1
+    return FrequencyModel.from_counts(main_counts), FrequencyModel.from_counts(dist_counts)
+
+
+def token_costs(main_model, dist_model, len_base):
+    """Bit-cost callables ``(lit, dict, match)`` for the optimal parser."""
+
+    def lit_cost(byte):
+        return main_model.cost_bits(byte)
+
+    def dict_cost(pid):
+        return main_model.cost_bits(256 + pid)
+
+    def match_cost(length, distance):
+        lslot, _ = value_slot(length - MIN_MATCH + 1)
+        dslot, _ = value_slot(distance)
+        return (
+            main_model.cost_bits(len_base + lslot) + lslot
+            + dist_model.cost_bits(dslot) + dslot
+        )
+
+    return lit_cost, dict_cost, match_cost
+
+
+def _parse(samples, dictionary, blob, use_lz, costs=None, max_chain=MAX_CHAIN):
+    """Tokenize the corpus. LZ types use the cost-optimal parser; dict-only types
+    use greedy longest-match."""
+    if not use_lz:
+        return [tokenize(s, dictionary, use_lz=False) for s in samples]
+    return [
+        tokenize_optimal(s, dictionary, costs, prefix=blob, max_chain=max_chain)
+        for s in samples
+    ]
+
+
+def _artifacts(samples, use_lz, max_patterns, min_len, max_len, max_chain=MAX_CHAIN):
+    """Build dictionary, blob, and frequency models for one mode.
+
+    For LZ types: a provisional model from a fast lazy parse supplies the costs
+    for one cost-optimal re-parse, from which the final model is built.
+    """
     dictionary = mine_patterns(
         samples, max_patterns=max_patterns, min_len=min_len, max_len=max_len
     )
     blob = _build_blob(samples) if use_lz else b""
+    n_patterns = len(dictionary.patterns)
+    len_base = main_alphabet_base(n_patterns)
+
+    if use_lz:
+        # Bootstrap costs from a fast lazy parse; the blob makes these prices
+        # match what the cost-optimal re-parse actually sees, which materially
+        # improves the final parse.
+        provisional = [
+            tokenize(s, dictionary, use_lz=True, prefix=blob, max_chain=DECISION_CHAIN)
+            for s in samples
+        ]
+        pm, pd = _models_from_tokenized(provisional, n_patterns, len_base)
+        costs = token_costs(pm, pd, len_base)
+        tokenized = _parse(samples, dictionary, blob, True, costs, max_chain)
+    else:
+        tokenized = _parse(samples, dictionary, blob, False)
+
+    main_model, dist_model = _models_from_tokenized(tokenized, n_patterns, len_base)
+    return dictionary, blob, main_model, dist_model
+
+
+def _price(samples, dictionary, blob, main_model, dist_model, use_lz, max_chain=MAX_CHAIN):
+    """Total arithmetic-coded bits for ``samples`` under the given artifacts,
+    parsed as compression will parse them (at the given search depth)."""
     len_base = main_alphabet_base(len(dictionary.patterns))
-    main_counts, dist_counts = _baseline_counts(len(dictionary.patterns), len_base)
-
-    for s in samples:
-        for tok in tokenize(s, dictionary, use_lz=use_lz, prefix=blob):
-            for table, sym, _ in _token_symbols(tok, len_base):
-                (main_counts if table == "main" else dist_counts)[sym] += 1
-
-    return (
-        dictionary,
-        blob,
-        FrequencyModel.from_counts(main_counts),
-        FrequencyModel.from_counts(dist_counts),
-    )
-
-
-def _price(samples, dictionary, blob, main_model, dist_model, use_lz):
-    """Total arithmetic-coded bits for ``samples`` under the given artifacts."""
-    len_base = main_alphabet_base(len(dictionary.patterns))
+    costs = token_costs(main_model, dist_model, len_base) if use_lz else None
     bits = 0.0
-    for s in samples:
-        for tok in tokenize(s, dictionary, use_lz=use_lz, prefix=blob):
+    for tokens in _parse(samples, dictionary, blob, use_lz, costs, max_chain):
+        for tok in tokens:
             for table, sym, extra in _token_symbols(tok, len_base):
                 model = main_model if table == "main" else dist_model
                 bits += model.cost_bits(sym) + extra
@@ -128,8 +185,8 @@ def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
 
     best_cost, chosen = None, False
     for use_lz in (False, True):
-        d, b, mm, dm = _artifacts(fit, use_lz, max_patterns, min_len, max_len)
-        cost = _price(val, d, b, mm, dm, use_lz)
+        d, b, mm, dm = _artifacts(fit, use_lz, max_patterns, min_len, max_len, DECISION_CHAIN)
+        cost = _price(val, d, b, mm, dm, use_lz, DECISION_CHAIN)
         if best_cost is None or cost < best_cost:
             best_cost, chosen = cost, use_lz
 
@@ -161,6 +218,10 @@ class Model:
     @property
     def len_base(self):
         return main_alphabet_base(len(self.dictionary.patterns))
+
+    def costs(self):
+        """Token bit-cost callables for the cost-optimal parser."""
+        return token_costs(self.main_model, self.dist_model, self.len_base)
 
     def save(self):
         parts = bytearray()
