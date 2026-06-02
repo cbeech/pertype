@@ -14,10 +14,10 @@ both, which is what makes the codec competitive with zstd's trained dictionary.
 ``detokenize(tokenize(data, d), d) == data`` always holds.
 """
 
-WINDOW = 1 << 18          # how far back an LZ match may reach (covers blob + file)
+WINDOW = 1 << 19          # how far back an LZ match may reach (covers blob + file)
 MIN_MATCH = 3             # shortest worthwhile match (dict or LZ)
 MAX_MATCH = 1 << 12       # cap on a single match length
-MAX_CHAIN = 64            # hash-chain search depth (speed vs. ratio)
+MAX_CHAIN = 128           # hash-chain search depth (speed vs. ratio)
 
 # A short LZ match only pays off when it's nearby: the distance code costs ~slot
 # bits, so a 3-byte match 5 KB away can cost more than just emitting 3 cheap

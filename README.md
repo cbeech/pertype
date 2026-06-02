@@ -113,25 +113,26 @@ both.
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
 |------|---------|----------|----------------|----------|
-| json | 5.70x | 6.18x | **9.42x** | 7.46x |
-| logs | 7.40x | 7.76x | **14.06x** | 9.59x |
-| html | 3.86x | 3.98x | **7.08x** | 5.60x |
+| json | 5.70x | 6.18x | **9.42x** | 7.98x |
+| logs | 7.40x | 7.76x | **14.06x** | 10.87x |
+| html | 3.86x | 3.98x | **7.08x** | 6.46x |
 
-On real, heterogeneous files we **beat plain gzip / zstd -19 by 21–41%** (the core
-thesis — a per-type trained model beats general compressors — holds), but
-**`zstd -19 --train` still beats us** (we reach 68–79% of its ratio). Adding
-repeat-offset modeling narrowed the gap (logs +4.4%, json +1.9%) but didn't close
-it: zstd also has a COVER-trained dictionary, a deeper optimal parse, and FSE
-coding. The shipped model is also large here (html ~980 KB), so it only amortizes
-over many files.
+On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%** (the core
+thesis — a per-type trained model beats general compressors — holds well). We do
+**not** beat `zstd -19 --train`, but reach **77–91% of it** (closest on html).
+Scaling the blob toward zstd's ~110 KB dictionary size and deepening the search
+got us here; pushing further hits sharp diminishing returns (a 512 KB blob reached
+only 8.77x on json) because **zstd is far more byte-efficient** — its 110 KB
+COVER-trained dictionary beats our much larger blob. The shipped model is large
+(real html ~1.1 MB), so it only amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
-| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | blob chosen |
-|------|---------|----------|----------------|----------|-------------|
-| json | 1.98x | 2.02x | 5.46x | **6.47x** ✅ | naive 32 KB |
-| logs | 3.80x | 3.99x | 5.95x | **6.10x** ✅ | naive 32 KB |
-| html | 2.72x | 2.70x | 10.70x | **11.28x** ✅ | coverage 64 KB |
+| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
+|------|---------|----------|----------------|----------|
+| json | 1.98x | 2.02x | 5.46x | **6.50x** ✅ |
+| logs | 3.80x | 3.99x | 5.95x | **6.27x** ✅ |
+| html | 2.72x | 2.70x | 10.70x | **11.41x** ✅ |
 
 On the synthetic corpus we beat `zstd +dict` on all three types — but the
 synthetic files are highly homogeneous, which flatters our approach. The
@@ -140,24 +141,25 @@ itself the lesson: **validate on real data.**
 
 Takeaways:
 
-- The **core thesis holds on real data**: a per-type trained model beats
-  general-purpose gzip/zstd by 18–40%. The pipeline that gets there — trained
-  dictionary, contiguous LZ blob, cost-optimal parse, arithmetic coding — each
-  step compounds.
-- But **a mature engine's trained-dictionary mode (zstd --train) still wins on
-  real, heterogeneous data.** Our synthetic-corpus wins were partly overfit to
-  homogeneous files; testing on real files corrected the picture.
-- The **blob builder is chosen per type on a validation slice** (naive vs
-  COVER-style coverage, several sizes), so the smarter builder only helps where it
-  helps and never regresses a type.
+- **We beat standard `zstd -19` everywhere** (real data: +29–62%), and on the
+  synthetic corpus we beat even `zstd --train`. The pipeline compounds: trained
+  dictionary, contiguous LZ blob, cost-optimal parse, repeat offsets, arithmetic
+  coding.
+- **We do not beat `zstd --train` on real, heterogeneous data** — we reach
+  77–91% of it. Our synthetic wins were partly overfit; real files corrected the
+  picture. zstd's remaining edge is a more byte-efficient (COVER-trained)
+  dictionary plus FSE coding.
+- The **blob builder and size are chosen per type on a validation slice** (naive
+  vs COVER-style coverage, 32–128 KB), so a strategy only helps where it helps and
+  never regresses a type.
 
 Honest costs:
 
-- **Model size** grows with the blob and dictionary (real html ~980 KB). It ships
+- **Model size** grows with the blob and dictionary (real html ~1.1 MB). It ships
   once and amortizes across many files, but on heterogeneous data that amortizes
-  less well.
+  less well — and it is much larger than zstd's 110 KB dictionary.
 - **Training is slow** and **cost-optimal parsing doesn't scale to large files**
-  in pure Python (real html — ~16 KB/file — took minutes). Compression and
+  in pure Python (real html — ~16 KB/file — took many minutes). Compression and
   decompression of small files are fine; large-file throughput needs work.
 
 ## Roadmap

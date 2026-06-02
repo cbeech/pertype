@@ -186,12 +186,14 @@ def _blob_for(spec, samples):
 
 
 # Blob strategies tried per type during the validation decision; cheapest wins.
+# Sizes go up to ~128 KiB to compete with zstd's ~110 KiB trained dictionary.
 BLOB_SPECS = (
     ("none", 0),
     ("naive", 1 << 15),
-    ("cover", 1 << 14),
     ("cover", 1 << 15),
     ("cover", 1 << 16),
+    ("cover", 1 << 17),
+    ("naive", 1 << 17),
 )
 
 
