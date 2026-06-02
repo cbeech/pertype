@@ -15,13 +15,15 @@ Two intuitions, realized honestly:
   which spends fractional bits and tracks the true entropy more closely.)
 
 On top of the cross-file dictionary, the codec also uses **LZ77 back-references**.
-When LZ is enabled, training prepends a learned **blob** (a contiguous slice of
-corpus content) to each file's history, so matches can reach into arbitrary
-substrings of trained content — the way zstd uses a dictionary — as well as
-in-file repetition. Training decides *per file type* whether LZ+blob pays off,
-**deciding on a held-out validation slice** so the blob can't overfit the choice;
-the result is recorded in the model (`use_lz`). A type already covered by the
-atomic dictionary (e.g. logs) keeps its efficient dict-only encoding.
+When LZ is enabled, training prepends a learned **blob** to each file's history,
+so matches can reach into arbitrary substrings of trained content — the way zstd
+uses a dictionary — as well as in-file repetition. Two blob builders are
+available: **naive** (whole training files concatenated, preserving long
+contiguous runs) and **coverage** (zstd-COVER-style: pack the most
+frequently-referenced content, deduplicated, most-useful nearest the data).
+Training tries dict-only plus both builders at several sizes and keeps whichever
+is cheapest **on a held-out validation slice** (so the blob can't overfit the
+choice). Different types land on different strategies — see results below.
 
 The twist that beats general-purpose tools: the model is **trained per file type
 and shipped separately**, not embedded in every compressed file the way gzip is.
@@ -102,11 +104,11 @@ input, and bytes never seen in training — proving the lossless guarantee.
 
 Ratio = raw ÷ compressed (higher is better).
 
-| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | LZ+blob |
-|------|---------|----------|----------------|----------|---------|
-| json | 1.98x | 2.02x | 5.46x | **6.47x** ✅ | on |
-| logs | 3.80x | 3.99x | 5.95x | **6.10x** ✅ | on |
-| html | 2.72x | 2.70x | 10.70x | **10.91x** ✅ | on |
+| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** | blob chosen |
+|------|---------|----------|----------------|----------|-------------|
+| json | 1.98x | 2.02x | 5.46x | **6.47x** ✅ | naive 32 KB |
+| logs | 3.80x | 3.99x | 5.95x | **6.10x** ✅ | naive 32 KB |
+| html | 2.72x | 2.70x | 10.70x | **11.28x** ✅ | coverage 64 KB |
 
 Takeaways:
 
@@ -114,11 +116,14 @@ Takeaways:
   the real apples-to-apples competitor — and beat plain gzip/zstd by 1.5–4×.
 - The wins compound across the pipeline: the contiguous **LZ blob** lets matches
   reach arbitrary trained substrings (the big lift on json/html); **cost-optimal
-  parsing** then squeezes the parse (it flipped logs to LZ, where lazy parsing
-  hadn't justified the blob); long dictionary patterns, arithmetic coding, and
-  lazy parsing each added their share earlier.
-- LZ+blob is **learned per type on a validation slice**, so it can never regress a
-  type — here all three adopt it because cost-optimal parsing makes it pay off.
+  parsing** then squeezes the parse (it justified the blob for logs); long
+  dictionary patterns, arithmetic coding, and lazy parsing each added their share.
+- The **blob builder is chosen per type on a validation slice**: html packs more
+  distinct structure with the COVER-style coverage builder at 64 KB, while json
+  and logs do better with whole-file concatenation (long contiguous runs match
+  better than fragmented coverage segments). Trying both with a naive fallback
+  means the smarter builder only ever helps — html gained (10.91x → 11.28x) with
+  no regression elsewhere.
 
 Two honest costs:
 
@@ -136,13 +141,14 @@ Two honest costs:
 We now beat `zstd +dict` on all three types. Remaining ideas, in rough order of
 expected payoff:
 
-- A smarter **blob builder** (representative-segment selection à la zstd COVER,
-  most-useful content nearest the data) rather than a raw corpus slice.
 - **Adaptive / context-modelled** probabilities (order-N) feeding the arithmetic
   coder, for text.
-- **Faster training**: reuse the blob's hash chains across files instead of
-  rebuilding them, and/or port the hot parse loop to Rust.
+- **Faster training**: the validation gate now trains several blob candidates,
+  so training is the slow part (tens of seconds to a few minutes per type).
+  Reuse the blob's hash chains across files instead of rebuilding them, evaluate
+  candidates on a subsample, and/or port the hot parse loop to Rust.
 
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
-LZ back-references with a contiguous trained blob, a validation-gated per-type
-LZ/blob decision, lazy parsing, cost-optimal parsing, and arithmetic coding.
+LZ back-references with a contiguous trained blob, two blob builders (naive and
+COVER-style coverage) chosen per type on a validation slice, lazy parsing,
+cost-optimal parsing, and arithmetic coding.

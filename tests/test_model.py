@@ -1,5 +1,23 @@
 """Tests for model training and serialization."""
-from compressor.model import Model, train
+from compressor.model import BLOB_CAP, Model, _build_blob, train
+
+
+def test_blob_contains_frequent_content_and_respects_cap():
+    # "<BOILERPLATE>" recurs in every sample; random tails do not.
+    samples = [b"<BOILERPLATE-HEADER-BLOCK>tail%05d_padding_padding_padding" % i
+               for i in range(500)]
+    blob = _build_blob(samples, cap=4096)
+    assert len(blob) <= 4096
+    assert b"<BOILERPLATE-HEADER-BLOCK>" in blob
+
+
+def test_blob_small_corpus_returned_whole():
+    samples = [b"abc", b"def"]
+    assert _build_blob(samples, cap=4096) == b"abcdef"
+
+
+def test_blob_empty_corpus():
+    assert _build_blob([], cap=4096) == b""
 
 
 def _corpus():
