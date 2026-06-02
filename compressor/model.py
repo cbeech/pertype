@@ -28,8 +28,8 @@ from compressor.tokenizer import (
     tokenize, tokenize_optimal, value_slot,
 )
 
-MAGIC = b"CMP5"
-VERSION = 5
+MAGIC = b"CMP6"
+VERSION = 6
 
 # Trained LZ blob: a contiguous slice of representative corpus content. Built by
 # COVER-style coverage selection (see _build_blob).
@@ -44,34 +44,56 @@ BLOB_STRIDE = 512       # spacing between candidate segments
 # the full depth (tokenizer.MAX_CHAIN) so its frequencies match compression.
 DECISION_CHAIN = 16
 
+# Repeat-offset modeling: a small cache of recently-used match distances. A match
+# reusing one is coded as a 1-symbol "mode" (rep index) with NO distance code —
+# repeated records/lines/rows reuse distances constantly, so this is cheap and
+# common. mode symbol 0 = normal (full distance follows); 1..REP_N = rep index.
+REP_N = 3
+REP_INIT = (1, 2, 3)
+MODE_NORMAL = 0
+
 
 def main_alphabet_base(n_patterns):
     """First main symbol used for LZ length slots."""
     return 256 + n_patterns
 
 
-def _token_symbols(tok, len_base):
-    """Yield (table, symbol, extra_bits) contributions for one token.
+def _rep_stream(tokens, len_base):
+    """Walk a token sequence, maintaining the repeat-offset cache, yielding
+    ``(table, symbol, extra_bits)`` for the main / mode / distance models.
 
-    table is "main" or "dist"; extra_bits is the count of raw bits that follow
-    the coded symbol (0 for literals/dict refs).
+    A literal or dict ref yields one main symbol. A match yields its length
+    (main) + a mode symbol; only a *normal* match also yields a distance symbol.
+    The cache update (move-to-front) is identical here, in the encoder, and in
+    the decoder, so all three stay in lockstep.
     """
-    kind = tok[0]
-    if kind == "lit":
-        yield ("main", tok[1], 0)
-    elif kind == "dict":
-        yield ("main", 256 + tok[1], 0)
-    else:  # match
-        length, distance = tok[1], tok[2]
-        lslot, _ = value_slot(length - MIN_MATCH + 1)
-        yield ("main", len_base + lslot, lslot)
-        dslot, _ = value_slot(distance)
-        yield ("dist", dslot, dslot)
+    reps = list(REP_INIT)
+    for tok in tokens:
+        kind = tok[0]
+        if kind == "lit":
+            yield ("main", tok[1], 0)
+        elif kind == "dict":
+            yield ("main", 256 + tok[1], 0)
+        else:  # match
+            length, distance = tok[1], tok[2]
+            lslot, _ = value_slot(length - MIN_MATCH + 1)
+            yield ("main", len_base + lslot, lslot)
+            if distance in reps:
+                i = reps.index(distance)
+                yield ("mode", i + 1, 0)
+                reps.pop(i)
+            else:
+                yield ("mode", MODE_NORMAL, 0)
+                dslot, _ = value_slot(distance)
+                yield ("dist", dslot, dslot)
+                reps.pop()
+            reps.insert(0, distance)
 
 
 def _baseline_counts(n_patterns, len_base):
     main = Counter()
     dist = Counter()
+    mode = Counter()
     for b in range(256):
         main[b] = 1
     for pid in range(n_patterns):
@@ -80,7 +102,9 @@ def _baseline_counts(n_patterns, len_base):
         main[len_base + slot] = 1
     for slot in range(MAX_DIST_SLOT + 1):
         dist[slot] = 1
-    return main, dist
+    for m in range(REP_N + 1):
+        mode[m] = 1
+    return main, dist, mode
 
 
 def _build_blob(samples, cap=BLOB_CAP, d=BLOB_DMER, seg=BLOB_SEGMENT,
@@ -172,16 +196,27 @@ BLOB_SPECS = (
 
 
 def _models_from_tokenized(tokenized, n_patterns, len_base):
-    main_counts, dist_counts = _baseline_counts(n_patterns, len_base)
+    main_counts, dist_counts, mode_counts = _baseline_counts(n_patterns, len_base)
+    tables = {"main": main_counts, "dist": dist_counts, "mode": mode_counts}
     for tokens in tokenized:
-        for tok in tokens:
-            for table, sym, _ in _token_symbols(tok, len_base):
-                (main_counts if table == "main" else dist_counts)[sym] += 1
-    return FrequencyModel.from_counts(main_counts), FrequencyModel.from_counts(dist_counts)
+        for table, sym, _ in _rep_stream(tokens, len_base):
+            tables[table][sym] += 1
+    return (
+        FrequencyModel.from_counts(main_counts),
+        FrequencyModel.from_counts(dist_counts),
+        FrequencyModel.from_counts(mode_counts),
+    )
 
 
-def token_costs(main_model, dist_model, len_base):
-    """Bit-cost callables ``(lit, dict, match)`` for the optimal parser."""
+def token_costs(main_model, dist_model, mode_model, len_base):
+    """Bit-cost callables ``(lit, dict, match)`` for the optimal parser.
+
+    The parser is repeat-offset-unaware (the cache is path-dependent), so a match
+    is priced as a *normal* match: length + the normal-mode symbol + a full
+    distance. Reuse only ever makes the real coded match cheaper than this, so the
+    estimate is a safe upper bound.
+    """
+    normal_mode_cost = mode_model.cost_bits(MODE_NORMAL)
 
     def lit_cost(byte):
         return main_model.cost_bits(byte)
@@ -194,6 +229,7 @@ def token_costs(main_model, dist_model, len_base):
         dslot, _ = value_slot(distance)
         return (
             main_model.cost_bits(len_base + lslot) + lslot
+            + normal_mode_cost
             + dist_model.cost_bits(dslot) + dslot
         )
 
@@ -232,28 +268,30 @@ def _artifacts(samples, blob, max_patterns, min_len, max_len, max_chain=MAX_CHAI
             tokenize(s, dictionary, use_lz=True, prefix=blob, max_chain=DECISION_CHAIN)
             for s in samples
         ]
-        pm, pd = _models_from_tokenized(provisional, n_patterns, len_base)
-        costs = token_costs(pm, pd, len_base)
+        pm, pd, pmode = _models_from_tokenized(provisional, n_patterns, len_base)
+        costs = token_costs(pm, pd, pmode, len_base)
         tokenized = _parse(samples, dictionary, blob, True, costs, max_chain)
     else:
         tokenized = _parse(samples, dictionary, blob, False)
 
-    main_model, dist_model = _models_from_tokenized(tokenized, n_patterns, len_base)
-    return dictionary, main_model, dist_model
+    main_model, dist_model, mode_model = _models_from_tokenized(
+        tokenized, n_patterns, len_base
+    )
+    return dictionary, main_model, dist_model, mode_model
 
 
-def _price(samples, dictionary, blob, main_model, dist_model, max_chain=MAX_CHAIN):
+def _price(samples, dictionary, blob, main_model, dist_model, mode_model,
+           max_chain=MAX_CHAIN):
     """Total arithmetic-coded bits for ``samples`` under the given artifacts,
     parsed as compression will parse them (at the given search depth)."""
     use_lz = len(blob) > 0
     len_base = main_alphabet_base(len(dictionary.patterns))
-    costs = token_costs(main_model, dist_model, len_base) if use_lz else None
+    costs = token_costs(main_model, dist_model, mode_model, len_base) if use_lz else None
+    models = {"main": main_model, "dist": dist_model, "mode": mode_model}
     bits = 0.0
     for tokens in _parse(samples, dictionary, blob, use_lz, costs, max_chain):
-        for tok in tokens:
-            for table, sym, extra in _token_symbols(tok, len_base):
-                model = main_model if table == "main" else dist_model
-                bits += model.cost_bits(sym) + extra
+        for table, sym, extra in _rep_stream(tokens, len_base):
+            bits += models[table].cost_bits(sym) + extra
     return bits
 
 
@@ -274,14 +312,14 @@ def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     best_cost, best_spec = None, ("none", 0)
     for spec in BLOB_SPECS:
         blob = _blob_for(spec, fit)
-        d, mm, dm = _artifacts(fit, blob, max_patterns, min_len, max_len, DECISION_CHAIN)
-        cost = _price(val, d, blob, mm, dm, DECISION_CHAIN)
+        d, mm, dm, mo = _artifacts(fit, blob, max_patterns, min_len, max_len, DECISION_CHAIN)
+        cost = _price(val, d, blob, mm, dm, mo, DECISION_CHAIN)
         if best_cost is None or cost < best_cost:
             best_cost, best_spec = cost, spec
 
     # Rebuild final artifacts on all samples with the chosen blob (full depth).
     blob = _blob_for(best_spec, samples)
-    dictionary, main_model, dist_model = _artifacts(
+    dictionary, main_model, dist_model, mode_model = _artifacts(
         samples, blob, max_patterns, min_len, max_len, MAX_CHAIN
     )
     return Model(
@@ -290,17 +328,19 @@ def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
         blob=blob,
         main_model=main_model,
         dist_model=dist_model,
+        mode_model=mode_model,
         use_lz=len(blob) > 0,
     )
 
 
 class Model:
-    def __init__(self, type_id, dictionary, main_model, dist_model, use_lz,
-                 blob=b"", version=VERSION):
+    def __init__(self, type_id, dictionary, main_model, dist_model, mode_model,
+                 use_lz, blob=b"", version=VERSION):
         self.type_id = type_id
         self.dictionary = dictionary
         self.main_model = main_model
         self.dist_model = dist_model
+        self.mode_model = mode_model
         self.use_lz = use_lz
         self.blob = blob
         self.version = version
@@ -311,7 +351,7 @@ class Model:
 
     def costs(self):
         """Token bit-cost callables for the cost-optimal parser."""
-        return token_costs(self.main_model, self.dist_model, self.len_base)
+        return token_costs(self.main_model, self.dist_model, self.mode_model, self.len_base)
 
     def save(self):
         parts = bytearray()
@@ -325,6 +365,7 @@ class Model:
             self.dictionary.serialize(),
             self.main_model.serialize(),
             self.dist_model.serialize(),
+            self.mode_model.serialize(),
             self.blob,
         ):
             parts += len(chunk).to_bytes(4, "big")
@@ -346,7 +387,7 @@ class Model:
         pos += tid_len
 
         chunks = []
-        for _ in range(4):
+        for _ in range(5):
             n = int.from_bytes(blob[pos : pos + 4], "big")
             pos += 4
             chunks.append(blob[pos : pos + n])
@@ -357,7 +398,8 @@ class Model:
             dictionary=Dictionary.deserialize(chunks[0]),
             main_model=FrequencyModel.deserialize(chunks[1]),
             dist_model=FrequencyModel.deserialize(chunks[2]),
-            blob=chunks[3],
+            mode_model=FrequencyModel.deserialize(chunks[3]),
+            blob=chunks[4],
             use_lz=use_lz,
             version=version,
         )

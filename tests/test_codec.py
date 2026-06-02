@@ -34,6 +34,15 @@ def test_roundtrip_bytes_never_seen_in_training():
     assert decompress(compress(data, m), m) == data
 
 
+def test_repeat_offset_data_roundtrips():
+    # Fixed-stride repeated records reuse the same match distance over and over,
+    # which is exactly what repeat-offset modeling targets. Must round-trip.
+    samples = [b"record %04d | name=%s | status=ok\n" % (i, b"abcdef") for i in range(120)]
+    m = train(samples, type_id="logs", max_patterns=256)
+    data = b"".join(b"record %04d | name=zzzzzz | status=ok\n" % i for i in range(40))
+    assert decompress(compress(data, m), m) == data
+
+
 def test_compresses_structured_data():
     m, _ = _model()
     data = b'{"name":"itemXYZ","value":12345,"ok":true}' * 20

@@ -43,6 +43,7 @@ def test_save_load_roundtrip():
     assert m2.dictionary.patterns == m.dictionary.patterns
     assert m2.main_model.freqs == m.main_model.freqs
     assert m2.dist_model.freqs == m.dist_model.freqs
+    assert m2.mode_model.freqs == m.mode_model.freqs
 
 
 def test_lz_decision_is_a_bool():

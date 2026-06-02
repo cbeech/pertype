@@ -27,16 +27,20 @@ and tables are shipped once and amortized across every file of the type.
 import zlib
 
 from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+from compressor.model import MODE_NORMAL, REP_INIT
 from compressor.tokenizer import (
     MIN_MATCH, detokenize, tokenize, tokenize_optimal, value_from, value_slot,
 )
 
 MAGIC = b"CZ"
-FMT_VERSION = 3
+FMT_VERSION = 4
 
 
 def _encode_tokens(tokens, model, enc):
-    main, dist, len_base = model.main_model, model.dist_model, model.len_base
+    main, dist, mode, len_base = (
+        model.main_model, model.dist_model, model.mode_model, model.len_base
+    )
+    reps = list(REP_INIT)  # repeat-offset cache, in lockstep with the decoder
     for tok in tokens:
         kind = tok[0]
         if kind == "lit":
@@ -48,14 +52,25 @@ def _encode_tokens(tokens, model, enc):
             lslot, lextra = value_slot(length - MIN_MATCH + 1)
             main.encode(enc, len_base + lslot)
             enc.encode_bits(lextra, lslot)
-            dslot, dextra = value_slot(distance)
-            dist.encode(enc, dslot)
-            enc.encode_bits(dextra, dslot)
+            if distance in reps:
+                i = reps.index(distance)
+                mode.encode(enc, i + 1)        # reuse a cached distance — no dist code
+                reps.pop(i)
+            else:
+                mode.encode(enc, MODE_NORMAL)
+                dslot, dextra = value_slot(distance)
+                dist.encode(enc, dslot)
+                enc.encode_bits(dextra, dslot)
+                reps.pop()
+            reps.insert(0, distance)
 
 
 def _decode_tokens(dec, model, n_tokens):
-    main, dist, len_base = model.main_model, model.dist_model, model.len_base
+    main, dist, mode, len_base = (
+        model.main_model, model.dist_model, model.mode_model, model.len_base
+    )
     n_patterns = len(model.dictionary.patterns)
+    reps = list(REP_INIT)
     tokens = []
     for _ in range(n_tokens):
         sym = main.decode(dec)
@@ -66,8 +81,15 @@ def _decode_tokens(dec, model, n_tokens):
         else:
             lslot = sym - len_base
             length = value_from(lslot, dec.decode_bits(lslot)) + MIN_MATCH - 1
-            dslot = dist.decode(dec)
-            distance = value_from(dslot, dec.decode_bits(dslot))
+            m = mode.decode(dec)
+            if m == MODE_NORMAL:
+                dslot = dist.decode(dec)
+                distance = value_from(dslot, dec.decode_bits(dslot))
+                reps.pop()
+            else:
+                distance = reps[m - 1]
+                reps.pop(m - 1)
+            reps.insert(0, distance)
             tokens.append(("match", length, distance))
     return tokens
 
