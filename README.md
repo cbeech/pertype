@@ -113,16 +113,17 @@ both.
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
 |------|---------|----------|----------------|----------|
-| json | 5.70x | 6.18x | **9.42x** | 7.32x |
-| logs | 7.40x | 7.76x | **14.06x** | 9.19x |
-| html | 3.86x | 3.98x | **7.08x** | 5.57x |
+| json | 5.70x | 6.18x | **9.42x** | 7.46x |
+| logs | 7.40x | 7.76x | **14.06x** | 9.59x |
+| html | 3.86x | 3.98x | **7.08x** | 5.60x |
 
-On real, heterogeneous files we **beat plain gzip / zstd -19 by 18–40%** (the core
+On real, heterogeneous files we **beat plain gzip / zstd -19 by 21–41%** (the core
 thesis — a per-type trained model beats general compressors — holds), but
-**`zstd -19 --train` clearly beats us** (we reach 65–79% of its ratio). zstd's
-edge on hard data comes from machinery we don't have: a COVER-trained dictionary,
-repeat-offset modeling, a deeper optimal parse, and FSE coding. The shipped model
-is also large here (html ~980 KB), so it only amortizes over many files.
+**`zstd -19 --train` still beats us** (we reach 68–79% of its ratio). Adding
+repeat-offset modeling narrowed the gap (logs +4.4%, json +1.9%) but didn't close
+it: zstd also has a COVER-trained dictionary, a deeper optimal parse, and FSE
+coding. The shipped model is also large here (html ~980 KB), so it only amortizes
+over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
@@ -164,12 +165,14 @@ Honest costs:
 The real-world gap to `zstd --train` is the thing to close. In rough order of
 expected payoff:
 
-- **Repeat-offset modeling** (reuse recent match distances cheaply) — a big part
-  of zstd's edge, and a clean addition to the token/cost model.
 - A genuinely better **dictionary trainer for heterogeneous data** (proper COVER
-  / suffix-automaton selection) — ours is tuned to homogeneous corpora.
+  / suffix-automaton selection) — ours is tuned to homogeneous corpora, and the
+  dictionary is the largest remaining lever on real data.
 - **Faster parse** (reuse blob hash chains across files, Rust hot loop) so
   cost-optimal depth is affordable on large files.
+- **Rep-offset-aware parsing**: the parser currently prices matches as normal
+  (rep-unaware); a DP over (position × rep-state) would let it actively prefer
+  distance reuse, beyond today's post-hoc rep encoding.
 - **Adaptive / context-modelled** literal coding — tried (order-1 with per-file
   adaptation); measured ~0.5% on these corpora because residual literals are
   near-random after dict+LZ, so it was shelved. Likely worth more on
@@ -178,5 +181,5 @@ expected payoff:
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
 LZ back-references with a contiguous trained blob, two blob builders (naive and
 COVER-style coverage) chosen per type on a validation slice, lazy parsing,
-cost-optimal parsing, and arithmetic coding. Validated on both synthetic and
-real-world corpora.
+cost-optimal parsing, repeat-offset modeling, and arithmetic coding. Validated on
+both synthetic and real-world corpora.
