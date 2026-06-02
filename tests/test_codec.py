@@ -34,6 +34,17 @@ def test_roundtrip_bytes_never_seen_in_training():
     assert decompress(compress(data, m), m) == data
 
 
+def test_numeric_transform_roundtrips_and_is_selected():
+    # 16-bit little-endian smooth-ish data: training should pick a decorrelating
+    # transform, and compress/decompress must still be byte-exact.
+    samples = [b"".join(((i * 5 + k) & 0xFFFF).to_bytes(2, "little")
+                        for i in range(400)) for k in range(40)]
+    m = train(samples, type_id="num", max_patterns=256)
+    assert m.transform != (), "expected a non-identity transform for numeric data"
+    data = b"".join(((i * 5 + 7) & 0xFFFF).to_bytes(2, "little") for i in range(400))
+    assert decompress(compress(data, m), m) == data
+
+
 def test_repeat_offset_data_roundtrips():
     # Fixed-stride repeated records reuse the same match distance over and over,
     # which is exactly what repeat-offset modeling targets. Must round-trip.

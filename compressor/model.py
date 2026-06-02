@@ -21,6 +21,7 @@ encodable later — that is what guarantees losslessness on unseen files.
 """
 from collections import Counter
 
+from compressor import transform
 from compressor.dictionary import Dictionary, mine_patterns
 from compressor.freqmodel import FrequencyModel
 from compressor.tokenizer import (
@@ -28,8 +29,8 @@ from compressor.tokenizer import (
     tokenize, tokenize_optimal, value_slot,
 )
 
-MAGIC = b"CMP6"
-VERSION = 6
+MAGIC = b"CMP7"
+VERSION = 7
 
 # Trained LZ blob: a contiguous slice of representative corpus content. Built by
 # COVER-style coverage selection (see _build_blob).
@@ -300,6 +301,11 @@ def _price(samples, dictionary, blob, main_model, dist_model, mode_model,
 def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     samples = list(samples)
 
+    # Pick a reversible decorrelating transform for this type (delta/split for
+    # numeric/image data, identity for text), then train on the transformed data.
+    tspec = transform.select(samples)
+    samples = [transform.apply(s, tspec) for s in samples]
+
     # Decide use_lz on a held-out validation slice so the blob can't overfit it.
     if len(samples) >= 5:
         cut = max(1, len(samples) * 4 // 5)
@@ -331,19 +337,21 @@ def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
         main_model=main_model,
         dist_model=dist_model,
         mode_model=mode_model,
+        transform=tspec,
         use_lz=len(blob) > 0,
     )
 
 
 class Model:
     def __init__(self, type_id, dictionary, main_model, dist_model, mode_model,
-                 use_lz, blob=b"", version=VERSION):
+                 use_lz, transform=(), blob=b"", version=VERSION):
         self.type_id = type_id
         self.dictionary = dictionary
         self.main_model = main_model
         self.dist_model = dist_model
         self.mode_model = mode_model
         self.use_lz = use_lz
+        self.transform = transform
         self.blob = blob
         self.version = version
 
@@ -368,6 +376,7 @@ class Model:
             self.main_model.serialize(),
             self.dist_model.serialize(),
             self.mode_model.serialize(),
+            transform.serialize(self.transform),
             self.blob,
         ):
             parts += len(chunk).to_bytes(4, "big")
@@ -389,7 +398,7 @@ class Model:
         pos += tid_len
 
         chunks = []
-        for _ in range(5):
+        for _ in range(6):
             n = int.from_bytes(blob[pos : pos + 4], "big")
             pos += 4
             chunks.append(blob[pos : pos + n])
@@ -401,7 +410,8 @@ class Model:
             main_model=FrequencyModel.deserialize(chunks[1]),
             dist_model=FrequencyModel.deserialize(chunks[2]),
             mode_model=FrequencyModel.deserialize(chunks[3]),
-            blob=chunks[4],
+            transform=transform.deserialize(chunks[4]),
+            blob=chunks[5],
             use_lz=use_lz,
             version=version,
         )

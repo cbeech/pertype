@@ -26,6 +26,7 @@ and tables are shipped once and amortized across every file of the type.
 """
 import zlib
 
+from compressor import transform
 from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
 from compressor.model import MODE_NORMAL, REP_INIT
 from compressor.tokenizer import (
@@ -95,10 +96,12 @@ def _decode_tokens(dec, model, n_tokens):
 
 
 def compress(data, model):
+    # Decorrelate first; the rest of the pipeline encodes the transformed bytes.
+    tdata = transform.apply(data, model.transform)
     if model.use_lz:
-        tokens = tokenize_optimal(data, model.dictionary, model.costs(), prefix=model.blob)
+        tokens = tokenize_optimal(tdata, model.dictionary, model.costs(), prefix=model.blob)
     else:
-        tokens = tokenize(data, model.dictionary, use_lz=False)
+        tokens = tokenize(tdata, model.dictionary, use_lz=False)
     enc = ArithmeticEncoder()
     _encode_tokens(tokens, model, enc)
     enc.finish()
@@ -146,7 +149,8 @@ def decompress(blob, model):
     try:
         dec = ArithmeticDecoder(blob[pos:])
         tokens = _decode_tokens(dec, model, n_tokens)
-        data = detokenize(tokens, model.dictionary, prefix=model.blob)
+        tdata = detokenize(tokens, model.dictionary, prefix=model.blob)
+        data = transform.invert(tdata, model.transform)
     except (EOFError, ValueError, IndexError) as exc:
         raise ValueError(f"corrupt payload: {exc}") from exc
 
