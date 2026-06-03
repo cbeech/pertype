@@ -144,10 +144,19 @@ temporal redundancy, which is usually the dominant source of compressibility.
       integer → half → quarter. Adds +1.5–2% over half-pel: akiyo +58%, foreman
       +10%, stefan +7% vs intra-only JXL. Diminishing returns after half-pel.
       Round-trip verified. Finished arc: stefan −18%→+7%, foreman −16%→+10%.
-- [ ] **NEXT for video**: the colour planes (U/V); a real `ffmpeg`/FFV1 baseline
-      once available; SKIP against the best MC MV (not just MV 0); and moving off
-      the per-pixel MED reconstruction loop (diagonal-wavefront or C) if speed
-      matters. Then fold the prototype into a real `Transform`/`Coder` video path.
+- [x] **colour planes (U/V)** (`scripts/video_color_benchmark.py`): full pipeline
+      run per plane on the 4:2:0 chroma, 60 frames, round-trip verified. Full-YUV
+      totals beat intra-only JXL on every clip — akiyo +56% (7.15x vs raw),
+      foreman +9%, stefan +5%. But chroma per-plane only wins on static content;
+      on motion it's a wash/slight loss (stefan U/V −2–4%) because an *independent*
+      chroma motion search spends MV+mode bits that don't pay on smooth low-energy
+      planes.
+- [ ] **NEXT for video: derive chroma MVs from luma** (scaled by subsampling)
+      instead of an independent chroma search — removes the chroma MV/mode overhead
+      that costs on motion clips. Then a real `ffmpeg`/FFV1 baseline; SKIP against
+      the best MC MV (not just MV 0); move off the per-pixel MED reconstruction
+      loop if speed matters; fold the prototype into a real `Transform`/`Coder`
+      video path.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

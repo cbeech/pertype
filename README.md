@@ -491,9 +491,27 @@ and the search refines integer → half → quarter. On top of half-pel it adds
 intra-only JXL — diminishing returns after the half-pel step, as expected. The
 finished inter-frame coder (MC + quarter-pel + per-block SKIP/INTER/INTRA with MED
 intra, all `ctxcoder`-coded, every frame bit-exact) takes **stefan from −18% to
-+7%** and **foreman from −16% to +10%**. Remaining polish: the colour planes (U/V),
-a real FFV1 baseline once `ffmpeg` is available, and SKIP against the best MV (not
-just MV 0).
++7%** and **foreman from −16% to +10%**.
+
+**Colour planes.** Everything above is luma; the clips are 4:2:0, so U/V are
+quarter-resolution chroma. Running the full pipeline independently on each plane
+(`scripts/video_color_benchmark.py`, 60 frames, round-trip verified), the full-YUV
+totals vs per-plane intra-only JXL:
+
+| clip | Y | U | V | total | vs raw YUV |
+|--|--|--|--|--|--|
+| akiyo (static) | +58% | +49% | +49% | **+56%** | 7.15× (intra 3.17×) |
+| foreman (pan) | +10% | +10% | +0% | **+9%** | 2.74× (intra 2.49×) |
+| stefan (motion) | +7% | −4% | −2% | **+5%** | 2.22× (intra 2.11×) |
+
+The total beats intra-only on every clip. On static content chroma compresses as
+well as luma (+49%), but on the motion clips chroma is a wash or slight loss
+(stefan U/V −2–4%): chroma is smooth and low-energy where intra-JXL is already
+strong, and running an *independent* motion search per chroma plane spends MV and
+mode bits that don't pay off. The standard fix — **derive chroma MVs from the luma
+MVs** (scaled by the subsampling) rather than searching again — would remove that
+overhead and is the next step. Remaining polish: a real FFV1 baseline once
+`ffmpeg` is available, and SKIP against the best MV (not just MV 0).
 
 ## Roadmap
 
