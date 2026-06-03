@@ -453,11 +453,28 @@ so the round-trip genuinely exercises the causal chain) — verified bit-exact.
 
 Now **every clip beats intra-only JXL**, including high-motion stefan: MED codes
 the occlusion blocks well enough that 27–41% of blocks on the motion clips choose
-intra. The full arc — temporal-delta → motion compensation → per-block mode
-selection → MED intra — takes foreman from −16% to +5% and stefan from −18% to
-+2%, all reusing the project's own primitives (the block search mirrors the LZ
-match-finder; the residual coder is `ctxcoder`). Next refinements: sub-pixel
-motion vectors and a per-block skip mode.
+intra, all reusing the project's own primitives (the block search mirrors the LZ
+match-finder; the residual coder is `ctxcoder`).
+
+**Half-pixel motion vectors** add the last gain (`scripts/video_subpel_benchmark.py`).
+After the integer search, each block is refined over the 9 half-pel positions
+around its best integer MV (bilinear interpolation of the previous frame), keeping
+the lower-SAD one; MVs are then coded in half-pel units. Real motion is rarely
+integer-aligned, so this shrinks the inter residual on the moving clips:
+
+| clip | mode int-MV | mode half-pel | vs intra-JXL |
+|--|--|--|--|
+| akiyo (static) | 0.945 MB | 0.934 MB | **+56%** |
+| foreman (pan) | 2.716 MB | 2.600 MB | **+9%** |
+| stefan (motion) | 3.172 MB | 3.054 MB | **+6%** |
+
+Half-pel adds +1–4% on top of mode selection, and by improving inter prediction it
+lets fewer blocks fall back to intra (foreman 27%→16%). The complete arc —
+temporal-delta → motion compensation → per-block mode selection → MED intra →
+half-pel MVs — takes **stefan from −18% to +6%** and **foreman from −16% to +9%**,
+beating intra-only JXL (itself stronger than FFV1's intra) on every clip. Further
+gains would come from quarter-pel MVs, a per-block skip mode, and the colour
+planes; a real FFV1 baseline awaits `ffmpeg`.
 
 ## Roadmap
 

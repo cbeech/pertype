@@ -127,10 +127,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       intra-only JXL**, including high motion: foreman −16%→**+5%**, stefan
       −18%→**+2%**, akiyo +55%; 27–41% of motion-clip blocks choose intra. Full
       arc: temporal-delta → MC → mode selection → MED.
-- [ ] **NEXT for video: sub-pixel motion vectors** (half/quarter-pel interpolation)
-      and a per-block **skip** mode; then colour planes (U/V) and a real `ffmpeg`
-      FFV1 baseline once available. Move the prototype off the per-pixel MED
-      reconstruction loop (diagonal-wavefront or C) if speed matters.
+- [x] **half-pixel motion vectors** (`scripts/video_subpel_benchmark.py`): after the
+      integer search, refine each block over the 9 half-pel positions (bilinear
+      interpolation), code MVs in half-pel units. Adds +1–4% over integer MVs and
+      improves inter enough that fewer blocks fall back to intra. 60 frames vs
+      intra-only JXL: akiyo +56%, foreman +5%→**+9%**, stefan +2%→**+6%**.
+      Round-trip verified. Full arc takes stefan −18%→+6%, foreman −16%→+9%.
+- [ ] **NEXT for video: quarter-pixel MVs**, a per-block **skip** mode (zero
+      residual), and the colour planes (U/V). Real `ffmpeg`/FFV1 baseline once
+      available. Move off the per-pixel MED reconstruction loop (diagonal-wavefront
+      or C) if speed matters.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 
