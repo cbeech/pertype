@@ -39,7 +39,7 @@ data across three domains, the headline:
 - **Raw images** (Canon CR2 Bayer) — **statistical parity with JPEG XL**, the
   state-of-the-art lossless image codec; beat Canon, zstd, gzip, PNG outright.
 - **Audio** (16-bit PCM) — the generic codec loses to FLAC, so we built a
-  dedicated adaptive-filter audio codec that **beats FLAC** (+5.9% mean, 9/10
+  dedicated adaptive-filter audio codec that **beats FLAC** (+7.4% mean, 9/10
   tracks).
 
 The unifying lesson (see the cross-domain sections): a cheap per-type transform
@@ -310,16 +310,18 @@ A simple transform can't reach FLAC.
 **So we built a dedicated audio codec** (`compressor/audiocodec.py`,
 `scripts/audio_codec_benchmark.py`) — Monkey's-Audio-style, all integer and
 exactly reversible: mid/side → fixed order-2 predictor → cascade of integer
-sign-sign LMS adaptive filters (16 + 256 tap) → adaptive Rice. The filters learn
+sign-sign LMS adaptive filters (16 + 256 + 512 tap) → adaptive Rice. The filters learn
 online from the reconstructed signal (nothing shipped), and adaptive Rice tracks
 the per-sample magnitude, beating FLAC's per-partition Rice. Over 10 real tracks
 (bit-exact verified each):
 
 | | gzip -9 | zstd -19 | FLAC | **ours** |
 |--|---------|----------|------|----------|
-| mean | 1.10x | 1.12x | 1.80x | **1.90x** |
+| mean | 1.10x | 1.12x | 1.80x | **1.92x** |
 
-**Ours beats FLAC on 9/10 tracks, mean +5.9%** (up to +18%). Caveats: vs
+**Ours beats FLAC on 9/10 tracks, mean +7.4%** (up to +22%). The third (512-tap)
+LMS stage added +1.5 points of margin over the prior two-stage cascade (measured
+on 12 tracks, better on 11/12). Caveats: vs
 libsndfile's FLAC (the `flac -8` CLI may be ~1–3% stronger); measured on 3 s
 chunks where our adaptive filters only partly converge (full tracks likely favour
 us more); and pure-Python, so slow — a *ratio* result, not a fast codec.

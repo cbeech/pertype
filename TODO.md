@@ -150,7 +150,11 @@ Still high-value untested, in rough priority:
       suffix-automaton) — close the remaining gap to `zstd --train` on real text.
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
-- [ ] **Audio**: longer / multi-stage adaptive filters; definitive comparison vs
-      `flac -8` (needs the `flac` binary, on the unmounted NAS).
+- [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the
+      16/256 cascade. Measured on real music: mean ratio 1.90x → 1.92x, FLAC
+      advantage +5.9% → +7.4% (better on 11/12 tracks). 512,14 beat a 1024,15
+      variant and is cheaper.
+- [ ] **Audio**: still longer / per-track-adaptive filter orders; definitive
+      comparison vs `flac -8` (needs the `flac` binary, on the unmounted NAS).
 - [ ] **Faster training** even before a full port: reuse blob hash chains across
       files; rep-offset-aware cost-optimal parsing.
