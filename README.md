@@ -216,6 +216,29 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   with a from-scratch byte coder + one auto-discovered transform, no hardcoded
   image knowledge, is the point.
 
+## Audio domain — where the specialist wins
+
+Lossless audio (16-bit PCM, real music) decoded via libsndfile; **FLAC** is the
+purpose-built baseline (`scripts/audio_benchmark.py`). The gate again
+auto-selects `delta(4)+split(2)`.
+
+| gzip -9 | zstd -19 | **ours** | FLAC |
+|---------|----------|----------|------|
+| 1.03x | 1.03x | **1.16x** | **1.59x** |
+
+The transform helps (we beat gzip/zstd, which are near-helpless on PCM), **but
+FLAC wins decisively.** Unlike Bayer mosaics, audio rewards *adaptive high-order
+linear prediction* (LPC): a fixed stride-delta is only a 1st-order predictor, and
+fixed orders ≥3 actually get *worse* (they amplify noise). No simple transform
+reaches FLAC.
+
+This completes the cross-domain map and the unifying principle: **a per-type
+reversible transform closes the gap to a domain specialist by as much as that
+specialist's modeling exceeds simple decorrelation** — large for Bayer (1st-order
+structure → JPEG-XL parity), small for audio (adaptive LPC → FLAC stays ahead).
+It tells you exactly when this architecture is worth deploying: structured data
+whose redundancy a cheap reversible transform can expose.
+
 ## Roadmap
 
 The real-world gap to `zstd --train` is the thing to close. In rough order of
