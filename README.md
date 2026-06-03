@@ -165,6 +165,7 @@ Ported so far, with measured speedups:
 | context-adaptive arithmetic coder (`ctxcoder`) | ~45–60× | the coder that beats xz on ECG: a record went 12.6 s → 0.28 s to encode |
 | text/LZ codec arithmetic loop (`codec.py`) | enc ~27× / dec ~46× | the per-symbol token coder (3 freq models + repeat-offset cache + slot bits), byte-identical |
 | LZ match-finder (`lz_forward`) | ~15× (whole optimal parse) | the 3-byte hash-chain search + `_match_len`, 61% of the parse; integer-exact candidates → identical tokens. `compress` of 0.8 MB text: 111 s → 7.6 s |
+| video MED reconstruction (`med_fill`) | ~2.6× decode (motion clips; more on intra-heavy) | the causal per-pixel intra-reconstruction loop in `videocodec.decode`, byte-identical |
 | greedy match-finder + dict matcher (`lz_best`, `dict_match_all`) | compress 7.6 s → 2.9 s; train 103 s → 67 s | the per-position search for the greedy/lazy parse (training) and the trained-dictionary longest-match; integer-exact → identical tokens |
 | cost-optimal backward DP (`lz_dp`) | compress 2.9 s → 0.78 s | the parse's DP, on a match-cost lookup table; double arithmetic bit-identical → identical tokens. **End-to-end `compress` of 0.8 MB: 111 s → 0.78 s (~140×).** |
 
@@ -537,8 +538,23 @@ from it byte-exact — quarter-pel MC + per-block SKIP/INTER/INTRA (MED), residu
 and MVs via `ctxcoder`, frame 0 all-intra, depends only on numpy + ctxcoder. It's
 covered by round-trip tests (all block modes, single-frame, fully-static, YUV) and
 verified on real clips (akiyo 6.58×, foreman 2.30× vs raw luma, 20 frames,
-bit-exact). Remaining polish: a real FFV1 baseline once `ffmpeg` is available, and
-SKIP against the best MV (not just MV 0).
+bit-exact), and exposed on the CLI (`video-encode` / `video-decode` on `.y4m`).
+
+**Real FFV1 baseline.** With a static ffmpeg (from the `imageio-ffmpeg` wheel) we
+can now compare against **FFV1** — the standard intra-only lossless video codec —
+instead of the JXL stand-in (`scripts/video_ffv1_benchmark.py`, full YUV, 60
+frames, round-trip verified). FFV1 is intra-only, so our motion compensation wins
+across the board:
+
+| clip | raw YUV | FFV1 | ours | ours vs FFV1 |
+|--|--|--|--|--|
+| akiyo (static) | 9.12 MB | 2.78 MB | 1.31 MB | **+53%** |
+| foreman (pan) | 9.12 MB | 3.69 MB | 3.38 MB | **+8%** |
+| stefan (motion) | 9.12 MB | 4.52 MB | 4.16 MB | **+8%** |
+
+JXL-intra came out within ~3% of FFV1 throughout, confirming it was a fair
+stand-in. We beat the real specialist by exploiting the temporal redundancy it
+ignores. Remaining polish: SKIP against the best MV (not just MV 0).
 
 ## Roadmap
 

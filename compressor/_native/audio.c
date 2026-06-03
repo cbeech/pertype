@@ -417,6 +417,29 @@ void lz_decode(const uint8_t *in, long len, long n_tokens,
     }
 }
 
+/* --- causal MED reconstruction (mirrors videocodec._med_fill) --------------
+ *
+ * For each intra pixel in raster order, predict from already-reconstructed
+ * neighbours (left a, above b, above-left c) with the JPEG-LS / LOCO-I median,
+ * then add the residual. Non-intra pixels are left as the caller filled them
+ * (skip/inter), so neighbours read by an intra pixel are always final. rec is
+ * modified in place. Integer-exact, so byte-identical to the Python loop. */
+void med_fill(int64_t *rec, const uint8_t *intra, const int64_t *residual,
+              long H, long W) {
+    for (long y = 0; y < H; y++) {
+        for (long x = 0; x < W; x++) {
+            long i = y * W + x;
+            if (!intra[i]) continue;
+            int64_t a = (x > 0) ? rec[i - 1] : ((y > 0) ? rec[i - W] : 128);
+            int64_t b = (y > 0) ? rec[i - W] : a;
+            int64_t c = (x > 0 && y > 0) ? rec[i - W - 1] : b;
+            int64_t mx = a > b ? a : b, mn = a < b ? a : b;
+            int64_t pred = (c >= mx) ? mn : ((c <= mn) ? mx : a + b - c);
+            rec[i] = pred + residual[i];
+        }
+    }
+}
+
 /* --- LZ match-finder forward pass (mirrors tokenizer.tokenize_optimal) ------
  *
  * Builds 3-byte hash chains over the combined buffer and, for each data position

@@ -23,6 +23,20 @@ import numpy as np
 
 from compressor import ctxcoder
 
+_native = None
+
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
+
 MAGIC = b"VID1"
 MAGIC_YUV = b"VYUV"
 B = 16          # block size
@@ -107,7 +121,12 @@ def _med_predict(P):
 
 def _med_fill(rec, intra_px, residual):
     """Reconstruct intra pixels (where ``intra_px``) in raster order via causal
-    MED, in place; ``rec`` already holds the non-intra (skip/inter) pixels."""
+    MED, in place; ``rec`` already holds the non-intra (skip/inter) pixels.
+    Native when available (byte-identical), else the pure-Python loop below."""
+    nat = _get_native()
+    if nat:
+        nat.med_fill(rec, intra_px, residual)
+        return
     for y, x in np.argwhere(intra_px).tolist():
         a = rec[y, x - 1] if x > 0 else (rec[y - 1, x] if y > 0 else 128)
         b = rec[y - 1, x] if y > 0 else a

@@ -170,13 +170,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       on 4:2:0 `.y4m`; the container stores the y4m header so decode reproduces the
       file byte-exact (verified on akiyo: 6.73x, `cmp`-identical). CLI round-trip
       test added.
-- [ ] **NEXT for video**: real `ffmpeg`/FFV1 baseline once available; SKIP against
-      the best MC MV (not just MV 0); native port of the per-pixel MED
-      reconstruction loop if speed matters; refactor the `scripts/video_*`
-      experiments to import `videocodec` (drop the duplication); preserve arbitrary
-      per-frame y4m headers / non-4:2:0 in the CLI.
-- [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
-      planes (U/V), not just luma; more clips across the motion spectrum.
+- [x] **real FFV1 baseline** (`scripts/video_ffv1_benchmark.py`): static ffmpeg via
+      the `imageio-ffmpeg` wheel (no system install). Full YUV, 60 frames,
+      round-trip verified — **we beat FFV1 on every clip**: akiyo +53%, foreman +8%,
+      stefan +8% (FFV1 is intra-only; we win via motion compensation). JXL-intra was
+      within ~3% of FFV1, confirming it was a fair stand-in.
+- [x] **native MED reconstruction loop** (`med_fill` in `_native/audio.c`):
+      byte-identical to the Python loop; decode ~2.6× on motion clips (more on
+      intra-heavy frames). videocodec.decode dispatches to it.
+- [ ] **NEXT for video**: SKIP against the best MC MV (not just MV 0); more clips
+      across the motion spectrum.
 
 ---
 

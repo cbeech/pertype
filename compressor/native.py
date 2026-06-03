@@ -83,6 +83,8 @@ try:
             _ci, _ci, _ci, _I32, _I32, _I32, ctypes.c_long,
         ]
         _lib.lz_forward.restype = ctypes.c_long
+        _lib.med_fill.argtypes = [_I64, _U8, _I64, ctypes.c_long, ctypes.c_long]
+        _lib.med_fill.restype = None
         _lib.lz_best.argtypes = [
             _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
             _ci, _ci, _ci, _I32, _I32,
@@ -238,6 +240,15 @@ def lz_decode(blob, n_tokens, mcum, dcum, ocum, len_base, n_patterns, min_match)
         _i32ptr(kind), _ptr(aval), _ptr(bval),
     )
     return kind, aval, bval
+
+
+def med_fill(rec, intra, residual):
+    """Causal MED reconstruction of intra pixels, in place on ``rec`` (int64,
+    C-contiguous). ``intra`` is a uint8 mask, ``residual`` an int64 array."""
+    H, W = rec.shape
+    intra = np.ascontiguousarray(intra, dtype=np.uint8)
+    residual = np.ascontiguousarray(residual, dtype=np.int64)
+    _lib.med_fill(_ptr(rec), _u8ptr(intra), _ptr(residual), H, W)
 
 
 def lz_forward(combined, base, window, max_match, max_chain):
