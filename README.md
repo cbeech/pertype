@@ -91,6 +91,7 @@ every file.
 | `compressor/model.py` | train / save / load a per-type model |
 | `compressor/codec.py` | compress / decompress + container + checksum |
 | `compressor/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
+| `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` |
 
@@ -136,6 +137,29 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
   (`imagecodecs` bundles libjxl for the JPEG XL comparison; `soundfile` bundles
   libsndfile for FLAC). These are *only* for the optional benchmarks, never the
   codec itself.
+
+## Native acceleration (the optimised port)
+
+Pure Python validated the *ratios*; for speed, the hot loops are ported to C
+(`compressor/_native/audio.c`), compiled to a shared library by `gcc` on first
+import and called via `ctypes` (no Python.h needed) — see `compressor/native.py`.
+Each native function is **bit-identical and byte-interchangeable** with its
+pure-Python reference (verified in tests), so output is unchanged and a file
+compressed on one path decompresses on the other. If `gcc`/`numpy` is absent,
+everything falls back to pure Python (`native.HAVE_NATIVE == False`), and the
+text/byte core stays zero-dependency (native is imported lazily).
+
+Ported so far, with measured speedups:
+
+| primitive | speedup | effect |
+|-----------|---------|--------|
+| audio LMS filter (256-tap) | ~25× | the audio codec's dominant cost |
+| audio fixed-2 predictor + adaptive Rice | — | removes the remaining Python loops |
+| byte-stream `delta` transform | ~133× | raw/numeric path (42 MB frame delta: seconds → ms) |
+
+Net: the FLAC-beating audio codec now does **~12 s of audio in ~0.4 s each way**
+(was minutes). Still pure Python (next port target, see `TODO.md`): the LZ
+cost-optimal parse / match-finder.
 
 ## Tests
 

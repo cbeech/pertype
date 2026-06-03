@@ -7,21 +7,26 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
 
 ---
 
-## 1. Optimised port — CURRENT PRIORITY
+## 1. Optimised port — IN PROGRESS
 
-The algorithms are validated; pure Python is the only blocker (full 42 MB raw
-frames take hours; the audio codec is slow). Goal: production-grade speed.
+The algorithms are validated; pure Python is the only blocker. Approach
+established: C primitives in `compressor/_native/`, compiled by gcc on import,
+called via ctypes (`compressor/native.py`), bit-identical to the pure-Python
+reference, with a Python fallback and a zero-dependency core (lazy native import).
 
-**Port the reusable PRIMITIVES, not the pipelines** — a fast Rust crate / C lib
-with a thin Python binding, keeping orchestration + the validation gate +
-new-domain prototyping in Python (the numpy / PyTorch model: Python glue, native
-kernels).
+**Port the reusable PRIMITIVES, not the pipelines** — keep orchestration + the
+validation gate + new-domain prototyping in Python (numpy / PyTorch model).
 
-Primitives to port:
-- bit I/O; arithmetic / range coder (+ adaptive models); Rice / Golomb coder
-- LZ match-finder (hash chains) — also the basis for video motion search
-- transforms: `delta` (arbitrary stride), `split` (arbitrary N)
-- adaptive sign-sign LMS filter (audio; reusable for biosignals / seismic)
+Primitives:
+- [x] adaptive sign-sign LMS filter (audio) — ~25×
+- [x] fixed-2 predictor + adaptive Rice coder (audio) — audio codec now ~12 s
+      audio in ~0.4 s each way (was minutes)
+- [x] `delta` transform (arbitrary stride) — ~133×
+- [ ] **LZ match-finder / cost-optimal parse forward pass** — NEXT; the remaining
+      slow path (text LZ types + large-file image/raw). Also the basis for video
+      motion search.
+- [ ] arithmetic / range coder (the text codec's bit loop)
+- [ ] `split` transform (already fast via slicing; low priority)
 
 Two design rules so the port does **not** ossify (these keep future prototyping
 fast rather than hindered):
