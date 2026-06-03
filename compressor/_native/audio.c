@@ -299,7 +299,12 @@ void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
  * maintained identically here, so the output is byte-identical to the Python
  * reference and the streams are interchangeable.
  */
-#define LZ_REP_N 3
+#define LZ_REP_N 16          /* must match model.REP_N */
+
+/* seed the move-to-front cache with 1..LZ_REP_N (matches model.REP_INIT) */
+static void rep_init(int64_t *reps) {
+    for (int j = 0; j < LZ_REP_N; j++) reps[j] = j + 1;
+}
 
 static void model_encode(aenc *e, const int *cum, int n, int s) {
     ae_encode(e, (uint64_t)cum[s], (uint64_t)(cum[s + 1] - cum[s]), (uint64_t)cum[n]);
@@ -345,7 +350,7 @@ long lz_encode(const int *kind, const int64_t *aval, const int64_t *bval, long n
                int len_base, int min_match, uint8_t *out, long cap) {
     bitw w = { out, cap, 0, 0, 0, 0 };
     aenc e = { 0, AC_MAX, 0, &w };
-    int64_t reps[LZ_REP_N] = { 1, 2, 3 };
+    int64_t reps[LZ_REP_N]; rep_init(reps);
     for (long i = 0; i < n_tokens; i++) {
         int k = kind[i];
         if (k == 0) {                                   /* literal */
@@ -388,7 +393,7 @@ void lz_decode(const uint8_t *in, long len, long n_tokens,
                int *kind, int64_t *aval, int64_t *bval) {
     adec d = { 0, AC_MAX, 0, in, len, 0 };
     for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
-    int64_t reps[LZ_REP_N] = { 1, 2, 3 };
+    int64_t reps[LZ_REP_N]; rep_init(reps);
     for (long i = 0; i < n_tokens; i++) {
         int sym = model_decode(&d, mcum, m_n);
         if (sym < 256) {

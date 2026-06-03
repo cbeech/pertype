@@ -45,12 +45,16 @@ BLOB_STRIDE = 512       # spacing between candidate segments
 # the full depth (tokenizer.MAX_CHAIN) so its frequencies match compression.
 DECISION_CHAIN = 16
 
-# Repeat-offset modeling: a small cache of recently-used match distances. A match
-# reusing one is coded as a 1-symbol "mode" (rep index) with NO distance code —
-# repeated records/lines/rows reuse distances constantly, so this is cheap and
-# common. mode symbol 0 = normal (full distance follows); 1..REP_N = rep index.
-REP_N = 3
-REP_INIT = (1, 2, 3)
+# Repeat-offset modeling: a cache of recently-used match distances (move-to-front).
+# A match reusing one is coded as a 1-symbol "mode" (rep index) with NO distance
+# code — repeated records/lines/rows/fields reuse distances constantly, so this is
+# cheap and common. mode symbol 0 = normal (full distance follows); 1..REP_N = rep
+# index. Measured on json, within-file distance recurrence is ~30%; a depth-3 cache
+# only caught ~10% of matches while depth-16 catches ~27% and nets ~750 B (the gain
+# saturates by 16, so deeper just dilutes the mode model). Distances that never
+# recur cost only the (near-certain) mode=0 symbol, so this doesn't hurt other types.
+REP_N = 16
+REP_INIT = tuple(range(1, REP_N + 1))
 MODE_NORMAL = 0
 
 
