@@ -254,15 +254,20 @@ codec's **coding efficiency**. Two fixes have since closed part of it — a comp
 varint container header (26 → ~12 B/file) and a deeper repeat-offset cache
 (depth 3 → 16, catching ~27% of json's ~30% recurring distances) — taking json
 from 54.5 KB to 52.7 KB and narrowing the gap to zstd from 4.8 KB to 3.0 KB (−38%).
-What remains is fundamental: a per-token breakdown shows our literals are already
-near-optimal (order-0 arithmetic; order-1 context *doesn't* help on the residual
-unique strings/numbers), so zstd's edge is concentrated in **FSE-coded match
-offsets** (our distance "extra" bits are still coded raw/uniform) plus its
-**repeat-offset-aware optimal parser** (ours prices every match as a full
-distance). Closing the last 3 KB would mean an FSE-grade offset coder and a
-rep-aware parser — essentially reimplementing zstd's sequence coder, with no
-guarantee of a win. The shipped model is large (real html ~1.5 MB), so it only
-amortizes over many files.
+What remains is fundamental, and a per-token breakdown pins it to **one** cause —
+the parser, not the entropy coder. Our literals are already near-optimal (order-0
+arithmetic; order-1 context *doesn't* help on the residual unique strings/numbers),
+and the distance "extra" bits are **provably ~incompressible** (a per-slot context
+model over them recovers only ~178 B of 11.2 KB — they are genuinely uniform within
+each octave), so an "FSE offset coder" would buy almost nothing. zstd's edge is its
+**repeat-offset-aware optimal parser**: json is fragmented (avg match ~44 B, so
+~9.7 K offsets must be coded), and zstd restructures the token sequence to turn more
+of those matches into near-free repeat-offset hits. Ours prices every match as a
+full distance, so it can't. (Deepening our hash-chain search alone — the parse is
+search-limited — recovers ~1 KB more, to ~51.7 KB / ~4% behind, at a real speed
+cost.) Closing the last ~2 KB needs a rep-aware cost-optimal parser — a substantial
+rewrite of the DP, with no guaranteed win. The shipped model is large (real html
+~1.5 MB), so it only amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
@@ -695,10 +700,13 @@ The honest open frontier (full list in `TODO.md`):
   json is the holdout, now 6% behind (52.7 vs 49.7 KB) after a varint header and a
   depth-16 repeat-offset cache closed 38% of the original gap. The remaining ~3 KB
   is *not* the dictionary (proven: zstd's own 256 KB dict in our codec is no
-  better) — it is zstd's FSE-coded match offsets (ours are still raw/uniform extra
-  bits) and its repeat-offset-aware optimal parser (ours prices every match as a
-  full distance). The lever is an FSE-grade offset coder + a rep-aware parser — a
-  large, zstd-reimplementing change with no guaranteed win.
+  better), *not* the literals (order-0 arithmetic is near-optimal), and *not* offset
+  entropy coding (the distance extra bits are provably ~incompressible — a per-slot
+  model recovers ~178 B of 11.2 KB). It is purely zstd's repeat-offset-aware optimal
+  parser turning more of json's many short matches (~9.7 K, avg 44 B) into near-free
+  rep-hits. The one real lever is a rep-aware cost-optimal parser — a substantial DP
+  rewrite, uncertain payoff. (A deeper hash-chain search recovers ~1 KB more on its
+  own, to ~4% behind, at a real speed cost.)
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
   proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
   for the floating-point boundary the integer transforms don't cross.

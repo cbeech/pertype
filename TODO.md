@@ -265,11 +265,17 @@ Still high-value untested, in rough priority:
       dict). The gap is **not** the dictionary (zstd's own 256 KB dict in our codec
       is no better) and **not** the literals (per-token breakdown: order-0 arithmetic
       is already near-optimal; order-1 context *regresses* on the residual unique
-      strings/numbers). It is zstd's **FSE-coded match offsets** (ours: raw/uniform
-      extra bits) + its **repeat-offset-aware optimal parser** (ours prices every
-      match as a full distance). Remaining lever = an FSE-grade offset coder + a
-      rep-aware parser — a large, zstd-reimplementing change, uncertain payoff.
-      **Needs a decision before starting.**
+      strings/numbers) and **not** offset entropy coding — the distance extra bits
+      are provably ~incompressible (a per-slot context model recovers only ~178 B of
+      11.2 KB; they are uniform within each octave, so "FSE offsets" buys nothing).
+      The gap is purely zstd's **repeat-offset-aware optimal parser**: json is
+      fragmented (~9.7 K matches, avg 44 B), and zstd restructures the token sequence
+      to turn more of those into near-free rep-hits; ours prices every match as a full
+      distance and can't. The one real lever is a rep-aware cost-optimal parser — a
+      substantial rewrite of the C DP (`lz_dp`), uncertain payoff. **Needs a decision
+      before starting.** (Measured aside: the parse is search-limited — bumping
+      `max_chain` 128 → 2048 alone recovers ~1 KB, json → ~51.7 KB / ~4% behind, at a
+      real speed cost; a candidate default bump independent of the parser rewrite.)
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the
