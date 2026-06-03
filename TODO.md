@@ -103,16 +103,22 @@ Two redundancy axes: **spatial (intra-frame)** + **temporal (inter-frame)**. Mos
 lossless video codecs (FFV1, Ut Video, MagicYUV) are **intra-only** — they ignore
 temporal redundancy, which is usually the dominant source of compressibility.
 
-- [ ] Temporal **frame-delta** transform = `delta` with `stride = bytes-per-frame`
-      (reuses the delta primitive + frame-dimension awareness). Hypothesis: beats
-      intra-only FFV1 on static / slow content.
-- [ ] 2D spatial predictor (MED / Paeth) for intra frames (shared with images).
-- [ ] (Hard) block **motion compensation** for moving content — built on the
-      match-finder primitive. Where dedicated motion-compensated codecs win.
-- [ ] Test harness: decode short clips to raw frames (`imageio` / `pyav`), compare
-      vs **FFV1** and per-frame PNG / JPEG-XL on static vs high-motion clips.
-      Falsifiable hypothesis: temporal delta beats intra-only FFV1 on static,
-      loses on high motion.
+- [x] Temporal **frame-delta** transform + test harness (`scripts/video_benchmark.py`,
+      `.y4m` parsed with numpy, luma). **Hypothesis confirmed** on standard clips
+      (60 frames, round-trip verified), vs per-frame JPEG-XL lossless (a stronger
+      intra baseline than FFV1): akiyo static temporal **+52%**; foreman −16%,
+      stefan −18% (motion). Our `ctxcoder` is the best residual back-end. See
+      README "Lossless video". Frame-delta wins static, loses motion — exactly the
+      boundary needing motion compensation.
+- [ ] 2D spatial predictor (MED / Paeth) for intra frames (shared with images) —
+      would help the *intra* side on all clips (and is needed for the motion case
+      where temporal delta loses).
+- [ ] **NEXT for video: block motion compensation** for moving content — the only
+      way to beat intra-only on foreman/stefan. Built on the native match-finder
+      (`lz_best`/`lz_forward`): search the previous frame for each block's best
+      match, code (motion vector + residual). The hard part, but where the win is.
+- [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
+      planes (U/V), not just luma; more clips across the motion spectrum.
 
 ---
 

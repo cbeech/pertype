@@ -389,6 +389,35 @@ chosen per type — Rice for audio, ctx for weakly-predicted signals. The honest
 boundary: we win where prediction beats LZ (audio, ECG); strong LZ (xz/LZMA)
 still wins on repetitive/periodic data until our own LZ path is ported to native.
 
+## Lossless video — the temporal-delta hypothesis
+
+Most lossless video codecs (FFV1, Ut Video) are *intra-only*: each frame is
+compressed independently, ignoring temporal redundancy. Hypothesis: a cheap
+**temporal frame-delta** (`delta` with stride = one frame) beats intra-only coding
+on static/slow content and loses on high motion (where motion compensation is
+needed). Tested on standard `.y4m` sequences (luma plane), parsed with numpy — no
+decoder needed (`scripts/video_benchmark.py`). With no ffmpeg/FFV1 available,
+per-frame **JPEG-XL lossless** is the intra baseline; since JXL-lossless is
+*stronger* than FFV1's intra, that's a conservative stand-in. The temporal delta
+is isolated by running the same intra codec on the frame residuals; our native
+context coder (`ctxcoder`) also codes the residual stream. 60 frames each,
+round-trip verified.
+
+| clip (motion) | intra-JXL | temporal (best) | verdict |
+|--|--|--|--|
+| akiyo (static head) | 2.10 MB | **1.01 MB** (ctx) | temporal **+52%** |
+| foreman (pan / medium) | 2.86 MB | 3.30 MB | intra wins −16% |
+| stefan (high motion) | 3.25 MB | 3.82 MB | intra wins −18% |
+
+The hypothesis holds exactly: frame-delta is a large win on static content and a
+loss under motion — because a raw frame-delta can't track *moving* pixels, so the
+residual loses the spatial structure the intra codec exploits. That is precisely
+the boundary where **motion compensation** is required (the hard, unimplemented
+item — and the native match-finder is the primitive it would build on). One nice
+secondary result: on the static clip our `ctxcoder` on the temporal residual
+(1.01 MB) beats JXL-on-residual (1.23 MB) — the right entropy back-end for a
+near-zero residual stream.
+
 ## Roadmap
 
 The real-world gap to `zstd --train` is the thing to close. In rough order of
