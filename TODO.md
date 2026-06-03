@@ -215,15 +215,17 @@ lost, but does *not* help audio (the LMS cascade already whitens the residual).
 
 Still high-value untested, in rough priority:
 
-- [x] **Floating-point data** (`scripts/float_benchmark.py`) — tested; a genuine
-      boundary. Integer transforms *hurt* float bytes (split8 2.0x vs raw+xz 6.16x
-      on measurement float64); a Gorilla XOR-delta helps only marginally and only on
-      smooth data (1.36x vs 1.28x), since float64 mantissas are high-entropy
-      (smooth float ~1.3x, near-incompressible). "Fixed-precision → int" isn't
-      lossless (4.216 has no exact float64). XOR-delta measured and **not added**
-      (marginal; `split` proxy-selection already adapts). Real FP compression needs
-      FCM/DFCM value prediction + leading-zero/Gorilla coding — a separate build,
-      low priority. Raw bytes + general coder is the pragmatic best.
+- [x] **Floating-point data** — now a handled type. Added a Gorilla-style XOR-delta
+      transform op (`xor`, stride 8/4) + byte-plane-split specs to the repertoire; the
+      proxy-selection gate picks it automatically for smooth float data. Measured
+      end-to-end in our full codec (`scripts/float_codec_benchmark.py`), held-out
+      float64: power Voltage 4.90x vs xz 4.60x, G_active 5.32x vs 5.16x, synth
+      random-walk 1.30x vs 1.28x (xor8+split8 selected) — **beats xz/zstd on all three**.
+      On the real columns identity wins (full-precision mantissa is noisy); XOR-delta
+      helps on genuinely smooth data. Honest: smooth float64 is ~1.3x near the entropy
+      floor for anyone, so this is "we win on float now," not "smooth float compresses."
+      Next lever if wanted: an **FCM/DFCM value predictor** (predict each value from
+      context, XOR with the prediction) to push past general LZ further.
 - [x] **Seismic** (`scripts/seismic_benchmark.py`) — real broadband waveforms (int
       ADC counts from IRIS; 2010 Chile M8.8 at ANMO + a quiet window, round-trip
       verified). Prediction **crushes** xz: 6.60× / 7.36× vs xz 2.29× / 3.73× — beats

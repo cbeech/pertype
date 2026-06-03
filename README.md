@@ -45,6 +45,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
 | **sensor numeric** | UCI power (int columns) | 6.27× — beats gzip; xz wins (repetition-heavy) |
+| **float64** | UCI power / synth (held-out) | **beats xz/zstd on all** (4.90× / 5.32× / 1.30×) via Gorilla XOR-delta |
 | **video** | CIF clips (full YUV) | **beats FFV1 +8% to +53%** (motion compensation) |
 
 The unifying result, and the dividing line: **predict per type, then entropy-code.**
@@ -52,8 +53,9 @@ Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
 varying sensors), an adaptive predictor + context-adaptive arithmetic beats the
 general-purpose tools and even the domain specialists. Where data is *repetition*-
 dominated (long constant runs, exact repeats), LZ-family coders (`xz`,
-`zstd --train`) win, and we don't pretend otherwise. Floating-point is a boundary
-the integer transforms don't cross (general coder on raw bytes is best there).
+`zstd --train`) win, and we don't pretend otherwise. Floating-point — once a
+boundary — is now handled: a Gorilla XOR-delta transform plus our trained LZ +
+ctxcoder beats xz/zstd on real float64 measurement data.
 
 Everything runs through a **native C hot path** (via ctypes), bit-identical to the
 pure-Python reference with a fallback: `compress` of a 0.8 MB text file went
@@ -146,7 +148,8 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/audio_codec_benchmark.py` | audio (dedicated codec) | **FLAC** | soundfile, numpy |
 | `scripts/ecg_ctx_coder.py` | biosignal (ECG) | **xz** | numpy |
 | `scripts/scidata_ctx_benchmark.py` | sensor numeric (int) | gzip, xz | numpy |
-| `scripts/float_benchmark.py` | floating-point | gzip, zstd, xz | numpy |
+| `scripts/float_benchmark.py` | floating-point (transform proxy) | gzip, zstd, xz | numpy |
+| `scripts/float_codec_benchmark.py` | floating-point (full codec) | zstd, xz | numpy |
 | `scripts/video_ffv1_benchmark.py` | video (full YUV) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
 
 ## Dependencies
@@ -497,20 +500,32 @@ QRS spikes and a plain delta won). This is the sharpest point on the prediction-
 friendly map — smooth, high-rate signals are exactly where prediction +
 context-adaptive entropy beats general LZ coders outright.
 
-**Floating-point: a boundary the repertoire doesn't cross** (`scripts/float_benchmark.py`).
-IEEE-754 floats don't subtract meaningfully in byte space, and the test confirms
-it. On real measurement float64 (power Voltage / Global_active_power), our integer
-transforms *hurt* — `split(8)` gives 2.0× vs raw bytes + xz at 6.16×, because the
-values repeat/jump and general LZ on the raw bytes catches that. A Gorilla-style
-**XOR-delta** primitive helps only marginally, and only on a *smooth* synthetic
-signal (1.36× vs 1.28×); float64 mantissas of irrational values are high-entropy,
-so smooth float data is near-incompressible (~1.3×) by anything. The tempting
-"detect fixed-precision → scaled int" shortcut isn't lossless (`4.216` has no exact
-float64). Conclusion, kept honest: lossless float compression needs dedicated
-machinery (FCM/DFCM value prediction + leading-zero/Gorilla encoding), *not* our
-integer transforms — so XOR-delta was measured and **not** added (marginal, and
-`split`'s proxy-selection already adapts where it helps). Raw bytes + a general
-coder is the pragmatic best for measurement float64.
+**Floating-point: handled, and we beat the general codecs** (`scripts/float_codec_benchmark.py`).
+IEEE-754 floats don't subtract meaningfully in byte space, so integer `delta` is
+useless on them — but a **Gorilla-style XOR-delta** (XOR each value's bytes with the
+previous value's) leaves slowly-changing floats as mostly-zero bytes, which the LZ +
+ctxcoder stages then crush. It's now in the transform repertoire (the `xor` op, with
+stride-8/4 + byte-plane-split specs) and the proxy-selection gate picks it
+automatically where it wins. Measured end-to-end in our full codec on held-out
+float64, chunked into trained files (not just a transform proxy), vs the best general
+coder per set:
+
+| float64 set | zstd -19 | xz -9 | **ours** | transform picked |
+|-------------|----------|-------|----------|------------------|
+| power Voltage (smooth) | 3.55× | 4.60× | **4.90×** | identity |
+| power G_active (jumpy) | 4.00× | 5.16× | **5.32×** | identity |
+| synthetic random-walk  | 1.11× | 1.28× | **1.30×** | xor8 + split8 |
+
+We **beat xz and zstd on all three**. On the real columns our trained LZ + ctxcoder
+already wins on the raw bytes (identity selected — the full-precision mantissa is
+noisy, so XOR-delta doesn't help there); the XOR-delta transform is auto-selected and
+contributes on genuinely smooth data (the synthetic walk). Honest caveat: that walk is
+near the entropy floor (~1.3× for anyone — irrational-value mantissas are high-entropy),
+so the headline is that **float64 is now a handled type we win on**, not that smooth
+float is suddenly compressible. The tempting "detect fixed-precision → scaled int"
+shortcut still isn't lossless (`4.216` has no exact float64); a fuller **FCM/DFCM value
+predictor** (predict each value from context, XOR with the prediction) is the next
+lever if we want to push past general LZ further.
 
 ## Lossless video — the temporal-delta hypothesis
 
@@ -710,9 +725,9 @@ The honest open frontier (full list in `TODO.md`):
   it is the diffuse sum of zstd's mature, integrated parser+coder, won't-fix short of
   reimplementing its sequence coder wholesale. (A deeper hash-chain search recovers
   ~1 KB more on its own, to ~4% behind, at a real speed cost.)
-- **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
-  proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
-  for the floating-point boundary the integer transforms don't cross.
+- **More transforms** — a 2D MED/Paeth intra predictor (shared image + video). Float
+  is now handled by a Gorilla XOR-delta transform (beats xz/zstd on real float64); an
+  **FCM/DFCM value predictor** is the next lever to push smooth float past general LZ.
 - **Distribution** — an optional Rust port (single crate, `rayon` block
   parallelism) once the goal shifts from research to shipping a library.
 

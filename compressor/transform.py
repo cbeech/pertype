@@ -55,6 +55,47 @@ def _delta_invert(data, stride):
     return nat.delta_inv(data, stride) if nat else _delta_invert_py(data, stride)
 
 
+def _xor_apply_py(data, stride):
+    out = bytearray(data)
+    for i in range(stride, len(out)):
+        out[i] ^= data[i - stride]
+    return bytes(out)
+
+
+def _xor_invert_py(data, stride):
+    out = bytearray(data)
+    for i in range(stride, len(out)):
+        out[i] ^= out[i - stride]
+    return bytes(out)
+
+
+def _xor_apply(data, stride):
+    """Stride XOR-delta (Gorilla-style): XOR each value's bytes with the previous
+    value's. Slowly-changing IEEE-754 floats leave mostly-zero bytes — which the
+    LZ + ctxcoder stages then crush — where integer ``delta`` is useless (floats
+    don't subtract meaningfully in byte space)."""
+    try:
+        import numpy as np
+        a = np.frombuffer(data, dtype=np.uint8)
+        out = a.copy()
+        out[stride:] ^= a[:-stride]
+        return out.tobytes()
+    except Exception:
+        return _xor_apply_py(data, stride)
+
+
+def _xor_invert(data, stride):
+    try:
+        import numpy as np
+        a = np.frombuffer(data, dtype=np.uint8)
+        out = np.empty_like(a)
+        for j in range(stride):
+            out[j::stride] = np.bitwise_xor.accumulate(a[j::stride])
+        return out.tobytes()
+    except Exception:
+        return _xor_invert_py(data, stride)
+
+
 def _split_apply(data, n):
     # Deinterleave into n byte-planes (positions 0,n,2n.. then 1,n+1.. etc.).
     return b"".join(bytes(data[i::n]) for i in range(n))
@@ -71,12 +112,18 @@ def _split_invert(data, n):
     return bytes(out)
 
 
-_OPS = {"delta": (_delta_apply, _delta_invert), "split": (_split_apply, _split_invert)}
-_CODE = {"delta": 0, "split": 1}
-_NAME = {0: "delta", 1: "split"}
+_OPS = {
+    "delta": (_delta_apply, _delta_invert),
+    "split": (_split_apply, _split_invert),
+    "xor": (_xor_apply, _xor_invert),
+}
+_CODE = {"delta": 0, "split": 1, "xor": 2}
+_NAME = {0: "delta", 1: "split", 2: "xor"}
 
 # Candidate pipelines the training gate tries (a spec is a tuple of (op, arg)).
-# Spans text (none), 8-bit and 16-bit numeric/image, and channel layouts.
+# Spans text (none), 8-bit and 16-bit numeric/image, channel layouts, and — via
+# the xor + stride-8/4 specs — IEEE-754 float64/float32 (Gorilla XOR-delta, then
+# byte-plane split so the near-constant sign/exponent planes compress).
 TRANSFORM_SPECS = (
     (),
     (("delta", 1),),
@@ -86,6 +133,10 @@ TRANSFORM_SPECS = (
     (("split", 2), ("delta", 1)),
     (("split", 2), ("delta", 2)),
     (("delta", 4), ("split", 2)),
+    (("xor", 8),),
+    (("xor", 8), ("split", 8)),
+    (("split", 8),),
+    (("xor", 4), ("split", 4)),
 )
 
 
