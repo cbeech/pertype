@@ -205,10 +205,13 @@ lost, but does *not* help audio (the LMS cascade already whitens the residual).
 - [x] **Biosignals (ECG)** — PhysioNet Apnea-ECG. delta + ctx **beats xz**. The
       audio LMS codec did *not* transfer as-is (its music-tuned params overshoot
       ECG's sharp QRS — 1.38x); plain delta + the context coder is the right tool.
-- [x] **Sensor telemetry (UCI household power)** — **lost** (2.90x vs xz 8.56x).
-      Repetition-dominated (51 % zero-deltas → long constant runs) is LZ/RLE
-      territory; our fast path has no LZ. This needs the native LZ port (§1), not
-      a predictor. My "delta will win" prior was wrong for repetitive data.
+- [x] **Sensor telemetry (UCI household power)** — first reported as a loss
+      (delta+**Rice** 2.78x vs xz 8.56x) with the wrong remedy ("needs LZ").
+      **Corrected**: delta + **ctxcoder** (order-2, never tried here originally) gets
+      **6.27x** — beats gzip (6.15x), within ~1.4x of xz. The order-2 context coder
+      handles the long zero-runs (after a zero the conditioned bucket→0 prob ≈ 1, so
+      ~0 bits/zero; the 95%-zero column goes 4.96x→83x). No LZ needed.
+      `scripts/scidata_ctx_benchmark.py`. Same `delta+ctxcoder` wins on ECG too.
 
 Still high-value untested, in rough priority:
 

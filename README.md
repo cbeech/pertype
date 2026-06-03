@@ -354,18 +354,31 @@ transform first; reach for a real predictor only where it doesn't suffice.
 
 Tested on two real public datasets in exact lossless representations, every
 result round-trip verified, against gzip/zstd/xz (`scripts/scidata_*`,
-`scripts/ecg_*`). This sharpened the thesis — producing one honest loss and one
-genuine win over `xz`.
+`scripts/ecg_*`). The headline: the same **`delta + ctxcoder`** is the right tool
+across both types tested — it beats `xz` on ECG and closes most of the gap on
+repetitive sensor data (and the one apparent "loss" turned out to be a wrong
+coder choice, not a real limitation).
 
-**Repetitive data wants LZ, which we don't have.** UCI household power
+**Repetitive sensor data: the *coder* mattered, not LZ.** UCI household power
 (2.05 M rows × 7 sensor columns, exact int32 milli-units): **51 % of deltas are
-exactly zero** — long constant runs (appliances off, coarse quantisation). That
-is RLE/LZ territory, not predictor territory, and delta barely helps even the
-general tools (zstd 7.50→7.51). We lose badly.
+exactly zero** — long constant runs (appliances off, coarse quantisation). The
+first pass used the memoryless adaptive **Rice** coder (delta+Rice = 2.78×) and
+concluded "this needs LZ, which our fast path lacks". *That was wrong about the
+remedy.* Running the order-2 **`ctxcoder`** (built for ECG, but never tried here)
+on the same delta gives **6.27×** — because after a zero, the bucket-given-context
+probability ≈ 1, so a run of zeros costs ≈ 0 bits (no LZ needed). The 95 %-zero
+column `Sub_1` jumps from 4.96× (Rice) to **83×** (ctx). See
+`scripts/scidata_ctx_benchmark.py`.
 
-| household power | gzip | zstd -19 | xz -9 | delta+xz | ours (predict+Rice) |
-|--|--|--|--|--|--|
-| ratio | 6.15x | 7.50x | **8.56x** | **8.75x** | 2.90x |
+| household power | gzip | xz -9 | delta+Rice (old) | **delta+ctx** |
+|--|--|--|--|--|
+| ratio | 6.15x | **8.56x** | 2.78x | **6.27x** |
+
+So we now beat gzip and close most of the gap to xz (was 3× behind); xz's
+stronger LZ + range-coder context still edges us on the very runniest data. The
+lesson: the same `delta + ctxcoder` is the right tool for *both* repetitive sensor
+data and smooth biosignals — the earlier "loss" was a wrong coder choice, not a
+missing LZ stage.
 
 **Smooth biosignals: a better entropy coder beats xz.** PhysioNet Apnea-ECG
 (8 records, 21 M samples, int16). The diagnosis came from entropy bounds: our
