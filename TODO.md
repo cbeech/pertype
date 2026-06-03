@@ -119,16 +119,18 @@ temporal redundancy, which is usually the dominant source of compressibility.
       intra-only JXL (60 frames, round-trip verified): akiyo +52%→+55%, foreman
       −16%→**+3%**, stefan −18%→**−1%**. A ±16 search barely changed it (residual
       cost dominates). Same block-search idea as the LZ match-finder.
-- [x] **per-block intra/inter mode selection** (`scripts/video_mode_benchmark.py`):
-      each block picks the cheaper of INTER (MC residual) or INTRA (causal "Up"
-      prediction in the current frame); mode bit + inter-only MVs + residual all
-      ctxcoder-coded, row-causal reconstruction verified bit-exact. Removes the
-      last loss — stefan −1% → ≈tie (3.251 vs 3.250 MB), foreman 2.780 → 2.756 MB;
-      8–11% of motion-clip blocks pick intra. No clip now loses to intra-only.
-- [ ] **NEXT for video: stronger intra predictor** — the mode-selection intra is
-      only vertical ("Up"); a MED/Paeth (LOCO-I) predictor, or multiple intra
-      directions chosen per block, would turn stefan's tie into a win. Then
-      sub-pel / half-pel MVs, and per-block skip.
+- [x] **per-block intra/inter mode selection + MED intra**
+      (`scripts/video_mode_benchmark.py`): each block picks INTER (MC residual) or
+      INTRA (causal **MED/LOCO-I** predictor, JPEG-LS); mode bit + inter-only MVs +
+      residual all ctxcoder-coded; intra pixels reconstructed causally (sentinel
+      init → real causal-chain check), verified bit-exact. **Every clip now beats
+      intra-only JXL**, including high motion: foreman −16%→**+5%**, stefan
+      −18%→**+2%**, akiyo +55%; 27–41% of motion-clip blocks choose intra. Full
+      arc: temporal-delta → MC → mode selection → MED.
+- [ ] **NEXT for video: sub-pixel motion vectors** (half/quarter-pel interpolation)
+      and a per-block **skip** mode; then colour planes (U/V) and a real `ffmpeg`
+      FFV1 baseline once available. Move the prototype off the per-pixel MED
+      reconstruction loop (diagonal-wavefront or C) if speed matters.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

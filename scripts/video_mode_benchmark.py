@@ -4,8 +4,8 @@ Pure MC predicts every block from the previous frame; that fails on occlusion /
 newly-revealed content (no good past match), where the residual is large. Mode
 selection lets each 16x16 block pick the cheaper of:
   * INTER: residual against the motion-compensated previous-frame block.
-  * INTRA: residual against a causal within-frame predictor (the pixel above,
-    i.e. the PNG "Up" filter) — reconstructible row-by-row, fully verifiable.
+  * INTRA: residual against the causal MED predictor (JPEG-LS / LOCO-I: median
+    of left, above, and left+above-aboveleft) within the current frame.
 The per-block mode (1 bit), motion vectors (inter blocks only) and the chosen
 residual are all entropy-coded by our native ctxcoder; frame 0 is intra (JXL).
 
@@ -78,6 +78,22 @@ def predict_mc(prev, bdy, bdx, B):
     return prev[sy, sx].astype(np.int64)
 
 
+def med_predict(P):
+    """MED / LOCO-I causal predictor (JPEG-LS): pred = median-ish of left (a),
+    above (b), above-left (c). Vectorised over the original frame; matches the
+    causal per-pixel reconstruction (recon == original, so neighbours agree).
+    Edges: first row predicts from the left, first column from above, (0,0)=128."""
+    a = np.zeros_like(P); a[:, 1:] = P[:, :-1]
+    b = np.zeros_like(P); b[1:, :] = P[:-1, :]
+    c = np.zeros_like(P); c[1:, 1:] = P[:-1, :-1]
+    mx = np.maximum(a, b); mn = np.minimum(a, b)
+    pred = np.where(c >= mx, mn, np.where(c <= mn, mx, a + b - c))
+    pred[0, 1:] = P[0, :-1]
+    pred[1:, 0] = P[:-1, 0]
+    pred[0, 0] = 128
+    return pred
+
+
 def block_cost(res, B):
     """Per-block proxy for coded bits: sum of zigzag bit-lengths."""
     nby, nbx = res.shape[0] // B, res.shape[1] // B
@@ -110,22 +126,25 @@ def main():
             mc_pred = predict_mc(recon_prev, bdy, bdx, B)
             inter_res = Y[t] - mc_pred
 
-            vp = np.empty_like(Y[t]); vp[0] = 128; vp[1:] = Y[t][:-1]
-            intra_res = Y[t] - vp
+            intra_res = Y[t] - med_predict(Y[t])
 
             use_intra = block_cost(intra_res, B) < block_cost(inter_res, B)   # (nby,nbx)
-            colmask = lambda br: np.repeat(use_intra[br], B)                   # noqa: E731
-
-            # mode-selected residual frame (vectorised)
             intra_mask = np.repeat(np.repeat(use_intra, B, 0), B, 1)
             sel = np.where(intra_mask, intra_res, inter_res)
-            # verify reconstruction (row-causal: intra needs the reconstructed row above)
-            rec = np.empty_like(Y[t])
-            for y in range(H):
-                ic_ = colmask(y // B)
-                above = rec[y - 1] if y > 0 else np.full(W, 128, dtype=np.int64)
-                pred_row = np.where(ic_, above, mc_pred[y])
-                rec[y] = pred_row + sel[y]
+
+            # Reconstruct: inter pixels are independent (mc_pred + residual);
+            # intra pixels use causal MED, replayed in raster order. Intra slots
+            # start as a sentinel so the round-trip truly exercises the causal
+            # chain (a neighbour read out of order would corrupt and fail).
+            rec = np.where(intra_mask, np.int64(-1 << 30), mc_pred + inter_res)
+            for y, x in np.argwhere(intra_mask).tolist():
+                a = rec[y, x - 1] if x > 0 else (rec[y - 1, x] if y > 0 else 128)
+                b = rec[y - 1, x] if y > 0 else a
+                c = rec[y - 1, x - 1] if (x > 0 and y > 0) else b
+                mx = a if a > b else b
+                mn = a if a < b else b
+                pred = mn if c >= mx else (mx if c <= mn else a + b - c)
+                rec[y, x] = pred + intra_res[y, x]
             assert np.array_equal(rec, Y[t]), f"mode round-trip FAILED {name} f{t}"
 
             md_res.append(sel)
