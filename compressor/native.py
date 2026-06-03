@@ -60,6 +60,10 @@ try:
         for fn in ("delta_fwd", "delta_inv"):
             getattr(_lib, fn).argtypes = [_U8, _U8, ctypes.c_long, ctypes.c_int]
             getattr(_lib, fn).restype = None
+        _lib.ctx_encode.argtypes = [_I64, ctypes.c_long, _U8, ctypes.c_long]
+        _lib.ctx_encode.restype = ctypes.c_long
+        _lib.ctx_decode.argtypes = [_U8, ctypes.c_long, ctypes.c_long, _I64]
+        _lib.ctx_decode.restype = None
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -132,3 +136,22 @@ def delta_inv(data, stride):
     out = np.empty(len(src), dtype=np.uint8)
     _lib.delta_inv(_u8ptr(np.ascontiguousarray(src)), _u8ptr(out), len(src), stride)
     return out.tobytes()
+
+
+def ctx_encode(res):
+    res = np.ascontiguousarray(res, dtype=np.int64)
+    n = len(res)
+    cap = n * 8 + 64
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = _lib.ctx_encode(_ptr(res), n, _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+
+
+def ctx_decode(blob, n):
+    buf = np.frombuffer(blob, dtype=np.uint8).copy()  # writable & contiguous
+    out = np.empty(n, dtype=np.int64)
+    _lib.ctx_decode(_u8ptr(buf), len(blob), n, _ptr(out))
+    return out

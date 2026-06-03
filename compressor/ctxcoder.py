@@ -20,6 +20,21 @@ NB = 65            # buckets 0..64 — covers any int64 zigzag magnitude
 INCR = 32          # count increment per symbol (adaptation speed)
 RESCALE = 1 << 14  # halve a context's counts when its total reaches this
 
+# Optional native acceleration (byte-identical to the pure-Python reference
+# below). Imported lazily so this module stays zero-dependency without numpy.
+_native = None
+
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
 
 def _zigzag(r):
     return (r << 1) ^ (r >> 63)        # signed -> unsigned, |r| < 2**63
@@ -36,6 +51,21 @@ def _new_model():
 
 def encode(res):
     """res: iterable of integer residuals -> bytes."""
+    nat = _get_native()
+    if nat:
+        return nat.ctx_encode(res)
+    return _encode_py(res)
+
+
+def decode(blob, n):
+    """Return a list of ``n`` integer residuals from ``blob``."""
+    nat = _get_native()
+    if nat:
+        return nat.ctx_decode(blob, n).tolist()
+    return _decode_py(blob, n)
+
+
+def _encode_py(res):
     enc = ArithmeticEncoder()
     freq, tot = _new_model()
     ctx = 0
@@ -62,8 +92,7 @@ def encode(res):
     return enc.getvalue()
 
 
-def decode(blob, n):
-    """Return a list of ``n`` integer residuals from ``blob``."""
+def _decode_py(blob, n):
     dec = ArithmeticDecoder(BitReader(blob))
     freq, tot = _new_model()
     ctx = 0

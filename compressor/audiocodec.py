@@ -168,7 +168,7 @@ def _rice_decode(blob, n):
 
 def _res_encode(res, coder):
     if coder == "ctx":
-        return ctxcoder.encode(res.tolist())
+        return ctxcoder.encode(res)
     return _rice_encode(res)
 
 

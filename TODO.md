@@ -25,9 +25,12 @@ Primitives:
 - [ ] **LZ match-finder / cost-optimal parse forward pass** — NEXT; the remaining
       slow path (text LZ types + large-file image/raw). Also the basis for video
       motion search.
-- [ ] arithmetic / range coder (the text codec's bit loop) — also covers the new
-      `ctxcoder` (context-adaptive residual coder): pure-Python ~30 s/ECG-record,
-      the current bottleneck on the data where it *beats xz*. High-value to port.
+- [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
+      both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
+      *beat xz* is now fast.
+- [ ] arithmetic / range coder for the **text/LZ codec's** bit loop — the same
+      WNC machine is now in C for `ctxcoder`; remaining work is wiring `codec.py`
+      through it (this is what made the 57 MB numeric run pure-Python-slow).
 - [ ] `split` transform (already fast via slicing; low priority)
 
 **Multi-threading / parallelism** (large data splits into independent blocks):
