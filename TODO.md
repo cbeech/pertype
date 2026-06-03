@@ -215,8 +215,15 @@ lost, but does *not* help audio (the LMS cascade already whitens the residual).
 
 Still high-value untested, in rough priority:
 
-- [ ] **Floating-point data** — needs a new XOR-delta / float byte-plane primitive
-      (Gorilla / FPC style). Boundary test of the transform repertoire.
+- [x] **Floating-point data** (`scripts/float_benchmark.py`) — tested; a genuine
+      boundary. Integer transforms *hurt* float bytes (split8 2.0x vs raw+xz 6.16x
+      on measurement float64); a Gorilla XOR-delta helps only marginally and only on
+      smooth data (1.36x vs 1.28x), since float64 mantissas are high-entropy
+      (smooth float ~1.3x, near-incompressible). "Fixed-precision → int" isn't
+      lossless (4.216 has no exact float64). XOR-delta measured and **not added**
+      (marginal; `split` proxy-selection already adapts). Real FP compression needs
+      FCM/DFCM value prediction + leading-zero/Gorilla coding — a separate build,
+      low priority. Raw bytes + general coder is the pragmatic best.
 - [ ] **Seismic / vibration / accelerometer** — genuinely high-rate, low-repetition
       signals: the regime where prediction should beat LZ. Confirms the niche.
 - [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (Parquet/ORC).

@@ -413,6 +413,21 @@ chosen per type — Rice for audio, ctx for weakly-predicted signals. The honest
 boundary: we win where prediction beats LZ (audio, ECG); strong LZ (xz/LZMA)
 still wins on repetitive/periodic data until our own LZ path is ported to native.
 
+**Floating-point: a boundary the repertoire doesn't cross** (`scripts/float_benchmark.py`).
+IEEE-754 floats don't subtract meaningfully in byte space, and the test confirms
+it. On real measurement float64 (power Voltage / Global_active_power), our integer
+transforms *hurt* — `split(8)` gives 2.0× vs raw bytes + xz at 6.16×, because the
+values repeat/jump and general LZ on the raw bytes catches that. A Gorilla-style
+**XOR-delta** primitive helps only marginally, and only on a *smooth* synthetic
+signal (1.36× vs 1.28×); float64 mantissas of irrational values are high-entropy,
+so smooth float data is near-incompressible (~1.3×) by anything. The tempting
+"detect fixed-precision → scaled int" shortcut isn't lossless (`4.216` has no exact
+float64). Conclusion, kept honest: lossless float compression needs dedicated
+machinery (FCM/DFCM value prediction + leading-zero/Gorilla encoding), *not* our
+integer transforms — so XOR-delta was measured and **not** added (marginal, and
+`split`'s proxy-selection already adapts where it helps). Raw bytes + a general
+coder is the pragmatic best for measurement float64.
+
 ## Lossless video — the temporal-delta hypothesis
 
 *The video pipeline below was developed as an ablation across a series of
