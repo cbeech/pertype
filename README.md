@@ -472,9 +472,18 @@ Half-pel adds +1–4% on top of mode selection, and by improving inter predictio
 lets fewer blocks fall back to intra (foreman 27%→16%). The complete arc —
 temporal-delta → motion compensation → per-block mode selection → MED intra →
 half-pel MVs — takes **stefan from −18% to +6%** and **foreman from −16% to +9%**,
-beating intra-only JXL (itself stronger than FFV1's intra) on every clip. Further
-gains would come from quarter-pel MVs, a per-block skip mode, and the colour
-planes; a real FFV1 baseline awaits `ffmpeg`.
+beating intra-only JXL (itself stronger than FFV1's intra) on every clip.
+
+**A per-block SKIP mode** handles exact-static content
+(`scripts/video_skip_benchmark.py`). In a lossless codec a block can be skipped —
+*no* residual, just a mode flag — only when it is bit-identical to its prediction;
+the co-located previous block (MV 0) catches static backgrounds. On akiyo's static
+studio set **56% of blocks skip**, for +2.7% (→ **+57%** vs intra-only). On the
+real-camera clips, sensor noise means no block is exactly static, so skip is never
+chosen and costs nothing (foreman/stefan unchanged at +9% / +6%). It's a targeted
+win for screen content / surveillance / animation, harmless elsewhere. Remaining
+polish: quarter-pel MVs, the colour planes (U/V), and a real FFV1 baseline once
+`ffmpeg` is available.
 
 ## Roadmap
 

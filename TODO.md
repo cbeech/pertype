@@ -133,10 +133,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       improves inter enough that fewer blocks fall back to intra. 60 frames vs
       intra-only JXL: akiyo +56%, foreman +5%→**+9%**, stefan +2%→**+6%**.
       Round-trip verified. Full arc takes stefan −18%→+6%, foreman −16%→+9%.
-- [ ] **NEXT for video: quarter-pixel MVs**, a per-block **skip** mode (zero
-      residual), and the colour planes (U/V). Real `ffmpeg`/FFV1 baseline once
-      available. Move off the per-pixel MED reconstruction loop (diagonal-wavefront
-      or C) if speed matters.
+- [x] **per-block SKIP mode** (`scripts/video_skip_benchmark.py`): a block bit-
+      identical to its co-located previous block (MV 0) is coded as just a mode
+      flag — no MV, no residual. akiyo +2.7% (56% of blocks skip → **+57%** vs
+      intra); foreman/stefan unchanged (0% skip — real-camera noise has no exact
+      static blocks). Targeted win for screen content / surveillance / animation,
+      harmless on noisy video. Round-trip verified.
+- [ ] **NEXT for video: quarter-pixel MVs**, the colour planes (U/V), a real
+      `ffmpeg`/FFV1 baseline once available, and a SKIP that allows the best MC MV
+      (not just MV 0). Move off the per-pixel MED reconstruction loop
+      (diagonal-wavefront or C) if speed matters.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 
