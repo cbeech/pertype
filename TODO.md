@@ -25,7 +25,9 @@ Primitives:
 - [ ] **LZ match-finder / cost-optimal parse forward pass** — NEXT; the remaining
       slow path (text LZ types + large-file image/raw). Also the basis for video
       motion search.
-- [ ] arithmetic / range coder (the text codec's bit loop)
+- [ ] arithmetic / range coder (the text codec's bit loop) — also covers the new
+      `ctxcoder` (context-adaptive residual coder): pure-Python ~30 s/ECG-record,
+      the current bottleneck on the data where it *beats xz*. High-value to port.
 - [ ] `split` transform (already fast via slicing; low priority)
 
 **Multi-threading / parallelism** (large data splits into independent blocks):
@@ -97,17 +99,30 @@ temporal redundancy, which is usually the dominant source of compressibility.
 ## 3. Test more data types
 
 Fits structured / numeric data; useless on already-compressed / encrypted / noise.
-High-value untested, in rough priority:
 
-- [ ] **Time-series / sensor / IoT telemetry** — `delta` (timestamps, monotonic
-      IDs, measurements). Expected large win; most commercially relevant.
-- [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (same toolkit as
-      Parquet/ORC encodings).
-- [ ] **Scientific / medical arrays** — HDF5, FITS, DICOM 16-bit volumes,
-      hyperspectral / satellite (de-interleave bands + delta).
+**Tested (2026-06):** two real datasets, every result round-trip verified — see
+README "Scientific numeric time-series". Key finding: **the predictor and the
+entropy coder interact** — strong adaptive predictor + Rice ≈ weak predictor +
+context-adaptive coder. The new `compressor/ctxcoder.py` (context-adaptive
+arithmetic) beats `xz -9` on ECG (3.06x vs 2.99x, 6/8 records) where Rice lost,
+but does *not* help audio (the LMS cascade already whitens the residual).
+- [x] **Biosignals (ECG)** — PhysioNet Apnea-ECG. delta + ctx **beats xz**. The
+      audio LMS codec did *not* transfer as-is (its music-tuned params overshoot
+      ECG's sharp QRS — 1.38x); plain delta + the context coder is the right tool.
+- [x] **Sensor telemetry (UCI household power)** — **lost** (2.90x vs xz 8.56x).
+      Repetition-dominated (51 % zero-deltas → long constant runs) is LZ/RLE
+      territory; our fast path has no LZ. This needs the native LZ port (§1), not
+      a predictor. My "delta will win" prior was wrong for repetitive data.
+
+Still high-value untested, in rough priority:
+
 - [ ] **Floating-point data** — needs a new XOR-delta / float byte-plane primitive
       (Gorilla / FPC style). Boundary test of the transform repertoire.
-- [ ] **Biosignals (ECG/EEG), seismic traces** — reuse the audio LMS codec as-is.
+- [ ] **Seismic / vibration / accelerometer** — genuinely high-rate, low-repetition
+      signals: the regime where prediction should beat LZ. Confirms the niche.
+- [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (Parquet/ORC).
+- [ ] **Scientific / medical arrays** — HDF5, FITS, DICOM 16-bit volumes,
+      hyperspectral / satellite (de-interleave bands + delta).
 - [ ] **More text formats** — XML, YAML, TOML, CSV, source code, FASTA/FASTQ/VCF.
 
 ---

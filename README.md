@@ -310,12 +310,59 @@ libsndfile's FLAC (the `flac -8` CLI may be ~1–3% stronger); measured on 3 s
 chunks where our adaptive filters only partly converge (full tracks likely favour
 us more); and pure-Python, so slow — a *ratio* result, not a fast codec.
 
+A **second entropy back-end** is now selectable (`encode(..., coder="ctx")`):
+context-adaptive arithmetic coding (`compressor/ctxcoder.py`). It does *not* help
+here (the LMS cascade already whitens the residual, so Rice's per-sample
+adaptation wins — 1.84x vs ctx 1.82x over 12 tracks), but it wins decisively on
+*weakly*-predicted signals — see the next section.
+
 This is the sharpest version of the unifying lesson. A **cheap generic transform**
 closes the gap to a specialist only by as much as the specialist exceeds simple
 decorrelation — enough for Bayer (→ JPEG-XL parity), not for audio. But a
 **domain-specific adaptive predictor**, when the structure demands it, can beat
 the specialist outright. The architecture tells you which you need: try the cheap
 transform first; reach for a real predictor only where it doesn't suffice.
+
+## Scientific numeric time-series — a reality check
+
+Tested on two real public datasets in exact lossless representations, every
+result round-trip verified, against gzip/zstd/xz (`scripts/scidata_*`,
+`scripts/ecg_*`). This sharpened the thesis — producing one honest loss and one
+genuine win over `xz`.
+
+**Repetitive data wants LZ, which we don't have.** UCI household power
+(2.05 M rows × 7 sensor columns, exact int32 milli-units): **51 % of deltas are
+exactly zero** — long constant runs (appliances off, coarse quantisation). That
+is RLE/LZ territory, not predictor territory, and delta barely helps even the
+general tools (zstd 7.50→7.51). We lose badly.
+
+| household power | gzip | zstd -19 | xz -9 | delta+xz | ours (predict+Rice) |
+|--|--|--|--|--|--|
+| ratio | 6.15x | 7.50x | **8.56x** | **8.75x** | 2.90x |
+
+**Smooth biosignals: a better entropy coder beats xz.** PhysioNet Apnea-ECG
+(8 records, 21 M samples, int16). The diagnosis came from entropy bounds: our
+memoryless adaptive Rice (6.37 b/s) sat far above the residual's order-0 entropy
+(5.46 b/s), while the *order-1 context* entropy — each residual's magnitude
+conditioned on the previous one — is 5.03 b/s, **below xz's 5.39**. So the fix
+was not LZ but a **context-adaptive entropy coder** (`compressor/ctxcoder.py`):
+delta → zigzag → magnitude bucket coded by an adaptive arithmetic model selected
+by the previous bucket, then raw mantissa bits.
+
+| Apnea-ECG | gzip | zstd -19 | xz -9 | ours delta+Rice | **ours delta+ctx** |
+|--|--|--|--|--|--|
+| ratio | 2.16x | 2.63x | 2.99x | 2.45x | **3.06x** |
+
+We beat `xz -9` on **6/8 records, +4.2% overall** — round-trip verified.
+
+**The predictor and the entropy coder interact** (the unifying finding). The same
+context coder *narrowed* the FLAC win on music (1.82x vs Rice's 1.84x), because
+the LMS cascade already removes the magnitude-context it exploits, leaving a
+near-memoryless residual where Rice wins. In short: **strong adaptive predictor +
+Rice ≈ weak predictor + context coder.** Both ship as selectable back-ends,
+chosen per type — Rice for audio, ctx for weakly-predicted signals. The honest
+boundary: we win where prediction beats LZ (audio, ECG); strong LZ (xz/LZMA)
+still wins on repetitive/periodic data until our own LZ path is ported to native.
 
 ## Roadmap
 

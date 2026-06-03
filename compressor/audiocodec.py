@@ -13,10 +13,14 @@ speed, so it is slow; the ratio is the point.
 """
 import numpy as np
 
-from compressor import native
+from compressor import ctxcoder, native
 from compressor.bitio import BitWriter, BitReader
 
 MAGIC = b"AUD1"
+# Residual entropy back-end: adaptive Rice (fast, native) or context-adaptive
+# arithmetic (better ratio — conditions on recent magnitude; see ctxcoder).
+CODERS = {"rice": 0, "ctx": 1}
+CODER_NAME = {0: "rice", 1: "ctx"}
 # Cascade after the fixed predictor: (taps, prediction shift). A short filter
 # then a long one, matching what the proxy showed beats FLAC.
 STAGES = ((16, 10), (256, 13))
@@ -162,10 +166,25 @@ def _rice_decode(blob, n):
     return native.rice_decode(blob, n) if native.HAVE_NATIVE else _rice_decode_py(blob, n)
 
 
+def _res_encode(res, coder):
+    if coder == "ctx":
+        return ctxcoder.encode(res.tolist())
+    return _rice_encode(res)
+
+
+def _res_decode(blob, n, coder):
+    if coder == "ctx":
+        return np.asarray(ctxcoder.decode(blob, n), dtype=np.int64)
+    return _rice_decode(blob, n)
+
+
 # --- top level --------------------------------------------------------------
 
-def encode(pcm, samplerate):
-    """pcm: int16 numpy array, shape (n, channels) or (n,). Returns bytes."""
+def encode(pcm, samplerate, coder="rice"):
+    """pcm: int16 numpy array, shape (n, channels) or (n,). Returns bytes.
+
+    ``coder`` picks the residual entropy back-end: "rice" (fast, native) or
+    "ctx" (context-adaptive arithmetic — better ratio, pure-Python)."""
     pcm = np.asarray(pcm)
     if pcm.ndim == 1:
         pcm = pcm[:, None]
@@ -173,11 +192,12 @@ def encode(pcm, samplerate):
     streams = list(_midside_fwd(pcm)) if channels == 2 else [pcm[:, c].astype(np.int64)
                                                              for c in range(channels)]
     out = bytearray(MAGIC)
+    out += bytes([CODERS[coder]])
     out += bytes([channels])
     out += samplerate.to_bytes(4, "big")
     out += n.to_bytes(8, "big")
     for stream in streams:
-        blob = _rice_encode(_predict_fwd(stream))
+        blob = _res_encode(_predict_fwd(stream), coder)
         out += len(blob).to_bytes(4, "big")
         out += blob
     return bytes(out)
@@ -187,15 +207,16 @@ def decode(blob):
     """Returns (pcm int16 (n, channels), samplerate)."""
     if blob[:4] != MAGIC:
         raise ValueError("not an AUD1 stream")
-    channels = blob[4]
-    samplerate = int.from_bytes(blob[5:9], "big")
-    n = int.from_bytes(blob[9:17], "big")
-    pos = 17
+    coder = CODER_NAME[blob[4]]
+    channels = blob[5]
+    samplerate = int.from_bytes(blob[6:10], "big")
+    n = int.from_bytes(blob[10:18], "big")
+    pos = 18
     streams = []
     for _ in range(channels):
         ln = int.from_bytes(blob[pos:pos + 4], "big")
         pos += 4
-        streams.append(_predict_inv(_rice_decode(blob[pos:pos + ln], n)))
+        streams.append(_predict_inv(_res_decode(blob[pos:pos + ln], n, coder)))
         pos += ln
     if channels == 2:
         pcm = _midside_inv(streams[0], streams[1])
