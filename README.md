@@ -375,7 +375,11 @@ column `Sub_1` jumps from 4.96× (Rice) to **83×** (ctx). See
 | ratio | 6.15x | **8.56x** | 2.78x | **6.27x** |
 
 So we now beat gzip and close most of the gap to xz (was 3× behind); xz's
-stronger LZ + range-coder context still edges us on the very runniest data. The
+stronger LZ + range-coder context still edges us on the very runniest data. (Our
+*own* LZ codec is not the answer here: on the full file it gets only 5.82× — worse
+than delta+ctx and gzip — and its cost-optimal parse is pathologically slow on
+run-heavy data, ~30 min vs ~4 s, since the all-zeros 3-byte key builds enormous
+hash chains. The order-2 context coder captures the runs better *and* faster.) The
 lesson: the same `delta + ctxcoder` is the right tool for *both* repetitive sensor
 data and smooth biosignals — the earlier "loss" was a wrong coder choice, not a
 missing LZ stage.
