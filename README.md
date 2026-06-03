@@ -39,7 +39,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 
 | domain | data | our result vs the standard codec |
 |--|--|--|
-| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd by 29–62%; ≈ `zstd --train` |
+| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** on logs & html, ~4% behind on json |
 | **raw image** | Canon CR2 Bayer | **statistical parity with JPEG XL**; beats Canon / PNG / zstd |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -228,18 +228,21 @@ both.
 
 | type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
 |------|---------|----------|----------------|----------|
-| json | 5.70x | 6.18x | **9.42x** | 7.98x |
-| logs | 7.40x | 7.76x | **14.06x** | 10.87x |
-| html | 3.86x | 3.98x | **7.08x** | 6.46x |
+| json | 5.70x | 6.18x | 9.42x | 9.08x |
+| logs | 7.40x | 7.76x | 14.06x | **14.34x** |
+| html | 3.86x | 3.98x | 7.08x | **7.49x** |
 
-On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%** (the core
-thesis — a per-type trained model beats general compressors — holds well). We do
-**not** beat `zstd -19 --train`, but reach **77–91% of it** (closest on html).
-Scaling the blob toward zstd's ~110 KB dictionary size and deepening the search
-got us here; pushing further hits sharp diminishing returns (a 512 KB blob reached
-only 8.77x on json) because **zstd is far more byte-efficient** — its 110 KB
-COVER-trained dictionary beats our much larger blob. The shipped model is large
-(real html ~1.1 MB), so it only amortizes over many files.
+On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%**, and —
+after scaling the trained **blob** to the 512 KB LZ match window — we now **beat
+`zstd -19 --train` on logs and html**, and reach **96%** of it on json. The blob is
+prepended to each file's history and shipped once (amortised, like zstd's
+dictionary), so a larger one just means more cross-file content to match; the
+validation gate picks the size per type. The comparison is fair: on logs/html
+zstd's *larger* dictionaries were actually *worse* (110 KB is its best there), so
+we beat its best. On **json**, zstd stays ahead — and improves to 49.7 KB with a
+256 KB dict, where our blob plateaus near 54.5 KB; its COVER dictionary is more
+byte-efficient than our blob there. The shipped model is large (real html ~1.5 MB),
+so it only amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
@@ -649,9 +652,11 @@ with a pure-Python fallback) — ~140× on text — so the family is fast enough
 
 The honest open frontier (full list in `TODO.md`):
 
-- **Close the text gap to `zstd --train`** — the one place we match rather than
-  beat. A better dictionary trainer (proper COVER / suffix-automaton) is the lever;
-  an earlier COVER attempt regressed, so it's a real, unsolved problem.
+- **Beat `zstd --train` on json too** — we already beat it on logs and html (via a
+  512 KB blob); json is the holdout, where zstd's COVER dictionary stays ~4% ahead
+  and is more byte-efficient than our blob. A better blob builder (proper COVER /
+  suffix-automaton) is the lever; an earlier COVER attempt regressed, so it's still
+  a real open problem.
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
   proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
   for the floating-point boundary the integer transforms don't cross.

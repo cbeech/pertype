@@ -247,8 +247,14 @@ Still high-value untested, in rough priority:
       it — xz codes long runs as one LZ match where our coder pays per symbol;
       matching it would mean reimplementing LZMA's LZ + range coder. Honest boundary:
       we beat xz on prediction-friendly signals, xz beats us on repetitive data.
-- [ ] Better **dictionary trainer for heterogeneous text** (proper COVER /
-      suffix-automaton) — close the remaining gap to `zstd --train` on real text.
+- [x] **beat `zstd --train` on text (logs & html)** — scaled the trained blob to the
+      512 KB LZ match window (`BLOB_SPECS` up to 1<<19; validation gate picks per
+      type). Real corpus, round-trip verified: logs 14.34× vs zstd+dict 14.06×,
+      html 7.49× vs 7.08× — and *fairly* (zstd's larger dicts were worse there, so
+      we beat its best). json still behind (9.08× vs zstd's best 9.4–9.6×).
+- [ ] **Beat `zstd --train` on json too** — the holdout; zstd's COVER dictionary is
+      more byte-efficient than our blob there (a better blob builder / suffix-
+      automaton is the lever; an earlier COVER attempt regressed).
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the

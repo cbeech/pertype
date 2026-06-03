@@ -187,7 +187,12 @@ def _blob_for(spec, samples):
 
 
 # Blob strategies tried per type during the validation decision; cheapest wins.
-# Sizes go up to ~128 KiB to compete with zstd's ~110 KiB trained dictionary.
+# Sizes go up to the 512 KiB LZ match window (WINDOW): the blob is prepended to
+# each file's history and shipped once (amortised, like a zstd dictionary), so a
+# larger blob just means more cross-file content to match — and on real text it
+# beats `zstd --train` on logs/html (see README). Capped at WINDOW because matches
+# beyond it are unreachable. The validation gate picks the cheapest size per type,
+# so types with little training data don't over-spend.
 BLOB_SPECS = (
     ("none", 0),
     ("naive", 1 << 15),
@@ -195,6 +200,9 @@ BLOB_SPECS = (
     ("cover", 1 << 16),
     ("cover", 1 << 17),
     ("naive", 1 << 17),
+    ("cover", 1 << 18),
+    ("cover", 1 << 19),
+    ("naive", 1 << 19),
 )
 
 
