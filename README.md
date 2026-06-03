@@ -31,6 +31,19 @@ That cost is paid once and amortized across many files. The honest win-scenario
 is therefore **many smallish files of a known type** (API responses, log lines,
 HTML pages).
 
+Beyond text, a per-type **transform stage** (an auto-selected reversible
+decorrelation) extends the same idea to numeric and media data. Measured on real
+data across three domains, the headline:
+
+- **Text** — beat plain gzip/zstd by 29–62%; ~parity with `zstd --train`.
+- **Raw images** (Canon CR2 Bayer) — **statistical parity with JPEG XL**, the
+  state-of-the-art lossless image codec; beat Canon, zstd, gzip, PNG outright.
+- **Audio** (16-bit PCM) — beat gzip/zstd, but FLAC wins (it needs adaptive LPC).
+
+The unifying lesson (see the cross-domain sections): a cheap per-type transform
+closes the gap to a domain specialist by as much as that specialist's modeling
+exceeds simple decorrelation.
+
 ## How it works
 
 ```
@@ -56,7 +69,8 @@ Match lengths and distances are bucketed into slots (one coded symbol + a few
 raw "extra" bits each), with a separate frequency model for distances. LZ
 matches use **lazy parsing** (one-byte lookahead: defer a match if the next
 position offers a longer one); dictionary matches commit greedily since they're
-the cheapest token.
+the cheapest token. Recently-used match distances are cached as **repeat
+offsets**, so a match reusing one codes a tiny index instead of a full distance.
 
 Decompression reverses it and verifies a CRC32, so losslessness is checked on
 every file.
@@ -96,17 +110,37 @@ python3 -m compressor.cli benchmark json                      # synthetic corpus
 python3 -m compressor.cli benchmark json --root corpus_real   # real-world corpus
 ```
 
+Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):
+
+| script | domain | competitors | needs |
+|--------|--------|-------------|-------|
+| `scripts/image_benchmark.py` | icons / graphics | gzip, zstd, PNG | Pillow |
+| `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
+| `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
+| `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
+| `scripts/audio_benchmark.py` | lossless audio | **FLAC** | soundfile, numpy |
+
+## Dependencies
+
+- **Core compressor and tests: zero external dependencies** (Python 3 stdlib only).
+- **CLI benchmark** (`compressor.cli benchmark`): the `gzip` and `zstd` command-line
+  tools.
+- **Cross-domain benchmark scripts** need the libraries in the table above —
+  install with: `pip install pillow rawpy numpy imagecodecs soundfile`
+  (`imagecodecs` bundles libjxl for the JPEG XL comparison; `soundfile` bundles
+  libsndfile for FLAC). These are *only* for the optional benchmarks, never the
+  codec itself.
+
 ## Tests
 
-Zero external dependencies. Run the bundled runner:
-
 ```bash
-python3 -m tests.run            # all tests
+python3 -m tests.run            # all tests (no dependencies)
 python3 -m tests.run codec      # one module
 ```
 
 The codec tests include property-style round-trips over random bytes, empty
-input, and bytes never seen in training — proving the lossless guarantee.
+input, bytes never seen in training, and a numeric/transform round-trip — proving
+the lossless guarantee.
 
 ## Results
 
@@ -181,8 +215,10 @@ lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
 | flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
 | Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **1.84x** | **1st** |
 
-(CR2 reference: Canon's own full-frame lossless ≈ 1.6–1.75x. Raw sensor noise is
-near-incompressible — these ratios are close to the information-theoretic floor.)
+(The raw row is crop-level, ranked among the columns shown; the full-frame
+comparison against **JPEG XL** — the real state-of-the-art — is in the bullet
+below. Canon's own full-frame lossless ≈ 1.6–1.75x. Raw sensor noise is
+near-incompressible: these ratios are close to the information-theoretic floor.)
 
 The result is consistent with the text findings: **we win where redundancy
 exists** — and the transform stage now exposes redundancy we previously couldn't.
@@ -258,5 +294,6 @@ Done: trained per-type dictionary (frequency × savings, long patterns admitted)
 LZ back-references with a contiguous trained blob, two blob builders (naive and
 COVER-style coverage) chosen per type on a validation slice, lazy parsing,
 cost-optimal parsing, repeat-offset modeling, arithmetic coding, and a per-type
-reversible transform stage (delta/split decorrelation). Validated on synthetic,
-real-world, and image/raw corpora.
+reversible transform stage (delta/split decorrelation). Validated on synthetic
+text, real-world text, raw images (vs JPEG XL), and lossless audio (vs FLAC) —
+every result round-trip verified on real data.
