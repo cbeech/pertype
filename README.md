@@ -368,9 +368,12 @@ exactly zero** — long constant runs (appliances off, coarse quantisation). The
 first pass used the memoryless adaptive **Rice** coder (delta+Rice = 2.78×) and
 concluded "this needs LZ, which our fast path lacks". *That was wrong about the
 remedy.* Running the order-2 **`ctxcoder`** (built for ECG, but never tried here)
-on the same delta gives **6.27×** — because after a zero, the bucket-given-context
-probability ≈ 1, so a run of zeros costs ≈ 0 bits (no LZ needed). The 95 %-zero
-column `Sub_1` jumps from 4.96× (Rice) to **83×** (ctx). See
+on the same delta gives **6.27×** (beats gzip's 6.15×) — the order-2 context makes
+a run of zeros cheap (after a zero, the conditioned bucket→0 probability is high),
+so the 95 %-zero column `Sub_1` goes from ~2.5× (Rice) to **41.7×** (ctx). It's
+still short of xz's run-length LZ on those columns (`Sub_1` 111×; see "Can we beat
+xz" above), but the headline correction stands: the original "needs LZ" verdict was
+wrong as a *remedy* — the right coder more than doubled the ratio. See
 `scripts/scidata_ctx_benchmark.py`.
 
 | household power | gzip | xz -9 | delta+Rice (old) | **delta+ctx** |

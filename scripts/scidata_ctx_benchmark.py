@@ -38,13 +38,14 @@ def main():
     ctx_tot = rice_tot = 0
     for j in range(cols.shape[0]):
         x = cols[j].astype(np.int64)
+        colraw = x.size * 4                               # the column is int32 (4 B/sample)
         d = x.copy(); d[1:] = x[1:] - x[:-1]              # first difference
         cb = ctxcoder.encode(d)
         back = np.cumsum(np.asarray(ctxcoder.decode(cb, len(d)))).astype(np.int64)
         assert np.array_equal(back, x), f"round-trip FAILED on {NAMES[j]}"
         rb = native.rice_encode(d)
         ctx_tot += len(cb); rice_tot += len(rb)
-        print(f"{NAMES[j]:<12}{x.nbytes/len(rb):>11.2f}x{x.nbytes/len(cb):>11.2f}x")
+        print(f"{NAMES[j]:<12}{colraw/len(rb):>11.2f}x{colraw/len(cb):>11.2f}x")
     secs = time.time() - t
 
     xz = sh(["xz", "-9", "-c"], raw)
