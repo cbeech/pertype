@@ -73,6 +73,16 @@ def main():
     print(f"reference — full-frame Canon lossless: {unc/cr2:.2f}x "
           f"(uncompressed {unc:,}B vs CR2 {cr2:,}B)", flush=True)
 
+    if crop >= 512:
+        # On photographic raw the cross-image dictionary/blob is dead weight
+        # (zstd+dict < zstd), and a big blob makes the parse intractable at this
+        # size. Disable it; in-file LZ + repeat offsets + cost-optimal parse
+        # (chain 128) stay at full strength — that is what matters on raw.
+        import compressor.model as M
+        M.BLOB_SPECS = (("none", 0), ("naive", 1 << 12))
+        print("note: blob disabled for large crop (dead weight on raw); in-file LZ "
+              "+ repeat offsets + cost-optimal parse remain full-strength", flush=True)
+
     cut = len(samples) * 4 // 5
     train_s, test_s = samples[:cut], samples[cut:]
     raws = [c.tobytes() for c in train_s]

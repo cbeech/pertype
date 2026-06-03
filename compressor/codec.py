@@ -95,11 +95,13 @@ def _decode_tokens(dec, model, n_tokens):
     return tokens
 
 
-def compress(data, model):
+def compress(data, model, max_chain=None):
     # Decorrelate first; the rest of the pipeline encodes the transformed bytes.
     tdata = transform.apply(data, model.transform)
     if model.use_lz:
-        tokens = tokenize_optimal(tdata, model.dictionary, model.costs(), prefix=model.blob)
+        kw = {} if max_chain is None else {"max_chain": max_chain}
+        tokens = tokenize_optimal(tdata, model.dictionary, model.costs(),
+                                  prefix=model.blob, **kw)
     else:
         tokens = tokenize(tdata, model.dictionary, use_lz=False)
     enc = ArithmeticEncoder()
