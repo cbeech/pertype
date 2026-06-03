@@ -28,6 +28,18 @@ Primitives:
 - [ ] arithmetic / range coder (the text codec's bit loop)
 - [ ] `split` transform (already fast via slicing; low priority)
 
+**Multi-threading / parallelism** (large data splits into independent blocks):
+- Blocks/files/channels are already self-contained (per-block headers) →
+  parallelism is bit-exact (deterministic; reassemble in order). Demonstrated:
+  8 independent audio chunks gave 3.8× via a thread pool, identical output.
+- The native (ctypes) primitives **release the GIL**, so Python *threads*
+  parallelize the C hot loops today; pure-Python paths need *multiprocessing*.
+  A Rust port → `rayon` over blocks = near-linear.
+- Make the **block the unit of both seeking and parallelism**. Tradeoff: smaller
+  blocks = more parallelism but more adaptive-filter / Rice re-warmup and lost
+  cross-block redundancy. Expose block size as the knob (like FLAC frames /
+  `zstd -T0`).
+
 Two design rules so the port does **not** ossify (these keep future prototyping
 fast rather than hindered):
 - **Generic abstractions:** a `Transform` is any reversible `apply`/`invert`; a
