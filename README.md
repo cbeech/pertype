@@ -31,20 +31,33 @@ That cost is paid once and amortized across many files. The honest win-scenario
 is therefore **many smallish files of a known type** (API responses, log lines,
 HTML pages).
 
-Beyond text, a per-type **transform stage** (an auto-selected reversible
-decorrelation) extends the same idea to numeric and media data. Measured on real
-data across three domains, the headline:
+Beyond text, the same **predict-then-entropy-code** idea — a per-type reversible
+**transform**, a context-adaptive residual coder, a dedicated adaptive-filter
+audio codec, and a motion-compensated video codec — extends across domains.
 
-- **Text** — beat plain gzip/zstd by 29–62%; ~parity with `zstd --train`.
-- **Raw images** (Canon CR2 Bayer) — **statistical parity with JPEG XL**, the
-  state-of-the-art lossless image codec; beat Canon, zstd, gzip, PNG outright.
-- **Audio** (16-bit PCM) — the generic codec loses to FLAC, so we built a
-  dedicated adaptive-filter audio codec that **beats FLAC** (+7.4% mean, 9/10
-  tracks).
+**Results at a glance** (every number on real data, every result round-trip verified):
 
-The unifying lesson (see the cross-domain sections): a cheap per-type transform
-closes the gap to a domain specialist by as much as that specialist's modeling
-exceeds simple decorrelation.
+| domain | data | our result vs the standard codec |
+|--|--|--|
+| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd by 29–62%; ≈ `zstd --train` |
+| **raw image** | Canon CR2 Bayer | **statistical parity with JPEG XL**; beats Canon / PNG / zstd |
+| **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
+| **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
+| **sensor numeric** | UCI power (int columns) | 6.27× — beats gzip; xz wins (repetition-heavy) |
+| **video** | CIF clips (full YUV) | **beats FFV1 +8% to +53%** (motion compensation) |
+
+The unifying result, and the dividing line: **predict per type, then entropy-code.**
+Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
+varying sensors), an adaptive predictor + context-adaptive arithmetic beats the
+general-purpose tools and even the domain specialists. Where data is *repetition*-
+dominated (long constant runs, exact repeats), LZ-family coders (`xz`,
+`zstd --train`) win, and we don't pretend otherwise. Floating-point is a boundary
+the integer transforms don't cross (general coder on raw bytes is best there).
+
+Everything runs through a **native C hot path** (via ctypes), bit-identical to the
+pure-Python reference with a fallback: `compress` of a 0.8 MB text file went
+111 s → 0.78 s (~140×), so the whole family — text, audio, video, numeric — is
+fast enough to use, not just a ratio demo.
 
 ## How it works
 
@@ -130,19 +143,26 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
 | `scripts/audio_benchmark.py` | audio (generic codec) | **FLAC** | soundfile, numpy |
 | `scripts/audio_codec_benchmark.py` | audio (dedicated codec) | **FLAC** | soundfile, numpy |
+| `scripts/ecg_ctx_coder.py` | biosignal (ECG) | **xz** | numpy |
+| `scripts/scidata_ctx_benchmark.py` | sensor numeric (int) | gzip, xz | numpy |
+| `scripts/float_benchmark.py` | floating-point | gzip, zstd, xz | numpy |
+| `scripts/video_ffv1_benchmark.py` | video (full YUV) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
 
 ## Dependencies
 
 - **Core text/byte compressor and tests: zero external dependencies** (Python 3
-  stdlib only — `codec.py`, `model.py`, `tokenizer.py`, etc.).
-- **`compressor/audiocodec.py`** (the dedicated audio codec): needs `numpy`.
-- **CLI benchmark** (`compressor.cli benchmark`): the `gzip` and `zstd` command-line
-  tools.
+  stdlib only — `codec.py`, `model.py`, `tokenizer.py`, `ctxcoder.py`, etc.).
+- **`audiocodec.py` / `videocodec.py`** (the media codecs) and the `ctxcoder`
+  native path: need `numpy`. The native hot path also needs `gcc` (built on
+  import; falls back to pure Python if absent — see below).
+- **CLI**: `video-encode` / `video-decode` need `numpy`; `benchmark` uses the
+  `gzip` and `zstd` command-line tools. The text `train` / `compress` /
+  `decompress` commands stay zero-dependency.
 - **Cross-domain benchmark scripts** need the libraries in the table above —
-  install with: `pip install pillow rawpy numpy imagecodecs soundfile`
-  (`imagecodecs` bundles libjxl for the JPEG XL comparison; `soundfile` bundles
-  libsndfile for FLAC). These are *only* for the optional benchmarks, never the
-  codec itself.
+  install with: `pip install pillow rawpy numpy imagecodecs soundfile imageio-ffmpeg`
+  (`imagecodecs` bundles libjxl for JPEG XL; `soundfile` bundles libsndfile for
+  FLAC; `imageio-ffmpeg` bundles a static ffmpeg for the FFV1 video baseline).
+  These are *only* for the optional benchmarks, never the codec itself.
 
 ## Native acceleration (the optimised port)
 
@@ -609,26 +629,35 @@ JXL-intra came out within ~3% of FFV1 throughout, confirming it was a fair
 stand-in. We beat the real specialist by exploiting the temporal redundancy it
 ignores. Remaining polish: SKIP against the best MV (not just MV 0).
 
-## Roadmap
+## Status & roadmap
 
-The real-world gap to `zstd --train` is the thing to close. In rough order of
-expected payoff:
+A research prototype, validated end-to-end on real data across four domains
+(every result round-trip verified):
 
-- **More transforms.** The transform stage is the highest-leverage idea in the
-  codebase — it turns "no domain modeling" into *automatic per-type* domain
-  modeling, which general-purpose tools don't do. Add 2D-aware predictors
-  (MED/Paeth with a learned row stride), RLE for the long zero-runs decorrelation
-  produces, and de-interleaving for stereo audio / columnar data.
-- A genuinely better **dictionary trainer for heterogeneous data** (proper COVER
-  / suffix-automaton selection) — the largest remaining lever on real *text*.
-- **Faster parse** (reuse blob hash chains across files, Rust hot loop) so
-  cost-optimal depth is affordable on large files.
+- **text / byte** — trained per-type dictionary + LZ (with a validation-gated
+  blob) + repeat offsets + cost-optimal parse + arithmetic coding;
+- **audio** — adaptive sign-sign LMS cascade → adaptive Rice / context coder
+  (beats FLAC, and xz by +59%);
+- **video** — quarter-pel motion compensation + per-block SKIP/INTER/INTRA (MED
+  intra) + context-adaptive residuals (beats FFV1); a real `encode`/`decode`
+  (`compressor/videocodec.py`) exposed on the CLI;
+- **numeric / biosignal** — per-type transform + the context-adaptive `ctxcoder`
+  (beats xz on ECG; 6.27× on repetitive sensor data, beating gzip).
 
-Done: trained per-type dictionary (frequency × savings, long patterns admitted),
-LZ back-references with a contiguous trained blob, two blob builders (naive and
-COVER-style coverage) chosen per type on a validation slice, lazy parsing,
-cost-optimal parsing, repeat-offset modeling, arithmetic coding, a per-type
-reversible transform stage (delta/split decorrelation), and a dedicated
-adaptive-filter audio codec that beats FLAC. Validated on synthetic text,
-real-world text, raw images (parity with JPEG XL), and lossless audio (beats
-FLAC) — every result round-trip verified on real data.
+The whole compress/decompress hot path is **native** (C via ctypes, bit-identical
+with a pure-Python fallback) — ~140× on text — so the family is fast enough to use.
+
+The honest open frontier (full list in `TODO.md`):
+
+- **Close the text gap to `zstd --train`** — the one place we match rather than
+  beat. A better dictionary trainer (proper COVER / suffix-automaton) is the lever;
+  an earlier COVER attempt regressed, so it's a real, unsolved problem.
+- **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
+  proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
+  for the floating-point boundary the integer transforms don't cross.
+- **Distribution** — an optional Rust port (single crate, `rayon` block
+  parallelism) once the goal shifts from research to shipping a library.
+
+The throughline: **predict per type, then entropy-code.** It beats the
+general-purpose tools, and the domain specialists, exactly where prediction beats
+LZ — and it says so honestly where LZ wins instead.
