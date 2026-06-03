@@ -257,9 +257,17 @@ Still high-value untested, in rough priority:
       type). Real corpus, round-trip verified: logs 14.34× vs zstd+dict 14.06×,
       html 7.49× vs 7.08× — and *fairly* (zstd's larger dicts were worse there, so
       we beat its best). json still behind (9.08× vs zstd's best 9.4–9.6×).
-- [ ] **Beat `zstd --train` on json too** — the holdout; zstd's COVER dictionary is
-      more byte-efficient than our blob there (a better blob builder / suffix-
-      automaton is the lever; an earlier COVER attempt regressed).
+- [~] **Beat `zstd --train` on json** — investigated thoroughly; the gap is **not**
+      the dictionary. Definitive same-dictionary experiment: zstd's own 256 KB COVER
+      dict fed into *our* codec as the blob gives 54.1 KB, still 8.8% behind zstd's
+      49.7 KB with that dict. Decomposed: ~82% entropy/offset coding (our distance
+      "extra" bits are raw/uniform; zstd FSE-codes offsets + repeat-offset history),
+      ~18% excess container header (26 B/file vs ~14 B). 86% of json is LZ matches,
+      so match-offset cost dominates. **No tractable win found** — closing it needs
+      FSE-level offset/literal entropy coding (a major codec rewrite). Not worth it
+      vs beating zstd on logs/html + every other domain. Container-header reduction
+      (varint lengths) is a minor real win available (~18% of the gap), helps all
+      small-file types, if ever wanted.
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the

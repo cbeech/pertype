@@ -240,10 +240,18 @@ prepended to each file's history and shipped once (amortised, like zstd's
 dictionary), so a larger one just means more cross-file content to match; the
 validation gate picks the size per type. The comparison is fair: on logs/html
 zstd's *larger* dictionaries were actually *worse* (110 KB is its best there), so
-we beat its best. On **json**, zstd stays ahead — and improves to 49.7 KB with a
-256 KB dict, where our blob plateaus near 54.5 KB; its COVER dictionary is more
-byte-efficient than our blob there. The shipped model is large (real html ~1.5 MB),
-so it only amortizes over many files.
+we beat its best. On **json**, zstd stays ahead (49.7 KB with a 256 KB dict vs our
+54.5 KB), and a controlled experiment pins down *why* — and it is **not** the
+dictionary. Feeding zstd's *own* 256 KB COVER dictionary into our codec as the blob
+gives 54.1 KB — barely better than our own blob, and still **8.8% behind zstd using
+the identical dictionary**. So the json gap is our codec's **coding efficiency**:
+decomposing it, ~82% is entropy/offset coding (our distance "extra" bits are coded
+*raw/uniform*, while zstd FSE-codes offsets with a repeat-offset history) and ~18%
+is excess container header (26 B/file vs zstd's ~14 B). 86% of json bytes are LZ
+matches into the blob, so it is dominated by match-offset cost. Closing it would
+need FSE-level offset/literal entropy coding — a major rewrite, not worth it given
+we beat zstd everywhere else. The shipped model is large (real html ~1.5 MB), so it
+only amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
