@@ -50,6 +50,29 @@ fast rather than hindered):
   predictors in Python, validate the ratio on a proxy, and only push to the fast
   kernel once proven. This preserves the proxy-then-build workflow.
 
+### Future: a full Rust port (not needed now)
+
+The C-via-ctypes primitives already deliver the speed, so this is a longer-term,
+optional step — pursue it only when the goal shifts from *research* to *shipping a
+real library/CLI*. What a Rust port would buy:
+
+- **Distribution as a single self-contained binary / crate** — no gcc-at-import,
+  no Python/numpy runtime needed; usable from other languages.
+- **Near-linear multi-threading** via `rayon` over independent blocks (vs the
+  GIL-bounded ~3.8× we get from Python threads over ctypes today).
+- **Memory safety + maintainability** for the whole pipeline (not just hot loops),
+  and SIMD-friendly inner loops.
+- Likely **another large speed step** beyond the C primitives (whole-pipeline
+  native, no Python/ctypes/numpy boundary crossings per block).
+
+Keep the same architecture: generic `Transform`/`Coder`/`Model` traits, the
+per-type validation gate, block = unit of seek + parallelism. A pragmatic path is
+to port incrementally behind the existing `native.py` seam (Rust via `cffi`/a C
+ABI, same as the current C), so the Python orchestration and prototyping workflow
+keep working throughout — then optionally move orchestration into Rust last.
+Reuse a reference Rust audio/range-coder crate where sensible rather than
+reimplementing from scratch.
+
 ---
 
 ## 2. Lossless video
