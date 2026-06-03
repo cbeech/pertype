@@ -54,23 +54,35 @@ def _zstd_size(data):
     return len(_run(["zstd", "-19", "-c"], data))
 
 
-def _zstd_dict(train_files, workdir):
-    """Train a zstd dictionary; return its path or None if training failed."""
+# zstd dictionary sizes tried, mirroring our own blob-size validation gate: we let
+# our blob tune (up to the 512 KB window), so for a fair "beat zstd --train" claim
+# we must let zstd tune its dictionary too and report its *best*. Some types (json)
+# benefit from a dictionary larger than zstd's 110 KB default.
+ZSTD_MAXDICTS = (112640, 262144, 524288)
+
+
+def _zstd_dicts(train_files, workdir):
+    """Train zstd dictionaries at several maxdict sizes; return list of dict paths
+    (those that trained successfully)."""
     sample_paths = []
     for i, (_, data) in enumerate(train_files):
         p = os.path.join(workdir, f"s{i}.bin")
         with open(p, "wb") as fh:
             fh.write(data)
         sample_paths.append(p)
-    dict_path = os.path.join(workdir, "zstd.dict")
-    try:
-        subprocess.run(
-            ["zstd", "--train", *sample_paths, "-o", dict_path, "--maxdict=112640"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
-        )
-        return dict_path if os.path.exists(dict_path) else None
-    except subprocess.CalledProcessError:
-        return None
+    paths = []
+    for md in ZSTD_MAXDICTS:
+        dict_path = os.path.join(workdir, f"zstd_{md}.dict")
+        try:
+            subprocess.run(
+                ["zstd", "--train", *sample_paths, "-o", dict_path, f"--maxdict={md}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+            )
+            if os.path.exists(dict_path):
+                paths.append(dict_path)
+        except subprocess.CalledProcessError:
+            pass
+    return paths
 
 
 def _zstd_dict_size(data, dict_path):
@@ -86,8 +98,17 @@ def run_benchmark(root, type_id, max_patterns=4096):
     model_size = len(model.save())
 
     totals = {"raw": 0, "ours": 0, "gzip": 0, "zstd": 0, "zstd_dict": 0}
+    best_maxdict = None
     with tempfile.TemporaryDirectory() as workdir:
-        dict_path = _zstd_dict(train_files, workdir)
+        dict_paths = _zstd_dicts(train_files, workdir)
+        # Pick the zstd dictionary size that minimises the *test-set* total — zstd
+        # at its best, the symmetric counterpart to our per-type blob validation.
+        dict_totals = {}
+        for dp in dict_paths:
+            dict_totals[dp] = sum(_zstd_dict_size(d, dp) for _, d in test_files)
+        best_dict = min(dict_totals, key=dict_totals.get) if dict_totals else None
+        if best_dict is not None:
+            best_maxdict = int(os.path.basename(best_dict).split("_")[1].split(".")[0])
         for _, data in test_files:
             ours = compress(data, model)
             assert decompress(ours, model) == data, "ROUND-TRIP FAILED — not lossless!"
@@ -95,13 +116,14 @@ def run_benchmark(root, type_id, max_patterns=4096):
             totals["ours"] += len(ours)
             totals["gzip"] += _gzip_size(data)
             totals["zstd"] += _zstd_size(data)
-            totals["zstd_dict"] += _zstd_dict_size(data, dict_path) if dict_path else 0
+        totals["zstd_dict"] = dict_totals[best_dict] if best_dict else 0
 
     return {
         "type_id": type_id,
         "n_test": len(test_files),
         "model_size": model_size,
-        "zstd_dict_available": dict_path is not None,
+        "zstd_dict_available": best_dict is not None,
+        "zstd_best_maxdict": best_maxdict,
         "totals": totals,
     }
 
@@ -124,7 +146,9 @@ def format_report(report):
     lines.append(row("gzip -9", t["gzip"]))
     lines.append(row("zstd -19", t["zstd"]))
     if report["zstd_dict_available"]:
-        lines.append(row("zstd -19 +dict", t["zstd_dict"]))
+        md = report.get("zstd_best_maxdict")
+        label = f"zstd +dict@{md // 1024}K" if md else "zstd -19 +dict"
+        lines.append(row(label, t["zstd_dict"]))
     else:
         lines.append("zstd -19 +dict   (unavailable — too few training samples)")
     lines.append(row("ours", t["ours"]))

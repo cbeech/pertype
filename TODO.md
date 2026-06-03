@@ -254,20 +254,22 @@ Still high-value untested, in rough priority:
       we beat xz on prediction-friendly signals, xz beats us on repetitive data.
 - [x] **beat `zstd --train` on text (logs & html)** — scaled the trained blob to the
       512 KB LZ match window (`BLOB_SPECS` up to 1<<19; validation gate picks per
-      type). Real corpus, round-trip verified: logs 14.34× vs zstd+dict 14.06×,
-      html 7.49× vs 7.08× — and *fairly* (zstd's larger dicts were worse there, so
-      we beat its best). json still behind (9.08× vs zstd's best 9.4–9.6×).
-- [~] **Beat `zstd --train` on json** — investigated thoroughly; the gap is **not**
-      the dictionary. Definitive same-dictionary experiment: zstd's own 256 KB COVER
-      dict fed into *our* codec as the blob gives 54.1 KB, still 8.8% behind zstd's
-      49.7 KB with that dict. Decomposed: ~82% entropy/offset coding (our distance
-      "extra" bits are raw/uniform; zstd FSE-codes offsets + repeat-offset history),
-      ~18% excess container header (26 B/file vs ~14 B). 86% of json is LZ matches,
-      so match-offset cost dominates. **No tractable win found** — closing it needs
-      FSE-level offset/literal entropy coding (a major codec rewrite). Not worth it
-      vs beating zstd on logs/html + every other domain. Container-header reduction
-      (varint lengths) is a minor real win available (~18% of the gap), helps all
-      small-file types, if ever wanted.
+      type). Real corpus, round-trip verified, vs zstd at its **best** dict size
+      (benchmark now trains 110/256/512 KB and reports zstd's cheapest): logs 15.12×
+      vs 14.06×, html 7.55× vs 7.08× — beating its best, not a fixed default.
+- [~] **Beat `zstd --train` on json** — narrowed but not closed. Two real wins
+      landed (both help every small-file type): a varint container header
+      (26 → ~12 B/file) and a depth-16 repeat-offset cache (json has ~30% recurring
+      match distances; depth-3 caught ~10%, depth-16 ~27%). json 54.5 → **52.7 KB**,
+      gap to zstd 4.8 → **3.0 KB (−38%)**. Still 6% behind (zstd 49.7 KB @256 KB
+      dict). The gap is **not** the dictionary (zstd's own 256 KB dict in our codec
+      is no better) and **not** the literals (per-token breakdown: order-0 arithmetic
+      is already near-optimal; order-1 context *regresses* on the residual unique
+      strings/numbers). It is zstd's **FSE-coded match offsets** (ours: raw/uniform
+      extra bits) + its **repeat-offset-aware optimal parser** (ours prices every
+      match as a full distance). Remaining lever = an FSE-grade offset coder + a
+      rep-aware parser — a large, zstd-reimplementing change, uncertain payoff.
+      **Needs a decision before starting.**
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the

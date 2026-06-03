@@ -39,7 +39,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 
 | domain | data | our result vs the standard codec |
 |--|--|--|
-| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** on logs & html, ~4% behind on json |
+| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%, 6% behind on json |
 | **raw image** | Canon CR2 Bayer | **statistical parity with JPEG XL**; beats Canon / PNG / zstd |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -227,31 +227,42 @@ both.
 
 ### Real-world corpora (real files, held-out) — the honest test
 
-| type | gzip -9 | zstd -19 | zstd -19 +dict | **ours** |
-|------|---------|----------|----------------|----------|
-| json | 5.70x | 6.18x | 9.42x | 9.08x |
-| logs | 7.40x | 7.76x | 14.06x | **14.34x** |
-| html | 3.86x | 3.98x | 7.08x | **7.49x** |
+`zstd --train` is given its **best** dictionary size here (the benchmark trains
+dictionaries at 110 / 256 / 512 KB and reports zstd's cheapest), the symmetric
+counterpart to our own per-type blob-size validation — so the column below is
+zstd at its strongest, not a fixed default.
+
+| type | gzip -9 | zstd -19 | zstd `--train` (best dict) | **ours** |
+|------|---------|----------|----------------------------|----------|
+| json | 5.70x | 6.18x | **9.95x** (256 KB) | 9.39x |
+| logs | 7.40x | 7.76x | 14.06x (110 KB) | **15.12x** |
+| html | 3.86x | 3.98x | 7.08x (110 KB) | **7.55x** |
 
 On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%**, and —
-after scaling the trained **blob** to the 512 KB LZ match window — we now **beat
-`zstd -19 --train` on logs and html**, and reach **96%** of it on json. The blob is
-prepended to each file's history and shipped once (amortised, like zstd's
-dictionary), so a larger one just means more cross-file content to match; the
-validation gate picks the size per type. The comparison is fair: on logs/html
-zstd's *larger* dictionaries were actually *worse* (110 KB is its best there), so
-we beat its best. On **json**, zstd stays ahead (49.7 KB with a 256 KB dict vs our
-54.5 KB), and a controlled experiment pins down *why* — and it is **not** the
-dictionary. Feeding zstd's *own* 256 KB COVER dictionary into our codec as the blob
-gives 54.1 KB — barely better than our own blob, and still **8.8% behind zstd using
-the identical dictionary**. So the json gap is our codec's **coding efficiency**:
-decomposing it, ~82% is entropy/offset coding (our distance "extra" bits are coded
-*raw/uniform*, while zstd FSE-codes offsets with a repeat-offset history) and ~18%
-is excess container header (26 B/file vs zstd's ~14 B). 86% of json bytes are LZ
-matches into the blob, so it is dominated by match-offset cost. Closing it would
-need FSE-level offset/literal entropy coding — a major rewrite, not worth it given
-we beat zstd everywhere else. The shipped model is large (real html ~1.5 MB), so it
-only amortizes over many files.
+after scaling the trained **blob** to the 512 KB LZ match window — we **beat
+`zstd --train` on logs (+7%) and html (+6%)** even when zstd picks its best
+dictionary. The blob is prepended to each file's history and shipped once
+(amortised, like zstd's dictionary), so a larger one just means more cross-file
+content to match; the validation gate picks the size per type. On logs/html zstd's
+larger dictionaries are actually *worse* (110 KB is its best), so we beat its best.
+
+**json is the one type zstd still wins** — 49.7 KB (256 KB dict) vs our 52.7 KB,
+a 6% gap. A controlled experiment pins down *why*, and it is **not** the
+dictionary: feeding zstd's *own* 256 KB COVER dictionary into our codec gives
+54.1 KB, still behind zstd using the identical dictionary, so the gap is our
+codec's **coding efficiency**. Two fixes have since closed part of it — a compact
+varint container header (26 → ~12 B/file) and a deeper repeat-offset cache
+(depth 3 → 16, catching ~27% of json's ~30% recurring distances) — taking json
+from 54.5 KB to 52.7 KB and narrowing the gap to zstd from 4.8 KB to 3.0 KB (−38%).
+What remains is fundamental: a per-token breakdown shows our literals are already
+near-optimal (order-0 arithmetic; order-1 context *doesn't* help on the residual
+unique strings/numbers), so zstd's edge is concentrated in **FSE-coded match
+offsets** (our distance "extra" bits are still coded raw/uniform) plus its
+**repeat-offset-aware optimal parser** (ours prices every match as a full
+distance). Closing the last 3 KB would mean an FSE-grade offset coder and a
+rep-aware parser — essentially reimplementing zstd's sequence coder, with no
+guarantee of a win. The shipped model is large (real html ~1.5 MB), so it only
+amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 
@@ -680,11 +691,14 @@ with a pure-Python fallback) — ~140× on text — so the family is fast enough
 
 The honest open frontier (full list in `TODO.md`):
 
-- **Beat `zstd --train` on json too** — we already beat it on logs and html (via a
-  512 KB blob); json is the holdout, where zstd's COVER dictionary stays ~4% ahead
-  and is more byte-efficient than our blob. A better blob builder (proper COVER /
-  suffix-automaton) is the lever; an earlier COVER attempt regressed, so it's still
-  a real open problem.
+- **Beat `zstd --train` on json too** — we beat it on logs (+7%) and html (+6%);
+  json is the holdout, now 6% behind (52.7 vs 49.7 KB) after a varint header and a
+  depth-16 repeat-offset cache closed 38% of the original gap. The remaining ~3 KB
+  is *not* the dictionary (proven: zstd's own 256 KB dict in our codec is no
+  better) — it is zstd's FSE-coded match offsets (ours are still raw/uniform extra
+  bits) and its repeat-offset-aware optimal parser (ours prices every match as a
+  full distance). The lever is an FSE-grade offset coder + a rep-aware parser — a
+  large, zstd-reimplementing change with no guaranteed win.
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
   proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
   for the floating-point boundary the integer transforms don't cross.
