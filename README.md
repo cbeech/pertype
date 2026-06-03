@@ -365,9 +365,14 @@ by the previous bucket, then raw mantissa bits.
 
 | Apnea-ECG | gzip | zstd -19 | xz -9 | ours delta+Rice | **ours delta+ctx** |
 |--|--|--|--|--|--|
-| ratio | 2.16x | 2.63x | 2.99x | 2.45x | **3.06x** |
+| ratio | 2.16x | 2.63x | 2.99x | 2.45x | **3.16x** |
 
-We beat `xz -9` on **6/8 records, +4.2% overall** — round-trip verified.
+We beat `xz -9` overall by **+7.6%** — round-trip verified. The context coder uses
+an **order-2** context (each residual's magnitude bucket conditioned on the
+previous *two* buckets); that was chosen by measuring the residual's conditional
+entropy (order-2 ≈ 4.97 b/s vs order-1's 5.14 and xz's 5.39), and it lifted the
+ratio from 3.06x. Order-3 and mantissa-bit modelling were measured too and gave
+too little to justify (sparser contexts / ~0.7%).
 
 **The predictor and the entropy coder interact** (the unifying finding). The same
 context coder *narrowed* the FLAC win on music (1.82x vs Rice's 1.84x), because

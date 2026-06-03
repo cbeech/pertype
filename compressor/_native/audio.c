@@ -131,6 +131,8 @@ void delta_inv(const uint8_t *data, uint8_t *out, long n, int stride) {
  * pure-Python reference and files are interchangeable. All integer math.
  */
 #define CTX_NB 65               /* buckets 0..64 cover any int64 zigzag magnitude */
+#define CTX_CLAMP 16            /* context bucket clamp (keeps the model dense) */
+#define CTX_NCTX ((CTX_CLAMP + 1) * (CTX_CLAMP + 1))   /* order-2: (prev, prev-prev) */
 #define CTX_INCR 32
 #define CTX_RESCALE (1 << 14)
 #define AC_HALF      0x80000000ULL
@@ -170,11 +172,17 @@ static void ae_encode(aenc *e, uint64_t cum, uint64_t freq, uint64_t total) {
     }
 }
 
-static void ctx_init(int freq[CTX_NB][CTX_NB], long tot[CTX_NB]) {
-    for (int c = 0; c < CTX_NB; c++) {
+static void ctx_init(int freq[CTX_NCTX][CTX_NB], long tot[CTX_NCTX]) {
+    for (int c = 0; c < CTX_NCTX; c++) {
         for (int s = 0; s < CTX_NB; s++) freq[c][s] = 1;
         tot[c] = CTX_NB;
     }
+}
+
+static inline int ctx_index(int pk, int pk2) {
+    int a = pk < CTX_CLAMP ? pk : CTX_CLAMP;
+    int b = pk2 < CTX_CLAMP ? pk2 : CTX_CLAMP;
+    return a * (CTX_CLAMP + 1) + b;
 }
 
 static void ctx_bump(int *f, long *tot, int k) {
@@ -188,15 +196,16 @@ static void ctx_bump(int *f, long *tot, int k) {
 
 /* Returns bytes written, or -1 if the output buffer is too small. */
 long ctx_encode(const int64_t *res, long n, uint8_t *out, long cap) {
-    int freq[CTX_NB][CTX_NB]; long tot[CTX_NB];
+    int freq[CTX_NCTX][CTX_NB]; long tot[CTX_NCTX];
     ctx_init(freq, tot);
     bitw w = { out, cap, 0, 0, 0, 0 };
     aenc e = { 0, AC_MAX, 0, &w };
-    int ctx = 0;
+    int pk = 0, pk2 = 0;
     for (long i = 0; i < n; i++) {
         int64_t r = res[i];
         uint64_t u = (((uint64_t)r) << 1) ^ (uint64_t)(r >> 63);   /* zigzag */
         int k = u ? (64 - __builtin_clzll(u)) : 0;
+        int ctx = ctx_index(pk, pk2);
         int *f = freq[ctx];
         uint64_t cum = 0;
         for (int s = 0; s < k; s++) cum += (uint64_t)f[s];
@@ -208,7 +217,7 @@ long ctx_encode(const int64_t *res, long n, uint8_t *out, long cap) {
         }
         if (w.overflow) return -1;
         ctx_bump(f, &tot[ctx], k);
-        ctx = k;
+        pk2 = pk; pk = k;
     }
     e.pending++;                                   /* finish() */
     ae_emit(&e, e.low < AC_QUARTER ? 0 : 1);
@@ -249,12 +258,13 @@ static void ad_update(adec *d, uint64_t cum, uint64_t freq, uint64_t total) {
 }
 
 void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
-    int freq[CTX_NB][CTX_NB]; long tot[CTX_NB];
+    int freq[CTX_NCTX][CTX_NB]; long tot[CTX_NCTX];
     ctx_init(freq, tot);
     adec d = { 0, AC_MAX, 0, in, len, 0 };
     for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
-    int ctx = 0;
+    int pk = 0, pk2 = 0;
     for (long i = 0; i < n; i++) {
+        int ctx = ctx_index(pk, pk2);
         int *f = freq[ctx];
         uint64_t total = (uint64_t)tot[ctx];
         uint64_t target = ad_target(&d, total);
@@ -275,7 +285,7 @@ void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
         }
         out[i] = (int64_t)(u >> 1) ^ -(int64_t)(u & 1);    /* unzigzag */
         ctx_bump(f, &tot[ctx], k);
-        ctx = k;
+        pk2 = pk; pk = k;
     }
 }
 

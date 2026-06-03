@@ -116,8 +116,8 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
 README "Scientific numeric time-series". Key finding: **the predictor and the
 entropy coder interact** — strong adaptive predictor + Rice ≈ weak predictor +
 context-adaptive coder. The new `compressor/ctxcoder.py` (context-adaptive
-arithmetic) beats `xz -9` on ECG (3.06x vs 2.99x, 6/8 records) where Rice lost,
-but does *not* help audio (the LMS cascade already whitens the residual).
+arithmetic, order-2 context) beats `xz -9` on ECG (3.16x vs 2.94x) where Rice
+lost, but does *not* help audio (the LMS cascade already whitens the residual).
 - [x] **Biosignals (ECG)** — PhysioNet Apnea-ECG. delta + ctx **beats xz**. The
       audio LMS codec did *not* transfer as-is (its music-tuned params overshoot
       ECG's sharp QRS — 1.38x); plain delta + the context coder is the right tool.
@@ -141,6 +141,11 @@ Still high-value untested, in rough priority:
 
 ## 4. Algorithm improvements (from the README roadmap)
 
+- [x] **`ctxcoder` order-2 context** — conditioning each residual's magnitude
+      bucket on the previous *two* buckets (vs one) lifted ECG 3.06x → 3.16x
+      (+3.3%), widening the lead over xz to +7.6%. Chosen by measuring the
+      residual's conditional entropy (order-2 4.97 b/s vs order-1 5.14, xz 5.39);
+      order-3 and mantissa-bit modelling measured and rejected (too sparse / ~0.7%).
 - [ ] Better **dictionary trainer for heterogeneous text** (proper COVER /
       suffix-automaton) — close the remaining gap to `zstd --train` on real text.
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
