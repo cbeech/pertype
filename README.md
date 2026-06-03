@@ -38,7 +38,9 @@ data across three domains, the headline:
 - **Text** — beat plain gzip/zstd by 29–62%; ~parity with `zstd --train`.
 - **Raw images** (Canon CR2 Bayer) — **statistical parity with JPEG XL**, the
   state-of-the-art lossless image codec; beat Canon, zstd, gzip, PNG outright.
-- **Audio** (16-bit PCM) — beat gzip/zstd, but FLAC wins (it needs adaptive LPC).
+- **Audio** (16-bit PCM) — the generic codec loses to FLAC, so we built a
+  dedicated adaptive-filter audio codec that **beats FLAC** (+5.9% mean, 9/10
+  tracks).
 
 The unifying lesson (see the cross-domain sections): a cheap per-type transform
 closes the gap to a domain specialist by as much as that specialist's modeling
@@ -88,6 +90,7 @@ every file.
 | `compressor/tokenizer.py` | reversible file ↔ token stream (dict + LZ) |
 | `compressor/model.py` | train / save / load a per-type model |
 | `compressor/codec.py` | compress / decompress + container + checksum |
+| `compressor/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` |
 
@@ -118,11 +121,14 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
-| `scripts/audio_benchmark.py` | lossless audio | **FLAC** | soundfile, numpy |
+| `scripts/audio_benchmark.py` | audio (generic codec) | **FLAC** | soundfile, numpy |
+| `scripts/audio_codec_benchmark.py` | audio (dedicated codec) | **FLAC** | soundfile, numpy |
 
 ## Dependencies
 
-- **Core compressor and tests: zero external dependencies** (Python 3 stdlib only).
+- **Core text/byte compressor and tests: zero external dependencies** (Python 3
+  stdlib only — `codec.py`, `model.py`, `tokenizer.py`, etc.).
+- **`compressor/audiocodec.py`** (the dedicated audio codec): needs `numpy`.
 - **CLI benchmark** (`compressor.cli benchmark`): the `gzip` and `zstd` command-line
   tools.
 - **Cross-domain benchmark scripts** need the libraries in the table above —
@@ -252,28 +258,40 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   with a from-scratch byte coder + one auto-discovered transform, no hardcoded
   image knowledge, is the point.
 
-## Audio domain — where the specialist wins
+## Audio domain — building a codec that beats FLAC
 
 Lossless audio (16-bit PCM, real music) decoded via libsndfile; **FLAC** is the
-purpose-built baseline (`scripts/audio_benchmark.py`). The gate again
-auto-selects `delta(4)+split(2)`.
+purpose-built baseline.
 
-| gzip -9 | zstd -19 | **ours** | FLAC |
-|---------|----------|----------|------|
-| 1.03x | 1.03x | **1.16x** | **1.59x** |
+**First, the generic codec + transform falls short.** The per-type transform
+auto-selects `delta(4)+split(2)` and beats gzip/zstd (which are near-helpless on
+PCM), but FLAC wins decisively — 1.16x vs 1.59x. The reason: a stride-delta is
+only a *1st-order* predictor, and audio rewards *adaptive high-order* prediction.
+A simple transform can't reach FLAC.
 
-The transform helps (we beat gzip/zstd, which are near-helpless on PCM), **but
-FLAC wins decisively.** Unlike Bayer mosaics, audio rewards *adaptive high-order
-linear prediction* (LPC): a fixed stride-delta is only a 1st-order predictor, and
-fixed orders ≥3 actually get *worse* (they amplify noise). No simple transform
-reaches FLAC.
+**So we built a dedicated audio codec** (`compressor/audiocodec.py`,
+`scripts/audio_codec_benchmark.py`) — Monkey's-Audio-style, all integer and
+exactly reversible: mid/side → fixed order-2 predictor → cascade of integer
+sign-sign LMS adaptive filters (16 + 256 tap) → adaptive Rice. The filters learn
+online from the reconstructed signal (nothing shipped), and adaptive Rice tracks
+the per-sample magnitude, beating FLAC's per-partition Rice. Over 10 real tracks
+(bit-exact verified each):
 
-This completes the cross-domain map and the unifying principle: **a per-type
-reversible transform closes the gap to a domain specialist by as much as that
-specialist's modeling exceeds simple decorrelation** — large for Bayer (1st-order
-structure → JPEG-XL parity), small for audio (adaptive LPC → FLAC stays ahead).
-It tells you exactly when this architecture is worth deploying: structured data
-whose redundancy a cheap reversible transform can expose.
+| | gzip -9 | zstd -19 | FLAC | **ours** |
+|--|---------|----------|------|----------|
+| mean | 1.10x | 1.12x | 1.80x | **1.90x** |
+
+**Ours beats FLAC on 9/10 tracks, mean +5.9%** (up to +18%). Caveats: vs
+libsndfile's FLAC (the `flac -8` CLI may be ~1–3% stronger); measured on 3 s
+chunks where our adaptive filters only partly converge (full tracks likely favour
+us more); and pure-Python, so slow — a *ratio* result, not a fast codec.
+
+This is the sharpest version of the unifying lesson. A **cheap generic transform**
+closes the gap to a specialist only by as much as the specialist exceeds simple
+decorrelation — enough for Bayer (→ JPEG-XL parity), not for audio. But a
+**domain-specific adaptive predictor**, when the structure demands it, can beat
+the specialist outright. The architecture tells you which you need: try the cheap
+transform first; reach for a real predictor only where it doesn't suffice.
 
 ## Roadmap
 
@@ -293,7 +311,8 @@ expected payoff:
 Done: trained per-type dictionary (frequency × savings, long patterns admitted),
 LZ back-references with a contiguous trained blob, two blob builders (naive and
 COVER-style coverage) chosen per type on a validation slice, lazy parsing,
-cost-optimal parsing, repeat-offset modeling, arithmetic coding, and a per-type
-reversible transform stage (delta/split decorrelation). Validated on synthetic
-text, real-world text, raw images (vs JPEG XL), and lossless audio (vs FLAC) —
-every result round-trip verified on real data.
+cost-optimal parsing, repeat-offset modeling, arithmetic coding, a per-type
+reversible transform stage (delta/split decorrelation), and a dedicated
+adaptive-filter audio codec that beats FLAC. Validated on synthetic text,
+real-world text, raw images (parity with JPEG XL), and lossless audio (beats
+FLAC) — every result round-trip verified on real data.
