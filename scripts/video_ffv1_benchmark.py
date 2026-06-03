@@ -66,7 +66,7 @@ def main():
         name = path.split("/")[-1].replace(".y4m", "")
         y4m = os.path.join(work, name + ".y4m")
         truncate_y4m(path, NF, y4m)
-        _, Y, U, V = cli._read_y4m(y4m)
+        _, _, (Y, U, V) = cli._read_y4m(y4m)
         raw = Y.nbytes + U.nbytes + V.nbytes
 
         ffv1 = ffv1_size(y4m, work)

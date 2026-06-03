@@ -180,6 +180,13 @@ temporal redundancy, which is usually the dominant source of compressibility.
 - [x] **native MED reconstruction loop** (`med_fill` in `_native/audio.c`):
       byte-identical to the Python loop; decode ~2.6× on motion clips (more on
       intra-heavy frames). videocodec.decode dispatches to it.
+- [x] **consolidated / deduped the video experiments**: the 8 exploratory
+      `scripts/video_*_benchmark.py` ablation scripts (~1400 lines, heavily
+      duplicated) are retired to git history now that the pipeline lives in the
+      tested `compressor/videocodec.py`; `scripts/video_ffv1_benchmark.py` (ours vs
+      FFV1/JXL via the real codec) is the one remaining, canonical video benchmark.
+      The completed video items above name those now-retired scripts as the
+      historical site of each ablation.
 - [ ] **NEXT for video**: SKIP against the best MC MV (not just MV 0); more clips
       across the motion spectrum.
 

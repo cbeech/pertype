@@ -398,12 +398,17 @@ still wins on repetitive/periodic data until our own LZ path is ported to native
 
 ## Lossless video — the temporal-delta hypothesis
 
+*The video pipeline below was developed as an ablation across a series of
+exploratory scripts, now consolidated into the tested `compressor/videocodec.py`
+and retired to git history; `scripts/video_ffv1_benchmark.py` reproduces the
+headline FFV1 comparison.*
+
 Most lossless video codecs (FFV1, Ut Video) are *intra-only*: each frame is
 compressed independently, ignoring temporal redundancy. Hypothesis: a cheap
 **temporal frame-delta** (`delta` with stride = one frame) beats intra-only coding
 on static/slow content and loses on high motion (where motion compensation is
 needed). Tested on standard `.y4m` sequences (luma plane), parsed with numpy — no
-decoder needed (`scripts/video_benchmark.py`). With no ffmpeg/FFV1 available,
+decoder needed. With no ffmpeg/FFV1 available,
 per-frame **JPEG-XL lossless** is the intra baseline; since JXL-lossless is
 *stronger* than FFV1's intra, that's a conservative stand-in. The temporal delta
 is isolated by running the same intra codec on the frame residuals; our native
@@ -424,7 +429,7 @@ result: on the static clip our `ctxcoder` on the temporal residual (1.01 MB)
 beats JXL-on-residual (1.23 MB) — the right entropy back-end for a near-zero
 residual stream.
 
-**Motion compensation closes the gap** (`scripts/video_mc_benchmark.py`). A raw
+**Motion compensation closes the gap.** A raw
 frame-delta forces a zero motion vector, so it loses where content *moves*. Block
 MC — per 16×16 block, search the previous frame in a ±8 window for the min-SAD
 displacement, then code (motion vector + residual) with `ctxcoder` — converts the
@@ -443,8 +448,8 @@ remaining stefan gap is occlusion / newly-revealed content that block matching
 can't predict. This is the same block-search idea as our LZ match-finder, applied
 across frames.
 
-**Per-block intra/inter mode selection** removes that last loss
-(`scripts/video_mode_benchmark.py`). Each 16×16 block picks the cheaper of INTER
+**Per-block intra/inter mode selection** removes that last loss. Each 16×16 block
+picks the cheaper of INTER
 (the MC residual) or INTRA (a causal **MED / LOCO-I** predictor — the JPEG-LS
 median of left, above and the gradient — *within* the current frame), so
 occlusion / newly-revealed blocks with no good past match fall back to intra. The
@@ -463,8 +468,7 @@ the occlusion blocks well enough that 27–41% of blocks on the motion clips cho
 intra, all reusing the project's own primitives (the block search mirrors the LZ
 match-finder; the residual coder is `ctxcoder`).
 
-**Half-pixel motion vectors** add the last gain (`scripts/video_subpel_benchmark.py`).
-After the integer search, each block is refined over the 9 half-pel positions
+**Half-pixel motion vectors** add the last gain. After the integer search, each block is refined over the 9 half-pel positions
 around its best integer MV (bilinear interpolation of the previous frame), keeping
 the lower-SAD one; MVs are then coded in half-pel units. Real motion is rarely
 integer-aligned, so this shrinks the inter residual on the moving clips:
@@ -481,8 +485,8 @@ temporal-delta → motion compensation → per-block mode selection → MED intr
 half-pel MVs — takes **stefan from −18% to +6%** and **foreman from −16% to +9%**,
 beating intra-only JXL (itself stronger than FFV1's intra) on every clip.
 
-**A per-block SKIP mode** handles exact-static content
-(`scripts/video_skip_benchmark.py`). In a lossless codec a block can be skipped —
+**A per-block SKIP mode** handles exact-static content. In a lossless codec a
+block can be skipped —
 *no* residual, just a mode flag — only when it is bit-identical to its prediction;
 the co-located previous block (MV 0) catches static backgrounds. On akiyo's static
 studio set **56% of blocks skip**, for +2.7% (→ **+57%** vs intra-only). On the
@@ -490,8 +494,8 @@ real-camera clips, sensor noise means no block is exactly static, so skip is nev
 chosen and costs nothing (foreman/stefan unchanged at +9% / +6%). It's a targeted
 win for screen content / surveillance / animation, harmless elsewhere.
 
-**Quarter-pixel motion vectors** refine once more
-(`scripts/video_qpel_benchmark.py`): the sub-pel predictor generalises to a single
+**Quarter-pixel motion vectors** refine once more: the sub-pel predictor
+generalises to a single
 bilinear sampler in quarter-pel units (integer / half / quarter all special cases),
 and the search refines integer → half → quarter. On top of half-pel it adds
 +1.5–2% — akiyo +57%→**+58%**, foreman +9%→**+10%**, stefan +6%→**+7%** vs
@@ -502,7 +506,7 @@ intra, all `ctxcoder`-coded, every frame bit-exact) takes **stefan from −18% t
 
 **Colour planes.** Everything above is luma; the clips are 4:2:0, so U/V are
 quarter-resolution chroma. Running the full pipeline independently on each plane
-(`scripts/video_color_benchmark.py`, 60 frames, round-trip verified), the full-YUV
+(60 frames, round-trip verified), the full-YUV
 totals vs per-plane intra-only JXL:
 
 | clip | Y | U | V | total | vs raw YUV |
@@ -518,7 +522,7 @@ strong.
 
 **Deriving chroma MVs from luma — tested, doesn't help here.** The textbook codec
 design (one mode + one luma MV per block; chroma inherits the mode and a MV scaled
-by the 4:2:0 subsampling, coding *no* chroma MV/mode — `scripts/video_joint_benchmark.py`)
+by the 4:2:0 subsampling, coding *no* chroma MV/mode)
 was the obvious fix for that chroma softness. It instead **slightly regressed** vs
 the independent per-plane coder (akiyo −2.7%, foreman −0.2%, stefan −0.5%; 60
 frames, round-trip verified). Two reasons: joint coding gives up per-plane **SKIP**
