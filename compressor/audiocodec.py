@@ -13,6 +13,7 @@ speed, so it is slow; the ratio is the point.
 """
 import numpy as np
 
+from compressor import native
 from compressor.bitio import BitWriter, BitReader
 
 MAGIC = b"AUD1"
@@ -38,20 +39,28 @@ def _midside_inv(m, s):
     return np.stack([L, R], axis=1)
 
 
-def _fixed2_fwd(x):
+def _fixed2_fwd_py(x):
     e = x.copy()
     e[2:] = x[2:] - (2 * x[1:-1] - x[:-2])
     return e
 
 
-def _fixed2_inv(e):
+def _fixed2_inv_py(e):
     x = e.copy()
     for i in range(2, len(x)):
         x[i] = e[i] + 2 * x[i - 1] - x[i - 2]
     return x
 
 
-def _lms_fwd(x, taps, shift):
+def _fixed2_fwd(x):
+    return native.fixed2_fwd(x) if native.HAVE_NATIVE else _fixed2_fwd_py(x)
+
+
+def _fixed2_inv(e):
+    return native.fixed2_inv(e) if native.HAVE_NATIVE else _fixed2_inv_py(e)
+
+
+def _lms_fwd_py(x, taps, shift):
     w = np.zeros(taps, dtype=np.int64)
     h = np.zeros(taps, dtype=np.int64)
     out = np.empty(len(x), dtype=np.int64)
@@ -68,7 +77,7 @@ def _lms_fwd(x, taps, shift):
     return out
 
 
-def _lms_inv(e, taps, shift):
+def _lms_inv_py(e, taps, shift):
     w = np.zeros(taps, dtype=np.int64)
     h = np.zeros(taps, dtype=np.int64)
     x = np.empty(len(e), dtype=np.int64)
@@ -83,6 +92,18 @@ def _lms_inv(e, taps, shift):
         h = np.roll(h, 1)
         h[0] = xi
     return x
+
+
+def _lms_fwd(x, taps, shift):
+    if native.HAVE_NATIVE:
+        return native.lms_fwd(x, taps, shift)
+    return _lms_fwd_py(x, taps, shift)
+
+
+def _lms_inv(e, taps, shift):
+    if native.HAVE_NATIVE:
+        return native.lms_inv(e, taps, shift)
+    return _lms_inv_py(e, taps, shift)
 
 
 def _predict_fwd(x):
@@ -100,7 +121,8 @@ def _predict_inv(e):
 
 # --- adaptive Rice coding of a residual stream ------------------------------
 
-def _rice_encode(res, bw):
+def _rice_encode_py(res):
+    bw = BitWriter()
     run = 16.0
     for r in res:
         r = int(r)
@@ -113,9 +135,11 @@ def _rice_encode(res, bw):
         if k:
             bw.write_bits(u & ((1 << k) - 1), k)
         run += (u - run) * RICE_ALPHA
+    return bw.getvalue()
 
 
-def _rice_decode(n, br):
+def _rice_decode_py(blob, n):
+    br = BitReader(blob)
     run = 16.0
     out = np.empty(n, dtype=np.int64)
     for i in range(n):
@@ -130,6 +154,14 @@ def _rice_decode(n, br):
     return out
 
 
+def _rice_encode(res):
+    return native.rice_encode(res) if native.HAVE_NATIVE else _rice_encode_py(res)
+
+
+def _rice_decode(blob, n):
+    return native.rice_decode(blob, n) if native.HAVE_NATIVE else _rice_decode_py(blob, n)
+
+
 # --- top level --------------------------------------------------------------
 
 def encode(pcm, samplerate):
@@ -140,16 +172,15 @@ def encode(pcm, samplerate):
     n, channels = pcm.shape
     streams = list(_midside_fwd(pcm)) if channels == 2 else [pcm[:, c].astype(np.int64)
                                                              for c in range(channels)]
-    bw = BitWriter()
+    out = bytearray(MAGIC)
+    out += bytes([channels])
+    out += samplerate.to_bytes(4, "big")
+    out += n.to_bytes(8, "big")
     for stream in streams:
-        _rice_encode(_predict_fwd(stream), bw)
-    payload = bw.getvalue()
-
-    header = bytearray(MAGIC)
-    header += bytes([channels])
-    header += samplerate.to_bytes(4, "big")
-    header += n.to_bytes(8, "big")
-    return bytes(header) + payload
+        blob = _rice_encode(_predict_fwd(stream))
+        out += len(blob).to_bytes(4, "big")
+        out += blob
+    return bytes(out)
 
 
 def decode(blob):
@@ -159,8 +190,13 @@ def decode(blob):
     channels = blob[4]
     samplerate = int.from_bytes(blob[5:9], "big")
     n = int.from_bytes(blob[9:17], "big")
-    br = BitReader(blob[17:])
-    streams = [_predict_inv(_rice_decode(n, br)) for _ in range(channels)]
+    pos = 17
+    streams = []
+    for _ in range(channels):
+        ln = int.from_bytes(blob[pos:pos + 4], "big")
+        pos += 4
+        streams.append(_predict_inv(_rice_decode(blob[pos:pos + ln], n)))
+        pos += ln
     if channels == 2:
         pcm = _midside_inv(streams[0], streams[1])
     else:

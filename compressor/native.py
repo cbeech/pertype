@@ -1,0 +1,117 @@
+"""Native (C, via ctypes) implementations of hot primitives, with auto-build.
+
+The C sources in ``_native/`` are compiled to a shared library with gcc on first
+import (recompiled when the source changes). If gcc or the source is unavailable,
+``HAVE_NATIVE`` is False and callers fall back to the pure-Python reference. The
+native code is required to be bit-identical to that reference.
+
+This is the seam the optimised port grows along: add a C primitive + a thin
+wrapper here, keep the Python fallback, and dispatch on ``HAVE_NATIVE``.
+"""
+import ctypes
+import os
+import subprocess
+
+import numpy as np
+
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_SRC = os.path.join(_DIR, "_native", "audio.c")
+_SO = os.path.join(_DIR, "_native", "audio.so")
+
+HAVE_NATIVE = False
+_lib = None
+
+
+def _build():
+    if not os.path.exists(_SRC):
+        return False
+    if os.path.exists(_SO) and os.path.getmtime(_SO) >= os.path.getmtime(_SRC):
+        return True
+    try:
+        subprocess.run(
+            # -fwrapv: signed overflow wraps like numpy int64.
+            # -ffp-contract=off: no FMA, so the float `run` update matches Python.
+            ["gcc", "-O3", "-fPIC", "-fwrapv", "-ffp-contract=off", "-shared",
+             "-o", _SO, _SRC],
+            check=True, capture_output=True,
+        )
+        return os.path.exists(_SO)
+    except Exception:
+        return False
+
+
+_I64 = ctypes.POINTER(ctypes.c_int64)
+_U8 = ctypes.POINTER(ctypes.c_uint8)
+try:
+    if _build():
+        _lib = ctypes.CDLL(_SO)
+        for fn in ("lms_fwd", "lms_inv"):
+            getattr(_lib, fn).argtypes = [
+                _I64, _I64, ctypes.c_long, ctypes.c_int, ctypes.c_int
+            ]
+            getattr(_lib, fn).restype = None
+        for fn in ("fixed2_fwd", "fixed2_inv"):
+            getattr(_lib, fn).argtypes = [_I64, _I64, ctypes.c_long]
+            getattr(_lib, fn).restype = None
+        _lib.rice_encode.argtypes = [_I64, ctypes.c_long, _U8, ctypes.c_long]
+        _lib.rice_encode.restype = ctypes.c_long
+        _lib.rice_decode.argtypes = [_U8, ctypes.c_long, _I64]
+        _lib.rice_decode.restype = None
+        HAVE_NATIVE = True
+except Exception:
+    HAVE_NATIVE = False
+
+
+def _ptr(a):
+    return a.ctypes.data_as(_I64)
+
+
+def _u8ptr(a):
+    return a.ctypes.data_as(_U8)
+
+
+def lms_fwd(x, taps, shift):
+    x = np.ascontiguousarray(x, dtype=np.int64)
+    out = np.empty(len(x), dtype=np.int64)
+    _lib.lms_fwd(_ptr(x), _ptr(out), len(x), taps, shift)
+    return out
+
+
+def lms_inv(e, taps, shift):
+    e = np.ascontiguousarray(e, dtype=np.int64)
+    out = np.empty(len(e), dtype=np.int64)
+    _lib.lms_inv(_ptr(e), _ptr(out), len(e), taps, shift)
+    return out
+
+
+def fixed2_fwd(x):
+    x = np.ascontiguousarray(x, dtype=np.int64)
+    out = np.empty(len(x), dtype=np.int64)
+    _lib.fixed2_fwd(_ptr(x), _ptr(out), len(x))
+    return out
+
+
+def fixed2_inv(e):
+    e = np.ascontiguousarray(e, dtype=np.int64)
+    out = np.empty(len(e), dtype=np.int64)
+    _lib.fixed2_inv(_ptr(e), _ptr(out), len(e))
+    return out
+
+
+def rice_encode(res):
+    res = np.ascontiguousarray(res, dtype=np.int64)
+    n = len(res)
+    cap = n * 8 + 64
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = _lib.rice_encode(_ptr(res), n, _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+
+
+def rice_decode(blob, n):
+    buf = np.frombuffer(blob + b"\x00\x00", dtype=np.uint8)  # slack to avoid over-read
+    out = np.empty(n, dtype=np.int64)
+    _lib.rice_decode(_u8ptr(np.ascontiguousarray(buf)), n, _ptr(out))
+    return out

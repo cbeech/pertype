@@ -20,3 +20,6 @@ venv/
 
 # Local harness state
 /.claude/
+
+# Native build artifacts
+*.so
