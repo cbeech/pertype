@@ -9,20 +9,21 @@ the same coder. Token stream (per token):
                      extra bits, then a distance symbol from the distance model,
                      then ``dist_slot`` extra bits.
 
-Container layout (all integers big-endian)::
+Container layout (compact — the per-file overhead matters for the many-small-files
+win, so lengths are LEB128 varints and the model identity is a 2-byte hash rather
+than the full type-id string)::
 
-    magic     "CZ"        2 bytes
+    magic     u8          0xC7
     fmt_ver   u8
-    tid_len   u8
-    type_id   bytes       must match the model used to decompress
-    model_ver u16         must match
-    orig_len  u64
-    n_tokens  u32         number of main symbols in the payload
+    id_hash   u16         hash of (type_id, model_ver); must match the model used
+    orig_len  varint      original byte length
+    n_tokens  varint      number of main symbols in the payload
     crc32     u32         CRC of the original data
     payload   bytes       bit-packed, MSB-first
 
-The model is referenced by (type_id, model_ver), not embedded — its dictionary
-and tables are shipped once and amortized across every file of the type.
+The model is referenced by its identity hash, not embedded — its dictionary and
+tables are shipped once and amortized across every file of the type. A wrong
+model fails the id_hash check (and then the length/CRC checks) on decompress.
 """
 import zlib
 
@@ -33,8 +34,38 @@ from compressor.tokenizer import (
     MIN_MATCH, detokenize, tokenize, tokenize_optimal, value_from, value_slot,
 )
 
-MAGIC = b"CZ"
-FMT_VERSION = 4
+MAGIC = 0xC7
+FMT_VERSION = 5
+
+
+def _write_varint(buf, n):
+    """Append ``n`` (unsigned) to ``buf`` as LEB128."""
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            buf.append(b | 0x80)
+        else:
+            buf.append(b)
+            return
+
+
+def _read_varint(blob, pos):
+    """Read a LEB128 unsigned int from ``blob`` at ``pos``; return (value, new_pos)."""
+    val = 0
+    shift = 0
+    while True:
+        b = blob[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+
+
+def _id_hash(type_id, version):
+    """A 2-byte identity for (type_id, model_ver) — a wrong model fails this."""
+    return zlib.crc32(f"{type_id}:{version}".encode("utf-8")) & 0xFFFF
 
 # Optional native acceleration of the per-symbol arithmetic loop. Imported lazily
 # so the core stays zero-dependency; byte-identical to the Python path below, so
@@ -182,42 +213,31 @@ def compress(data, model, max_chain=None):
         tokens = tokenize(tdata, model.dictionary, use_lz=False)
     payload = _encode_payload(tokens, model)
 
-    tid = model.type_id.encode("utf-8")
     header = bytearray()
-    header += MAGIC
-    header += bytes([FMT_VERSION])
-    header += bytes([len(tid)])
-    header += tid
-    header += model.version.to_bytes(2, "big")
-    header += len(data).to_bytes(8, "big")
-    header += len(tokens).to_bytes(4, "big")
+    header.append(MAGIC)
+    header.append(FMT_VERSION)
+    header += _id_hash(model.type_id, model.version).to_bytes(2, "big")
+    _write_varint(header, len(data))
+    _write_varint(header, len(tokens))
     header += (zlib.crc32(data) & 0xFFFFFFFF).to_bytes(4, "big")
     return bytes(header) + payload
 
 
 def decompress(blob, model):
-    if blob[:2] != MAGIC:
+    if not blob or blob[0] != MAGIC:
         raise ValueError("not a CZ container")
-    pos = 2
-    fmt_ver = blob[pos]
-    pos += 1
+    fmt_ver = blob[1]
     if fmt_ver != FMT_VERSION:
         raise ValueError(f"unsupported container format version {fmt_ver}")
-    tid_len = blob[pos]
-    pos += 1
-    type_id = blob[pos : pos + tid_len].decode("utf-8")
-    pos += tid_len
-    model_ver = int.from_bytes(blob[pos : pos + 2], "big")
-    pos += 2
-    if type_id != model.type_id or model_ver != model.version:
+    id_hash = int.from_bytes(blob[2:4], "big")
+    if id_hash != _id_hash(model.type_id, model.version):
         raise ValueError(
-            f"model mismatch: container is {type_id} v{model_ver}, "
+            f"model mismatch: container id_hash {id_hash:#06x}, "
             f"model is {model.type_id} v{model.version}"
         )
-    orig_len = int.from_bytes(blob[pos : pos + 8], "big")
-    pos += 8
-    n_tokens = int.from_bytes(blob[pos : pos + 4], "big")
-    pos += 4
+    pos = 4
+    orig_len, pos = _read_varint(blob, pos)
+    n_tokens, pos = _read_varint(blob, pos)
     crc = int.from_bytes(blob[pos : pos + 4], "big")
     pos += 4
 
