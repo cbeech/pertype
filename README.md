@@ -412,11 +412,29 @@ round-trip verified.
 The hypothesis holds exactly: frame-delta is a large win on static content and a
 loss under motion — because a raw frame-delta can't track *moving* pixels, so the
 residual loses the spatial structure the intra codec exploits. That is precisely
-the boundary where **motion compensation** is required (the hard, unimplemented
-item — and the native match-finder is the primitive it would build on). One nice
-secondary result: on the static clip our `ctxcoder` on the temporal residual
-(1.01 MB) beats JXL-on-residual (1.23 MB) — the right entropy back-end for a
-near-zero residual stream.
+the boundary where **motion compensation** is required. One nice secondary
+result: on the static clip our `ctxcoder` on the temporal residual (1.01 MB)
+beats JXL-on-residual (1.23 MB) — the right entropy back-end for a near-zero
+residual stream.
+
+**Motion compensation closes the gap** (`scripts/video_mc_benchmark.py`). A raw
+frame-delta forces a zero motion vector, so it loses where content *moves*. Block
+MC — per 16×16 block, search the previous frame in a ±8 window for the min-SAD
+displacement, then code (motion vector + residual) with `ctxcoder` — converts the
+losses into wins/ties (60 frames, round-trip verified):
+
+| clip | intra-JXL | frame-delta | motion-comp |
+|--|--|--|--|
+| akiyo (static) | 2.10 MB | 1.01 MB (+52%) | **0.95 MB (+55%)** |
+| foreman (medium) | 2.86 MB | 3.30 MB (−16%) | **2.78 MB (+3%)** |
+| stefan (high motion) | 3.25 MB | 3.82 MB (−18%) | **3.28 MB (−1%)** |
+
+MC turns foreman's 16% loss into a 3% win and stefan's 18% loss into a tie —
+beating intra-only JXL (itself stronger than FFV1's intra) on 2 of 3 clips. A
+wider ±16 search barely moved the numbers, so the residual cost dominates: the
+remaining stefan gap is occlusion / newly-revealed content that block matching
+can't predict, which per-block intra/inter **mode selection** would recover. This
+is the same block-search idea as our LZ match-finder, applied across frames.
 
 ## Roadmap
 

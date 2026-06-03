@@ -113,10 +113,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
 - [ ] 2D spatial predictor (MED / Paeth) for intra frames (shared with images) —
       would help the *intra* side on all clips (and is needed for the motion case
       where temporal delta loses).
-- [ ] **NEXT for video: block motion compensation** for moving content — the only
-      way to beat intra-only on foreman/stefan. Built on the native match-finder
-      (`lz_best`/`lz_forward`): search the previous frame for each block's best
-      match, code (motion vector + residual). The hard part, but where the win is.
+- [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
+      16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
+      `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs
+      intra-only JXL (60 frames, round-trip verified): akiyo +52%→+55%, foreman
+      −16%→**+3%**, stefan −18%→**−1%**. A ±16 search barely changed it (residual
+      cost dominates). Same block-search idea as the LZ match-finder.
+- [ ] **NEXT for video: per-block intra/inter mode selection** — code a block
+      intra (or skip) when its MC residual is more expensive than intra; recovers
+      the remaining stefan gap (occlusion / newly-revealed content that block
+      matching can't predict). Then sub-pel / half-pel MVs.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 
