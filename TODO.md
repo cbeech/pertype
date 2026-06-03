@@ -139,10 +139,15 @@ temporal redundancy, which is usually the dominant source of compressibility.
       intra); foreman/stefan unchanged (0% skip — real-camera noise has no exact
       static blocks). Targeted win for screen content / surveillance / animation,
       harmless on noisy video. Round-trip verified.
-- [ ] **NEXT for video: quarter-pixel MVs**, the colour planes (U/V), a real
-      `ffmpeg`/FFV1 baseline once available, and a SKIP that allows the best MC MV
-      (not just MV 0). Move off the per-pixel MED reconstruction loop
-      (diagonal-wavefront or C) if speed matters.
+- [x] **quarter-pixel motion vectors** (`scripts/video_qpel_benchmark.py`): sub-pel
+      predictor generalised to one bilinear sampler in quarter-pel units; refine
+      integer → half → quarter. Adds +1.5–2% over half-pel: akiyo +58%, foreman
+      +10%, stefan +7% vs intra-only JXL. Diminishing returns after half-pel.
+      Round-trip verified. Finished arc: stefan −18%→+7%, foreman −16%→+10%.
+- [ ] **NEXT for video**: the colour planes (U/V); a real `ffmpeg`/FFV1 baseline
+      once available; SKIP against the best MC MV (not just MV 0); and moving off
+      the per-pixel MED reconstruction loop (diagonal-wavefront or C) if speed
+      matters. Then fold the prototype into a real `Transform`/`Coder` video path.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

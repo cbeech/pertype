@@ -481,9 +481,19 @@ the co-located previous block (MV 0) catches static backgrounds. On akiyo's stat
 studio set **56% of blocks skip**, for +2.7% (→ **+57%** vs intra-only). On the
 real-camera clips, sensor noise means no block is exactly static, so skip is never
 chosen and costs nothing (foreman/stefan unchanged at +9% / +6%). It's a targeted
-win for screen content / surveillance / animation, harmless elsewhere. Remaining
-polish: quarter-pel MVs, the colour planes (U/V), and a real FFV1 baseline once
-`ffmpeg` is available.
+win for screen content / surveillance / animation, harmless elsewhere.
+
+**Quarter-pixel motion vectors** refine once more
+(`scripts/video_qpel_benchmark.py`): the sub-pel predictor generalises to a single
+bilinear sampler in quarter-pel units (integer / half / quarter all special cases),
+and the search refines integer → half → quarter. On top of half-pel it adds
++1.5–2% — akiyo +57%→**+58%**, foreman +9%→**+10%**, stefan +6%→**+7%** vs
+intra-only JXL — diminishing returns after the half-pel step, as expected. The
+finished inter-frame coder (MC + quarter-pel + per-block SKIP/INTER/INTRA with MED
+intra, all `ctxcoder`-coded, every frame bit-exact) takes **stefan from −18% to
++7%** and **foreman from −16% to +10%**. Remaining polish: the colour planes (U/V),
+a real FFV1 baseline once `ffmpeg` is available, and SKIP against the best MV (not
+just MV 0).
 
 ## Roadmap
 
