@@ -59,55 +59,82 @@ def cmd_benchmark(args):
 
 # --- lossless video (.y4m, 4:2:0) -------------------------------------------
 
-VY4M = b"VY4M"   # CLI container: y4m header line + a videocodec VYUV blob
+VY4M = b"VY4M"   # CLI container: y4m + per-frame headers + a videocodec VYUV blob
+
+
+def _chroma_div(ctag):
+    """Chroma subsampling (W-divisor, H-divisor) for a y4m C-tag, or None for
+    monochrome. e.g. C420* -> (2, 2), C422 -> (2, 1), C444 -> (1, 1)."""
+    body = ctag[1:]                              # drop leading 'C'
+    if body.startswith("mono") or body.startswith("400"):
+        return None
+    for k, div in (("420", (2, 2)), ("411", (4, 1)), ("422", (2, 1)), ("444", (1, 1))):
+        if body.startswith(k):
+            return div
+    sys.exit(f"unsupported y4m colour space {ctag}")
 
 
 def _read_y4m(path):
-    """Parse a 4:2:0 .y4m into (header_line_bytes, Y, U, V) uint8 stacks."""
+    """Parse any .y4m into (header_line, [frame_headers], [planes]). Supports
+    4:2:0 / 4:2:2 / 4:4:4 / mono and preserves each frame's header verbatim, so
+    the file round-trips byte-exact. ``planes`` is [Y] (mono) or [Y, U, V]."""
     import numpy as np
     raw = _read(path)
     nl = raw.index(b"\n")
-    header = raw[:nl + 1]                       # first line, including the newline
+    header = raw[:nl + 1]
     W = H = None
+    ctag = "C420"
     for tok in raw[:nl].decode("ascii").split():
         if tok[0] == "W":
             W = int(tok[1:])
         elif tok[0] == "H":
             H = int(tok[1:])
-        elif tok[0] == "C" and not tok.startswith("C420"):
-            sys.exit(f"only 4:2:0 .y4m supported (header says {tok})")
+        elif tok[0] == "C":
+            ctag = tok
     if W is None or H is None:
         sys.exit("malformed .y4m header")
-    ys, cs = W * H, (W // 2) * (H // 2)
-    fs = ys + 2 * cs
-    pos, Ys, Us, Vs = nl + 1, [], [], []
+    div = _chroma_div(ctag)
+    ys = W * H
+    cw, ch = (W // div[0], H // div[1]) if div else (0, 0)
+    cs = cw * ch
+    fheaders, Ys, Us, Vs = [], [], [], []
+    pos = nl + 1
     while pos < len(raw):
-        pos = raw.index(b"\n", pos) + 1         # skip the per-frame "FRAME...\n"
-        Ys.append(np.frombuffer(raw[pos:pos + ys], np.uint8).reshape(H, W))
-        Us.append(np.frombuffer(raw[pos + ys:pos + ys + cs], np.uint8).reshape(H // 2, W // 2))
-        Vs.append(np.frombuffer(raw[pos + ys + cs:pos + ys + 2 * cs], np.uint8).reshape(H // 2, W // 2))
-        pos += fs
-    return header, np.stack(Ys), np.stack(Us), np.stack(Vs)
+        fnl = raw.index(b"\n", pos)              # this frame's "FRAME...\n", verbatim
+        fheaders.append(raw[pos:fnl + 1])
+        pos = fnl + 1
+        Ys.append(np.frombuffer(raw[pos:pos + ys], np.uint8).reshape(H, W)); pos += ys
+        if div:
+            Us.append(np.frombuffer(raw[pos:pos + cs], np.uint8).reshape(ch, cw)); pos += cs
+            Vs.append(np.frombuffer(raw[pos:pos + cs], np.uint8).reshape(ch, cw)); pos += cs
+    planes = [np.stack(Ys)] + ([np.stack(Us), np.stack(Vs)] if div else [])
+    return header, fheaders, planes
 
 
-def _write_y4m(path, header, Y, U, V):
+def _write_y4m(path, header, fheaders, planes):
     with open(path, "wb") as fh:
         fh.write(header)
-        for t in range(len(Y)):
-            fh.write(b"FRAME\n")
-            fh.write(Y[t].tobytes()); fh.write(U[t].tobytes()); fh.write(V[t].tobytes())
+        for t in range(len(planes[0])):
+            fh.write(fheaders[t])
+            for p in planes:
+                fh.write(p[t].tobytes())
 
 
 def cmd_video_encode(args):
     from compressor import videocodec
-    header, Y, U, V = _read_y4m(args.input)
-    blob = VY4M + len(header).to_bytes(4, "big") + header + videocodec.encode_yuv(Y, U, V)
+    header, fheaders, planes = _read_y4m(args.input)
+    fhblob = b"".join(fheaders)
+    blob = (VY4M + bytes([len(planes)])
+            + len(header).to_bytes(4, "big") + header
+            + len(fhblob).to_bytes(4, "big") + fhblob
+            + videocodec.encode_yuv(*planes))
     dest = args.output or args.input + ".vid"
     _write(dest, blob)
-    raw = Y.nbytes + U.nbytes + V.nbytes
+    raw = sum(p.nbytes for p in planes)
     ratio = raw / len(blob) if blob else 0.0
-    print(f"{args.input}: {len(Y)} frames {Y.shape[2]}x{Y.shape[1]} 4:2:0  "
-          f"{raw:,} -> {len(blob):,} bytes ({ratio:.2f}x) -> {dest}")
+    Y = planes[0]
+    print(f"{args.input}: {len(Y)} frames {Y.shape[2]}x{Y.shape[1]} "
+          f"{len(planes)}-plane  {raw:,} -> {len(blob):,} bytes ({ratio:.2f}x) -> {dest}")
 
 
 def cmd_video_decode(args):
@@ -115,12 +142,16 @@ def cmd_video_decode(args):
     blob = _read(args.input)
     if blob[:4] != VY4M:
         sys.exit("not a VY4M video container")
-    hlen = int.from_bytes(blob[4:8], "big")
-    header = blob[8:8 + hlen]
-    Y, U, V = videocodec.decode_yuv(blob[8 + hlen:])
+    pos = 5                                       # skip magic + n_planes byte
+    hlen = int.from_bytes(blob[pos:pos + 4], "big"); pos += 4
+    header = blob[pos:pos + hlen]; pos += hlen
+    fhlen = int.from_bytes(blob[pos:pos + 4], "big"); pos += 4
+    fhblob = blob[pos:pos + fhlen]; pos += fhlen
+    fheaders = [line + b"\n" for line in fhblob.split(b"\n")[:-1]]
+    planes = videocodec.decode_yuv(blob[pos:])
     dest = args.output or (args.input[:-4] if args.input.endswith(".vid") else args.input + ".y4m")
-    _write_y4m(dest, header, Y, U, V)
-    print(f"{args.input}: -> {len(Y)} frames -> {dest}")
+    _write_y4m(dest, header, fheaders, planes)
+    print(f"{args.input}: -> {len(planes[0])} frames -> {dest}")
 
 
 def build_parser():
@@ -152,7 +183,8 @@ def build_parser():
     b.add_argument("--max-patterns", type=int, default=4096, dest="max_patterns")
     b.set_defaults(func=cmd_benchmark)
 
-    ve = sub.add_parser("video-encode", help="losslessly encode a 4:2:0 .y4m video")
+    ve = sub.add_parser("video-encode",
+                        help="losslessly encode a .y4m video (4:2:0/4:2:2/4:4:4/mono)")
     ve.add_argument("input", help="input .y4m")
     ve.add_argument("-o", "--output", help="output .vid (default: <input>.vid)")
     ve.set_defaults(func=cmd_video_encode)

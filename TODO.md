@@ -167,9 +167,11 @@ temporal redundancy, which is usually the dominant source of compressibility.
       pass) and verified on real clips (akiyo 6.58x, foreman 2.30x vs raw luma,
       bit-exact). Decode's MED loop only touches intra pixels (fast).
 - [x] **video via the CLI** (`video-encode` / `video-decode` in `cli.py`): operate
-      on 4:2:0 `.y4m`; the container stores the y4m header so decode reproduces the
-      file byte-exact (verified on akiyo: 6.73x, `cmp`-identical). CLI round-trip
-      test added.
+      on `.y4m`; the container stores the y4m header so decode reproduces the file
+      byte-exact (verified on akiyo: 6.73x, `cmp`-identical). Now handles
+      **4:2:0 / 4:2:2 / 4:4:4 / mono** and preserves arbitrary per-frame headers
+      verbatim (tests for each). Subject to the codec's plane-dims-multiple-of-16
+      requirement.
 - [x] **real FFV1 baseline** (`scripts/video_ffv1_benchmark.py`): static ffmpeg via
       the `imageio-ffmpeg` wheel (no system install). Full YUV, 60 frames,
       round-trip verified — **we beat FFV1 on every clip**: akiyo +53%, foreman +8%,

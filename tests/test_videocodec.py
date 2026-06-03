@@ -91,6 +91,52 @@ def test_cli_y4m_roundtrip(tmp_path=None):
         assert fh.read() == src, "CLI .y4m round-trip not byte-exact"
 
 
+def _cli_roundtrips(src_bytes):
+    import os
+    import tempfile
+    from compressor import cli
+    d = tempfile.mkdtemp()
+    y, v, o = os.path.join(d, "c.y4m"), os.path.join(d, "c.vid"), os.path.join(d, "o.y4m")
+    with open(y, "wb") as fh:
+        fh.write(src_bytes)
+    cli.main(["video-encode", y, "-o", v])
+    cli.main(["video-decode", v, "-o", o])
+    with open(o, "rb") as fh:
+        return fh.read() == src_bytes
+
+
+def _build_y4m(ctag, W, H, T, plane_dims, frame_hdr=b"FRAME\n", seed=0):
+    rng = np.random.default_rng(seed)
+    body = bytearray()
+    for _ in range(T):
+        body += frame_hdr
+        for (ph, pw) in plane_dims:
+            body += rng.integers(0, 256, (ph, pw), dtype=np.uint8).tobytes()
+    return f"YUV4MPEG2 W{W} H{H} F30:1 {ctag}\n".encode() + bytes(body)
+
+
+def test_cli_y4m_444():
+    src = _build_y4m("C444", 64, 32, 3, [(32, 64), (32, 64), (32, 64)], seed=20)
+    assert _cli_roundtrips(src)
+
+
+def test_cli_y4m_422():
+    src = _build_y4m("C422", 64, 32, 3, [(32, 64), (32, 32), (32, 32)], seed=24)
+    assert _cli_roundtrips(src)
+
+
+def test_cli_y4m_mono():
+    src = _build_y4m("Cmono", 64, 32, 3, [(32, 64)], seed=21)
+    assert _cli_roundtrips(src)
+
+
+def test_cli_y4m_frame_params():
+    # per-frame header carries parameters -> must be preserved verbatim
+    src = _build_y4m("C420jpeg", 64, 32, 3, [(32, 64), (16, 32), (16, 32)],
+                     frame_hdr=b"FRAME Xfoo\n", seed=22)
+    assert _cli_roundtrips(src)
+
+
 def test_dimension_check():
     bad = np.zeros((2, 30, 30), dtype=np.uint8)               # not multiples of 16
     try:
