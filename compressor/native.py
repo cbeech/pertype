@@ -57,6 +57,9 @@ try:
         _lib.rice_encode.restype = ctypes.c_long
         _lib.rice_decode.argtypes = [_U8, ctypes.c_long, _I64]
         _lib.rice_decode.restype = None
+        for fn in ("delta_fwd", "delta_inv"):
+            getattr(_lib, fn).argtypes = [_U8, _U8, ctypes.c_long, ctypes.c_int]
+            getattr(_lib, fn).restype = None
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -115,3 +118,17 @@ def rice_decode(blob, n):
     out = np.empty(n, dtype=np.int64)
     _lib.rice_decode(_u8ptr(np.ascontiguousarray(buf)), n, _ptr(out))
     return out
+
+
+def delta_fwd(data, stride):
+    src = np.frombuffer(data, dtype=np.uint8)
+    out = np.empty(len(src), dtype=np.uint8)
+    _lib.delta_fwd(_u8ptr(np.ascontiguousarray(src)), _u8ptr(out), len(src), stride)
+    return out.tobytes()
+
+
+def delta_inv(data, stride):
+    src = np.frombuffer(data, dtype=np.uint8)
+    out = np.empty(len(src), dtype=np.uint8)
+    _lib.delta_inv(_u8ptr(np.ascontiguousarray(src)), _u8ptr(out), len(src), stride)
+    return out.tobytes()

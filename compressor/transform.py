@@ -14,19 +14,45 @@ model. Every op is exactly reversible: ``invert(apply(x)) == x``.
 """
 import zlib
 
+# Optional native acceleration. Imported lazily so the core stays zero-dependency:
+# if numpy/native is unavailable, the pure-Python paths below are used. Native is
+# required to be byte-identical, so a file is interchangeable across both.
+_native = None
 
-def _delta_apply(data, stride):
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
+
+def _delta_apply_py(data, stride):
     out = bytearray(data)
     for i in range(stride, len(out)):
         out[i] = (data[i] - data[i - stride]) & 0xFF
     return bytes(out)
 
 
-def _delta_invert(data, stride):
+def _delta_invert_py(data, stride):
     out = bytearray(data)
     for i in range(stride, len(out)):
         out[i] = (out[i - stride] + data[i]) & 0xFF
     return bytes(out)
+
+
+def _delta_apply(data, stride):
+    nat = _get_native()
+    return nat.delta_fwd(data, stride) if nat else _delta_apply_py(data, stride)
+
+
+def _delta_invert(data, stride):
+    nat = _get_native()
+    return nat.delta_inv(data, stride) if nat else _delta_invert_py(data, stride)
 
 
 def _split_apply(data, n):

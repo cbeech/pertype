@@ -1,11 +1,12 @@
-/* Native hot loops for the lossless audio codec.
+/* Native hot loops (compiled to audio.so by native.py, called via ctypes).
  *
- * Integer sign-sign LMS adaptive filter (forward and inverse). Must produce
- * bit-identical output to the pure-Python reference in compressor/audiocodec.py,
- * or losslessness breaks. Compiled with -fwrapv so signed arithmetic wraps like
- * numpy int64 (matters only on absurdly long inputs; normal data never overflows).
+ * Each function must produce bit-identical output to its pure-Python reference
+ * (in audiocodec.py / transform.py), or losslessness breaks. Compiled with
+ * -fwrapv (signed wrap like numpy int64) and -ffp-contract=off (no FMA, so the
+ * float Rice `run` update matches Python).
  *
- * Build: gcc -O3 -fPIC -fwrapv -shared -o audio.so audio.c  (done by native.py)
+ * Contents: the lossless audio codec's predictor + Rice coder, and the byte-
+ * stream `delta` transform used by the image/numeric path.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -107,4 +108,15 @@ void rice_decode(const uint8_t *in, long n, int64_t *out) {
         out[i] = (int64_t)(u >> 1) ^ -(int64_t)(u & 1);  /* unzigzag */
         run += (u - run) * RICE_ALPHA;
     }
+}
+
+/* --- byte-stream delta transform (image/numeric path) ----------------------- */
+void delta_fwd(const uint8_t *data, uint8_t *out, long n, int stride) {
+    for (long i = 0; i < stride && i < n; i++) out[i] = data[i];
+    for (long i = stride; i < n; i++) out[i] = (uint8_t)(data[i] - data[i - stride]);
+}
+
+void delta_inv(const uint8_t *data, uint8_t *out, long n, int stride) {
+    for (long i = 0; i < stride && i < n; i++) out[i] = data[i];
+    for (long i = stride; i < n; i++) out[i] = (uint8_t)(out[i - stride] + data[i]);
 }
