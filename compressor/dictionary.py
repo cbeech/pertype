@@ -95,6 +95,33 @@ class Dictionary:
         for bucket in self._index.values():
             bucket.sort(key=lambda x: -len(x[0]))
 
+    def flat_index(self):
+        """Flat arrays of the 2-byte-prefix index for the native matcher (cached):
+        ``(pat_data, pat_off, bucket_off, bucket_pids)`` — pattern bytes
+        concatenated with offsets, and a CSR over 2^16 keys of pattern ids in the
+        same longest-first order as ``self._index``."""
+        flat = getattr(self, "_flat", None)
+        if flat is None:
+            import numpy as np
+            pats = self.patterns
+            pat_off = np.zeros(len(pats) + 1, dtype=np.int32)
+            for i, p in enumerate(pats):
+                pat_off[i + 1] = pat_off[i] + len(p)
+            joined = b"".join(bytes(p) for p in pats)
+            pat_data = np.frombuffer(joined, dtype=np.uint8).copy()
+            bucket_off = np.zeros(65537, dtype=np.int32)
+            lists = [None] * 65536
+            for keyb, bucket in self._index.items():
+                lists[(keyb[0] << 8) | keyb[1]] = [pid for _pat, pid in bucket]
+            pids = []
+            for k in range(65536):
+                if lists[k]:
+                    pids.extend(lists[k])
+                bucket_off[k + 1] = len(pids)
+            bucket_pids = np.asarray(pids, dtype=np.int32)
+            flat = self._flat = (pat_data, pat_off, bucket_off, bucket_pids)
+        return flat
+
     def match(self, data, pos, min_match):
         """Longest pattern that is a prefix of ``data[pos:]``.
 

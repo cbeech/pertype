@@ -83,6 +83,16 @@ try:
             _ci, _ci, _ci, _I32, _I32, _I32, ctypes.c_long,
         ]
         _lib.lz_forward.restype = ctypes.c_long
+        _lib.lz_best.argtypes = [
+            _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
+            _ci, _ci, _ci, _I32, _I32,
+        ]
+        _lib.lz_best.restype = ctypes.c_long
+        _lib.dict_match_all.argtypes = [
+            _U8, ctypes.c_long, ctypes.c_long, _ci,
+            _U8, _I32, _ci, _I32, _I32, _I32, _I32,
+        ]
+        _lib.dict_match_all.restype = None
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -236,3 +246,35 @@ def lz_forward(combined, base, window, max_match, max_chain):
         if total >= 0:
             return off.tolist(), clen[:total].tolist(), cdist[:total].tolist()
         cap *= 2
+
+
+def lz_best(combined, base, window, max_match, max_chain):
+    """Greedy single-best match per data position. Returns (best_len, best_dist)
+    int32 arrays of length len(combined)-base (0 where no match)."""
+    c = np.frombuffer(combined, dtype=np.uint8)
+    N = len(c)
+    npos = N - base
+    blen = np.empty(npos, dtype=np.int32)
+    bdist = np.empty(npos, dtype=np.int32)
+    rc = _lib.lz_best(_u8ptr(c), N, base, window, max_match, max_chain, 3,
+                      _i32ptr(blen), _i32ptr(bdist))
+    return (blen, bdist) if rc == 0 else None
+
+
+def dict_match_all(combined, base, min_match, flat):
+    """Longest dictionary match per position. ``flat`` is the dictionary's
+    (pat_data, pat_off, bucket_off, bucket_pids). Returns (pid, length) int32
+    arrays of length len(combined)-base; pid is -1 where there's no match."""
+    pat_data, pat_off, bucket_off, bucket_pids = flat
+    c = np.frombuffer(combined, dtype=np.uint8)
+    N = len(c)
+    npos = N - base
+    out_pid = np.empty(npos, dtype=np.int32)
+    out_len = np.empty(npos, dtype=np.int32)
+    _lib.dict_match_all(
+        _u8ptr(c), N, base, min_match,
+        _u8ptr(pat_data), _i32ptr(pat_off), len(pat_off) - 1,
+        _i32ptr(bucket_off), _i32ptr(bucket_pids),
+        _i32ptr(out_pid), _i32ptr(out_len),
+    )
+    return out_pid, out_len

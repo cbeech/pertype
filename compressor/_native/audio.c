@@ -491,3 +491,79 @@ long lz_forward(const uint8_t *c, long N, long base, long window,
     #undef INSERT
     return total;
 }
+
+/* Greedy single-best match per position (mirrors tokenizer._find_lz): longest
+ * match, smallest distance on ties (chains newest-first). best_len/best_dist are
+ * 0 where nothing qualifies. Used by the greedy/lazy parse (training). Integer-
+ * exact, so the produced tokens are identical to the Python parse. Returns -2 if
+ * min_match != 3, 0 on success, -1 on allocation failure. */
+long lz_best(const uint8_t *c, long N, long base, long window,
+             int max_match, int max_chain, int min_match,
+             int *best_len, int *best_dist) {
+    if (min_match != 3) return -2;
+    int32_t *head = (int32_t *)malloc((size_t)HEAD_SIZE * sizeof(int32_t));
+    int32_t *prev = (int32_t *)malloc((size_t)N * sizeof(int32_t));
+    if (!head || !prev) { free(head); free(prev); return -1; }
+    memset(head, 0xFF, (size_t)HEAD_SIZE * sizeof(int32_t));
+
+    #define INSERT(i) do {                                              \
+        if ((i) + 3 <= N) {                                             \
+            uint32_t _k = ((uint32_t)c[i] << 16) | ((uint32_t)c[(i)+1] << 8) | c[(i)+2]; \
+            prev[i] = head[_k]; head[_k] = (int32_t)(i);                \
+        } else prev[i] = -1;                                            \
+    } while (0)
+
+    for (long i = 0; i < base; i++) INSERT(i);
+    for (long p = base; p < N; p++) {
+        int bl = 0, bd = 0;
+        if (p + 3 <= N) {
+            uint32_t key = ((uint32_t)c[p] << 16) | ((uint32_t)c[p+1] << 8) | c[p+2];
+            long cand = head[key];
+            int chain = max_chain;
+            long limit = (max_match < N - p) ? max_match : (N - p);
+            while (cand != -1 && p - cand <= window && chain > 0) {
+                long n = 0;
+                while (n < limit && c[cand + n] == c[p + n]) n++;
+                if ((int)n > bl) { bl = (int)n; bd = (int)(p - cand); if (n == limit) break; }
+                cand = prev[cand];
+                chain--;
+            }
+        }
+        best_len[p - base] = bl; best_dist[p - base] = bd;
+        INSERT(p);
+    }
+    free(head); free(prev);
+    #undef INSERT
+    return 0;
+}
+
+/* --- trained-dictionary longest-match per position (mirrors Dictionary.match) -
+ *
+ * For each position p in [base, N), the longest dictionary pattern that is a
+ * prefix of c[p:]. Patterns are passed flat (pat_data + pat_off) with a 2-byte
+ * prefix index (bucket_off CSR over bucket_pids, pattern ids ordered longest-
+ * first within each key) — exactly the Python index. out_pid/out_len get the
+ * match (pid, length) or (-1, 0). Replaces the per-position dictionary.match
+ * Python call in every parse path. */
+void dict_match_all(const uint8_t *c, long N, long base, int min_match,
+                    const uint8_t *pat_data, const int *pat_off, int npat,
+                    const int *bucket_off, const int *bucket_pids,
+                    int *out_pid, int *out_len) {
+    (void)npat;
+    for (long p = base; p < N; p++) {
+        long pi = p - base;
+        out_pid[pi] = -1; out_len[pi] = 0;
+        if (p + 2 > N) continue;
+        int key = ((int)c[p] << 8) | c[p + 1];
+        for (int idx = bucket_off[key]; idx < bucket_off[key + 1]; idx++) {
+            int pid = bucket_pids[idx];
+            int plen = pat_off[pid + 1] - pat_off[pid];
+            if (plen < min_match) continue;       /* bucket is longest-first */
+            if (p + plen > N) continue;
+            if (memcmp(c + p, pat_data + pat_off[pid], (size_t)plen) == 0) {
+                out_pid[pi] = pid; out_len[pi] = plen;
+                break;
+            }
+        }
+    }
+}

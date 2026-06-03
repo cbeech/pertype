@@ -139,12 +139,43 @@ def _decide(data, pos, dictionary, best_len, best_dist):
     return ("lit", data[pos], 1)
 
 
+def _dict_matches(dictionary, combined, N, base, min_match):
+    """Per-position longest dictionary match over ``combined[base:N]`` as plain-int
+    lists ``(pid, length)``; pid is -1 where there is no usable match. Native when
+    available, else the pure-Python ``dictionary.match`` loop — same result."""
+    nat = _get_native()
+    if nat:
+        pid, ln = nat.dict_match_all(combined, base, min_match, dictionary.flat_index())
+        return pid.tolist(), ln.tolist()
+    pid = [-1] * (N - base)
+    ln = [0] * (N - base)
+    for p in range(base, N):
+        dm = dictionary.match(combined, p, min_match)
+        if dm is not None and dm[1] >= min_match:
+            pid[p - base] = dm[0]
+            ln[p - base] = dm[1]
+    return pid, ln
+
+
 def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
              min_match=MIN_MATCH, max_match=MAX_MATCH, max_chain=MAX_CHAIN):
     n = len(data)
+    nat = _get_native()
 
     if not use_lz:
         # Dictionary + literals only — no in-file back-references (prefix unused).
+        if nat and min_match == 3:
+            dpid, dlen = _dict_matches(dictionary, data, n, 0, min_match)
+            tokens = []
+            pos = 0
+            while pos < n:
+                if dlen[pos] >= min_match:
+                    tokens.append(("dict", dpid[pos]))
+                    pos += dlen[pos]
+                else:
+                    tokens.append(("lit", data[pos]))
+                    pos += 1
+            return tokens
         tokens = []
         pos = 0
         while pos < n:
@@ -166,6 +197,56 @@ def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
     combined = prefix + data if base else data
     N = len(combined)
 
+    # Native fast path: precompute the per-position best LZ match (lz_best) and
+    # dict match, then run the same lazy/greedy walk reading those arrays — no
+    # per-position search. The arrays are integer-exact, so tokens are identical
+    # to the Python walk below. lz_best inserts every position in order, matching
+    # the walk's incremental hash-chain state.
+    if nat and min_match == 3:
+        best = nat.lz_best(combined, base, window, max_match, max_chain)
+        if best is not None:
+            bestl, bestd = best[0].tolist(), best[1].tolist()
+            dpid, dlen = _dict_matches(dictionary, combined, N, base, min_match)
+
+            def choice_at(at):
+                i = at - base
+                bl, bd, dl = bestl[i], bestd[i], dlen[i]
+                lz_ok = _accept_lz(bl, bd)
+                if dl >= min_match and (not lz_ok or bl < dl + _LZ_OVER_DICT_MARGIN):
+                    return ("dict", dpid[i], dl)
+                if lz_ok:
+                    return ("match", bl, bd)
+                return ("lit", combined[at], 1)
+
+            tokens = []
+            pos = base
+            pending = None
+            while pos < N:
+                tok = pending if pending is not None else choice_at(pos)
+                pending = None
+                kind = tok[0]
+                if kind == "lit":
+                    tokens.append(("lit", combined[pos]))
+                    pos += 1
+                    continue
+                if kind == "dict":
+                    tokens.append(("dict", tok[1]))
+                    pos += tok[2]
+                    continue
+                length = tok[1]
+                if pos + 1 < N:
+                    nxt = choice_at(pos + 1)
+                    nxt_len = nxt[2] if nxt[0] == "dict" else (nxt[1] if nxt[0] == "match" else 0)
+                    if nxt_len > length:
+                        tokens.append(("lit", combined[pos]))
+                        pending = nxt
+                        pos += 1
+                        continue
+                tokens.append(("match", tok[1], tok[2]))
+                pos += length
+            return tokens
+
+    # Pure-Python fallback: incremental hash chains + the same lazy walk.
     tokens = []
     head = {}                 # 3-byte key -> most recent position
     prev = [-1] * N           # position -> previous position with same 3 bytes
@@ -183,9 +264,6 @@ def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
         bl, bd = _find_lz(combined, at, head, prev, window, max_match, max_chain)
         return _decide(combined, at, dictionary, bl, bd)
 
-    # Lazy matching: when an LZ match is found, peek one byte ahead — if the next
-    # position yields a strictly longer match, emit a literal now and take the
-    # better match next. Dictionary matches commit immediately (cheapest token).
     pos = base
     pending = None            # token already computed for the current pos
     while pos < N:
@@ -302,6 +380,9 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
     off, cand_len, cand_dist = _forward(combined, N, base, window, max_match,
                                         max_chain, min_match)
 
+    # Per-position longest dictionary match (native when available).
+    dpid, dlen = _dict_matches(dictionary, combined, N, base, min_match)
+
     # Backward pass: cheapest cost to encode combined[p:].
     cost_to_end = [0.0] * (N + 1)
     choice = [None] * (N + 1)
@@ -309,13 +390,12 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
         best = lit_cost(combined[p]) + cost_to_end[p + 1]
         best_choice = ("lit", combined[p])
 
-        dm = dictionary.match(combined, p, min_match)
-        if dm is not None and dm[1] >= min_match:
-            c = dict_cost(dm[0]) + cost_to_end[p + dm[1]]
-            if c < best:
-                best, best_choice = c, ("dict", dm[0], dm[1])
-
         pi = p - base
+        if dlen[pi] >= min_match:
+            c = dict_cost(dpid[pi]) + cost_to_end[p + dlen[pi]]
+            if c < best:
+                best, best_choice = c, ("dict", dpid[pi], dlen[pi])
+
         for idx in range(off[pi], off[pi + 1]):
             length, dist = cand_len[idx], cand_dist[idx]
             c = match_cost(length, dist) + cost_to_end[p + length]

@@ -27,11 +27,15 @@ Primitives:
       producing integer-exact candidate lists so the Python DP is unchanged and
       tokens are identical. `compress` on 0.8 MB text: 111 s → 7.6 s (~15×). The
       basis for video motion search.
-- [ ] **NEXT: remaining Python parse cost** — two pieces still pure-Python:
-      (a) the cost-optimal *backward DP* + dict matching (the ~7.6 s left above —
-      needs cost tables + a ported dict matcher, mind float-identical compares);
-      (b) the *greedy* `tokenize` `_find_lz` used by training's provisional parses
-      (why training is still ~100 s). Both can reuse `lz_forward`'s candidates.
+- [x] **greedy match-finder + dict matcher** — `lz_best` (greedy single-best per
+      position) and `dict_match_all` (trained-dictionary longest-match per
+      position) in C; the greedy/lazy walk and the optimal DP read the resulting
+      integer-exact arrays (identical tokens, all 3 parse paths verified). compress
+      7.6 s → 2.9 s, train 103 s → 67 s. The numeric `use_lz=False` path is native too.
+- [ ] **NEXT: cost-optimal backward DP** — the last pure-Python parse loop (the
+      ~2.9 s left in compress; a linear float loop, not a hot search). Port via a
+      match-cost lookup table built from the cost callables (mind float-identical
+      compares). Training's remaining cost is then mining + blob building, not the parse.
 - [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
       both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
       *beat xz* is now fast.
