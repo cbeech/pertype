@@ -10,6 +10,7 @@
  */
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 static inline int64_t sgn(int64_t v) { return (v > 0) - (v < 0); }
 
@@ -404,4 +405,79 @@ void lz_decode(const uint8_t *in, long len, long n_tokens,
             kind[i] = 2; aval[i] = length; bval[i] = distance;
         }
     }
+}
+
+/* --- LZ match-finder forward pass (mirrors tokenizer.tokenize_optimal) ------
+ *
+ * Builds 3-byte hash chains over the combined buffer and, for each data position
+ * p in [base, N), finds the maximal in-file match per distinct length keeping the
+ * smallest distance (chains run newest-first, so the first time a length appears
+ * its distance is already minimal). Candidates are emitted in first-appearance
+ * order, exactly as the Python dict preserves them, so the downstream DP makes
+ * identical choices. This is the 60%+ hot loop (the per-position _match_len
+ * search); the cost-optimal DP itself stays in Python on these integer-exact
+ * candidates, so the produced tokens are byte-identical to the pure-Python parse.
+ *
+ * The 3-byte key (MIN_MATCH==3) indexes a direct 2^24 table — exact, no hash
+ * collisions, so chains contain only true 3-byte matches like the Python dict.
+ *
+ * CSR output: out_off[N-base+1] gives each position's slice into out_len/out_dist.
+ * Returns total candidates, -1 if the buffers are too small, -2 if min_match!=3.
+ */
+#define HEAD_BITS 24
+#define HEAD_SIZE (1 << HEAD_BITS)
+
+long lz_forward(const uint8_t *c, long N, long base, long window,
+                int max_match, int max_chain, int min_match,
+                int *out_off, int *out_len, int *out_dist, long cap) {
+    if (min_match != 3) return -2;
+    int32_t *head = (int32_t *)malloc((size_t)HEAD_SIZE * sizeof(int32_t));
+    int32_t *prev = (int32_t *)malloc((size_t)N * sizeof(int32_t));
+    if (!head || !prev) { free(head); free(prev); return -1; }
+    memset(head, 0xFF, (size_t)HEAD_SIZE * sizeof(int32_t));   /* all -1 */
+
+    #define INSERT(i) do {                                              \
+        if ((i) + 3 <= N) {                                             \
+            uint32_t _k = ((uint32_t)c[i] << 16) | ((uint32_t)c[(i)+1] << 8) | c[(i)+2]; \
+            prev[i] = head[_k]; head[_k] = (int32_t)(i);                \
+        } else prev[i] = -1;                                            \
+    } while (0)
+
+    /* scratch for the per-position found set (distinct length count <= max_chain) */
+    int fcap = max_match + 1;
+    int *flen = (int *)malloc((size_t)fcap * sizeof(int));
+    int *fdist = (int *)malloc((size_t)fcap * sizeof(int));
+    if (!flen || !fdist) { free(head); free(prev); free(flen); free(fdist); return -1; }
+
+    for (long i = 0; i < base; i++) INSERT(i);
+
+    long total = 0;
+    for (long p = base; p < N; p++) {
+        out_off[p - base] = (int)total;
+        int fc = 0;
+        if (p + 3 <= N) {
+            uint32_t key = ((uint32_t)c[p] << 16) | ((uint32_t)c[p+1] << 8) | c[p+2];
+            long cand = head[key];
+            int chain = max_chain;
+            long limit = (max_match < N - p) ? max_match : (N - p);
+            while (cand != -1 && p - cand <= window && chain > 0) {
+                long n = 0;
+                while (n < limit && c[cand + n] == c[p + n]) n++;
+                if (n >= min_match) {
+                    int seen = 0;
+                    for (int j = 0; j < fc; j++) if (flen[j] == (int)n) { seen = 1; break; }
+                    if (!seen && fc < fcap) { flen[fc] = (int)n; fdist[fc] = (int)(p - cand); fc++; }
+                }
+                cand = prev[cand];
+                chain--;
+            }
+        }
+        if (total + fc > cap) { free(head); free(prev); free(flen); free(fdist); return -1; }
+        for (int j = 0; j < fc; j++) { out_len[total] = flen[j]; out_dist[total] = fdist[j]; total++; }
+        INSERT(p);
+    }
+    out_off[N - base] = (int)total;
+    free(head); free(prev); free(flen); free(fdist);
+    #undef INSERT
+    return total;
 }

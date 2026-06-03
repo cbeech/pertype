@@ -78,6 +78,11 @@ try:
             _ci, _ci, _ci, _I32, _I64, _I64,
         ]
         _lib.lz_decode.restype = None
+        _lib.lz_forward.argtypes = [
+            _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
+            _ci, _ci, _ci, _I32, _I32, _I32, ctypes.c_long,
+        ]
+        _lib.lz_forward.restype = ctypes.c_long
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -211,3 +216,23 @@ def lz_decode(blob, n_tokens, mcum, dcum, ocum, len_base, n_patterns, min_match)
         _i32ptr(kind), _ptr(aval), _ptr(bval),
     )
     return kind, aval, bval
+
+
+def lz_forward(combined, base, window, max_match, max_chain):
+    """LZ forward pass over ``combined`` bytes. Returns (off, length, dist) lists:
+    for data position p, candidates are length[off[p-base]:off[p-base+1]] etc."""
+    c = np.frombuffer(combined, dtype=np.uint8)
+    N = len(c)
+    npos = N - base
+    off = np.empty(npos + 1, dtype=np.int32)
+    cap = npos * 4 + 1024
+    while True:
+        clen = np.empty(cap, dtype=np.int32)
+        cdist = np.empty(cap, dtype=np.int32)
+        total = _lib.lz_forward(_u8ptr(c), N, base, window, max_match, max_chain, 3,
+                                _i32ptr(off), _i32ptr(clen), _i32ptr(cdist), cap)
+        if total == -2:
+            return None
+        if total >= 0:
+            return off.tolist(), clen[:total].tolist(), cdist[:total].tolist()
+        cap *= 2

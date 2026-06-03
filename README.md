@@ -158,6 +158,7 @@ Ported so far, with measured speedups:
 | byte-stream `delta` transform | ~133× | raw/numeric path (42 MB frame delta: seconds → ms) |
 | context-adaptive arithmetic coder (`ctxcoder`) | ~45–60× | the coder that beats xz on ECG: a record went 12.6 s → 0.28 s to encode |
 | text/LZ codec arithmetic loop (`codec.py`) | enc ~27× / dec ~46× | the per-symbol token coder (3 freq models + repeat-offset cache + slot bits), byte-identical |
+| LZ match-finder (`lz_forward`) | ~15× (whole optimal parse) | the 3-byte hash-chain search + `_match_len`, 61% of the parse; integer-exact candidates → identical tokens. `compress` of 0.8 MB text: 111 s → 7.6 s |
 
 The arithmetic coder is pure integer math, so the C port reproduces the
 Witten–Neal–Cleary state machine and MSB-first bit I/O exactly — its output is
@@ -167,9 +168,12 @@ its whole per-symbol token loop — three frequency models, the repeat-offset
 cache, and the length/distance slot bits — is in C, so the entropy stage encodes
 ~27× / decodes ~46× faster, byte-identical. Net: the FLAC-beating audio codec now
 does **~12 s of audio in ~0.4 s each way** (was minutes), and the context coder
-is fast enough to use in anger. The remaining pure-Python hot path (next port
-target, see `TODO.md`) is the LZ **cost-optimal parse / match-finder** — the
-token *production* stage, not the coding of them.
+is fast enough to use in anger. The LZ **match-finder** — the 3-byte hash-chain
+search and `_match_len` that dominates the cost-optimal parse — is now in C too
+(`lz_forward`), producing integer-exact candidates so the Python DP runs
+unchanged and tokens are identical; `compress` of a 0.8 MB text file dropped from
+111 s to 7.6 s. The remaining pure-Python parse cost (next target, see `TODO.md`)
+is the backward DP itself and the *greedy* match-finder used during training.
 
 ## Tests
 

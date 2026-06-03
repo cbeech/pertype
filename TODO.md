@@ -22,9 +22,16 @@ Primitives:
 - [x] fixed-2 predictor + adaptive Rice coder (audio) — audio codec now ~12 s
       audio in ~0.4 s each way (was minutes)
 - [x] `delta` transform (arbitrary stride) — ~133×
-- [ ] **LZ match-finder / cost-optimal parse forward pass** — NEXT; the remaining
-      slow path (text LZ types + large-file image/raw). Also the basis for video
-      motion search.
+- [x] **LZ match-finder / cost-optimal parse forward pass** — done (`lz_forward`).
+      The 3-byte hash-chain search + `_match_len` (61% of the parse) is in C,
+      producing integer-exact candidate lists so the Python DP is unchanged and
+      tokens are identical. `compress` on 0.8 MB text: 111 s → 7.6 s (~15×). The
+      basis for video motion search.
+- [ ] **NEXT: remaining Python parse cost** — two pieces still pure-Python:
+      (a) the cost-optimal *backward DP* + dict matching (the ~7.6 s left above —
+      needs cost tables + a ported dict matcher, mind float-identical compares);
+      (b) the *greedy* `tokenize` `_find_lz` used by training's provisional parses
+      (why training is still ~100 s). Both can reuse `lz_forward`'s candidates.
 - [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
       both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
       *beat xz* is now fast.

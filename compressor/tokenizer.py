@@ -19,6 +19,23 @@ MIN_MATCH = 3             # shortest worthwhile match (dict or LZ)
 MAX_MATCH = 1 << 12       # cap on a single match length
 MAX_CHAIN = 128           # hash-chain search depth (speed vs. ratio)
 
+# Optional native acceleration of the LZ match-finder (the dominant cost of the
+# cost-optimal parse). Imported lazily so the core stays zero-dependency; it
+# returns the same integer candidate lists, so the DP below is unchanged and the
+# produced tokens are identical.
+_native = None
+
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
 # A short LZ match only pays off when it's nearby: the distance code costs ~slot
 # bits, so a 3-byte match 5 KB away can cost more than just emitting 3 cheap
 # literals. Accept short matches only within these distance caps; longer matches
@@ -210,6 +227,57 @@ def tokenize(data, dictionary, use_lz=True, prefix=b"", window=WINDOW,
     return tokens
 
 
+def _forward(combined, N, base, window, max_match, max_chain, min_match):
+    """LZ match-finder forward pass -> (off, cand_len, cand_dist) in CSR form.
+
+    For data position ``p``, the candidate (length, distance) pairs are
+    ``cand_len[off[p-base]:off[p-base+1]]`` and the parallel ``cand_dist``, in
+    first-appearance order (smallest distance per distinct length). Uses the
+    native finder when available (min_match must be 3, which all callers use);
+    otherwise the pure-Python hash-chain search, producing the same structure.
+    """
+    nat = _get_native()
+    if nat and min_match == 3:
+        res = nat.lz_forward(combined, base, window, max_match, max_chain)
+        if res is not None:
+            return res
+
+    head = {}
+    prev = [-1] * N
+
+    def insert(i):
+        if i + min_match <= N:
+            key = combined[i : i + min_match]
+            prev[i] = head.get(key, -1)
+            head[key] = i
+
+    for i in range(base):
+        insert(i)
+
+    off = [0] * (N - base + 1)
+    cand_len, cand_dist = [], []
+    for p in range(base, N):
+        off[p - base] = len(cand_len)
+        found = {}
+        cand = head.get(combined[p : p + min_match], -1)
+        chain = max_chain
+        limit = min(max_match, N - p)
+        while cand != -1 and p - cand <= window and chain > 0:
+            length = _match_len(combined, cand, p, limit)
+            if length >= min_match:
+                dist = p - cand
+                if length not in found or dist < found[length]:
+                    found[length] = dist
+            cand = prev[cand]
+            chain -= 1
+        for length, dist in found.items():
+            cand_len.append(length)
+            cand_dist.append(dist)
+        insert(p)
+    off[N - base] = len(cand_len)
+    return off, cand_len, cand_dist
+
+
 def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
                      min_match=MIN_MATCH, max_match=MAX_MATCH, max_chain=MAX_CHAIN):
     """Minimum-cost parse via dynamic programming.
@@ -226,36 +294,13 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
     combined = prefix + data if base else data
     N = len(combined)
 
-    head = {}
-    prev = [-1] * N
-
-    def insert(i):
-        if i + min_match <= N:
-            key = combined[i : i + min_match]
-            prev[i] = head.get(key, -1)
-            head[key] = i
-
-    for i in range(base):
-        insert(i)
-
-    # Forward pass: for each data position, the smallest distance achieving each
-    # maximal match length (chains run newest-first, so nearest wins).
-    cand_lists = [None] * N
-    for p in range(base, N):
-        found = {}
-        cand = head.get(combined[p : p + min_match], -1)
-        chain = max_chain
-        limit = min(max_match, N - p)
-        while cand != -1 and p - cand <= window and chain > 0:
-            length = _match_len(combined, cand, p, limit)
-            if length >= min_match:
-                dist = p - cand
-                if length not in found or dist < found[length]:
-                    found[length] = dist
-            cand = prev[cand]
-            chain -= 1
-        cand_lists[p] = found
-        insert(p)
+    # Forward pass: per data position, the smallest distance achieving each
+    # maximal match length, flattened CSR-style — candidates for position p are
+    # ``cand_len[off[p-base] : off[p-base+1]]`` (and the parallel ``cand_dist``),
+    # in first-appearance order. Native when available; the Python fallback below
+    # produces the identical structure.
+    off, cand_len, cand_dist = _forward(combined, N, base, window, max_match,
+                                        max_chain, min_match)
 
     # Backward pass: cheapest cost to encode combined[p:].
     cost_to_end = [0.0] * (N + 1)
@@ -270,7 +315,9 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
             if c < best:
                 best, best_choice = c, ("dict", dm[0], dm[1])
 
-        for length, dist in cand_lists[p].items():
+        pi = p - base
+        for idx in range(off[pi], off[pi + 1]):
+            length, dist = cand_len[idx], cand_dist[idx]
             c = match_cost(length, dist) + cost_to_end[p + length]
             if c < best:
                 best, best_choice = c, ("match", length, dist)
