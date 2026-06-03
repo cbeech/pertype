@@ -159,10 +159,17 @@ temporal redundancy, which is usually the dominant source of compressibility.
       plane-optimal mode, while `ctxcoder` already codes chroma MVs/modes so cheaply
       that the saved overhead is negligible. Kept the independent coder. Lesson:
       the shared-MV design only pays when MV/mode coding is expensive.
+- [x] **first-class video codec** (`compressor/videocodec.py`): the validated
+      pipeline is now a real `encode`/`decode` (+ `encode_yuv`/`decode_yuv`) with a
+      VID1 container, not just benchmark scripts — quarter-pel MC + per-block
+      SKIP/INTER/INTRA (MED), residuals/MVs via `ctxcoder`, numpy+ctxcoder only.
+      Round-trip tests added (all modes / single-frame / static / YUV; 78 tests
+      pass) and verified on real clips (akiyo 6.58x, foreman 2.30x vs raw luma,
+      bit-exact). Decode's MED loop only touches intra pixels (fast).
 - [ ] **NEXT for video**: real `ffmpeg`/FFV1 baseline once available; SKIP against
-      the best MC MV (not just MV 0); move off the per-pixel MED reconstruction loop
-      (diagonal-wavefront or C) if speed matters; fold the prototype into a real
-      `Transform`/`Coder` video path.
+      the best MC MV (not just MV 0); native port of the per-pixel MED
+      reconstruction loop if speed matters; expose video via `cli.py`; and refactor
+      the `scripts/video_*` experiments to import `videocodec` (drop duplication).
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

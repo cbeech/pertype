@@ -91,6 +91,8 @@ every file.
 | `compressor/model.py` | train / save / load a per-type model |
 | `compressor/codec.py` | compress / decompress + container + checksum |
 | `compressor/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
+| `compressor/ctxcoder.py` | context-adaptive arithmetic residual coder (beats xz on ECG) |
+| `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` |
@@ -522,8 +524,17 @@ that the removed "overhead" is negligible. So the chroma softness was never
 MV/mode cost — chroma is simply smooth content intra-JXL handles well. We keep the
 independent per-plane coder; the shared-MV design only pays when MV/mode coding is
 expensive, which it isn't here — a reminder that codec choices are
-entropy-coder-dependent. Remaining polish: a real FFV1 baseline once `ffmpeg` is
-available, and SKIP against the best MV (not just MV 0).
+entropy-coder-dependent.
+
+This whole pipeline is now a **real codec**, not just benchmark scripts:
+`compressor/videocodec.py` is a first-class `encode` / `decode` (and
+`encode_yuv` / `decode_yuv`) that emits a `VID1` container and reconstructs frames
+from it byte-exact — quarter-pel MC + per-block SKIP/INTER/INTRA (MED), residuals
+and MVs via `ctxcoder`, frame 0 all-intra, depends only on numpy + ctxcoder. It's
+covered by round-trip tests (all block modes, single-frame, fully-static, YUV) and
+verified on real clips (akiyo 6.58×, foreman 2.30× vs raw luma, 20 frames,
+bit-exact). Remaining polish: a real FFV1 baseline once `ffmpeg` is available, and
+SKIP against the best MV (not just MV 0).
 
 ## Roadmap
 
