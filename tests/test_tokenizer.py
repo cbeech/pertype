@@ -1,10 +1,37 @@
 """Tests for reversible tokenization (literals, dict refs, LZ matches)."""
 import os
 
+import os
+
 from compressor.dictionary import Dictionary, mine_patterns
 from compressor.tokenizer import (
-    MIN_MATCH, tokenize, tokenize_optimal, detokenize, value_slot,
+    MIN_MATCH, _match_len, tokenize, tokenize_optimal, detokenize, value_slot,
 )
+
+
+def _naive_match_len(buf, i, j, limit):
+    n = 0
+    while n < limit and buf[i + n] == buf[j + n]:
+        n += 1
+    return n
+
+
+def test_match_len_matches_naive():
+    cases = [
+        (b"abcabcabcXYZ", 0, 3, 12),
+        (b"aaaaaaaa", 0, 1, 7),
+        (b"xy" + b"\x00" * 50 + b"q", 2, 3, 49),
+        (b"abcdefgh", 0, 4, 4),
+        (bytes(range(256)) * 3, 0, 256, 512),
+    ]
+    for buf, i, j, limit in cases:
+        assert _match_len(buf, i, j, limit) == _naive_match_len(buf, i, j, limit)
+    # randomized
+    blob = os.urandom(300) + b"\x00" * 300
+    for _ in range(200):
+        i, j = os.urandom(1)[0], os.urandom(1)[0]
+        limit = min(len(blob) - i, len(blob) - j, 1 + os.urandom(1)[0])
+        assert _match_len(blob, i, j, limit) == _naive_match_len(blob, i, j, limit)
 
 
 def _roundtrip(data, d):

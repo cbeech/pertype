@@ -30,17 +30,19 @@ from compressor.model import train
 KINDS = {
     "icons": dict(dirs=["/usr/share/icons", "/usr/share/pixmaps"],
                   lo=16, hi=96, raw_lo=500, raw_hi=40_000, want=375),
-    # Photos kept small + few: our pure-Python cost-optimal parser is ~O(n·chain·
-    # matchlen) per file and does not scale to large images. The PNG/zstd baselines
-    # are unaffected, so the comparison stays valid.
-    "photo": dict(dirs=["/usr/share"], lo=64, hi=160,
-                  raw_lo=8_000, raw_hi=24_000, want=50, min_disk=1_500),
+    # Real photo-sized images, full unrestricted algorithm. Corpus kept modest so
+    # the (slow but galloping-accelerated) pure-Python parser completes; the goal
+    # is to measure the ACHIEVABLE RATIO, not throughput.
+    "photo": dict(dirs=["/usr/share"], lo=80, hi=400,
+                  raw_lo=20_000, raw_hi=200_000, want=40, min_disk=4_000,
+                  examine=80_000),
 }
 
 
 def collect(kind):
     cfg = KINDS[kind]
     min_disk = cfg.get("min_disk", 0)
+    examine_cap = cfg.get("examine", 4000)
     seen, samples = set(), []
     examined = 0
     for base in cfg["dirs"]:
@@ -71,9 +73,9 @@ def collect(kind):
                     continue
                 seen.add(hsh)
                 samples.append((raw, (w, h)))
-            if len(samples) >= cfg["want"] or examined >= 4000:
+            if len(samples) >= cfg["want"] or examined >= examine_cap:
                 break
-        if len(samples) >= cfg["want"] or examined >= 4000:
+        if len(samples) >= cfg["want"] or examined >= examine_cap:
             break
     samples.sort(key=lambda s: hashlib.sha256(s[0]).hexdigest())
     return samples
@@ -91,24 +93,27 @@ def main():
     if len(samples) < 20:
         print(f"{kind}: only {len(samples)} images found")
         return
-    if kind == "photo":  # keep our slow parser tractable on big spatial data
-        import compressor.model as M
-        M.MAX_CHAIN = 32
-        M.BLOB_SPECS = (("none", 0), ("cover", 1 << 14), ("naive", 1 << 14))
-
     cut = len(samples) * 4 // 5
+    import time
     train_s, test_s = samples[:cut], samples[cut:]
-    print(f"{kind}: {len(train_s)} train + {len(test_s)} test images")
+    avg = sum(len(r) for r, _ in samples) // len(samples)
+    print(f"{kind}: {len(train_s)} train + {len(test_s)} test images "
+          f"(avg {avg:,}B raw)", flush=True)
 
+    t0 = time.time()
     model = train([raw for raw, _ in train_s], type_id="img")
+    print(f"trained in {time.time() - t0:.0f}s; compressing test set...", flush=True)
 
     import tempfile
     totals = dict(raw=0, ours=0, gzip=0, zstd=0, zstd_dict=0, png=0)
     with tempfile.TemporaryDirectory() as wd:
         dict_path = _zstd_dict([(None, raw) for raw, _ in train_s], wd)
-        for raw, size in test_s:
+        for n, (raw, size) in enumerate(test_s, 1):
+            t1 = time.time()
             c = compress(raw, model)
             assert decompress(c, model) == raw, "ROUND-TRIP FAILED"
+            print(f"  [{n}/{len(test_s)}] {len(raw):,}B -> {len(c):,}B "
+                  f"({time.time() - t1:.0f}s)", flush=True)
             totals["raw"] += len(raw)
             totals["ours"] += len(c)
             totals["gzip"] += _gzip_size(raw)

@@ -53,6 +53,29 @@ def value_from(slot, extra_value):
     return (1 << slot) + extra_value
 
 
+def _match_len(buf, i, j, limit):
+    """Common-prefix length of ``buf[i:]`` and ``buf[j:]``, capped at ``limit``.
+
+    Galloping search: grow a power-of-two window by C-level slice comparison
+    (memcmp) while it matches, then binary-search the failing window. Identical
+    result to a byte-by-byte loop, but O(log L) comparisons instead of O(L) —
+    the hot loop of LZ matching, so this is where pure-Python time is won.
+    """
+    n = 0
+    step = 16
+    while n + step <= limit and buf[i + n : i + n + step] == buf[j + n : j + n + step]:
+        n += step
+        step <<= 1
+    hi = min(n + step, limit)              # first mismatch is in (n, hi]
+    while n < hi:
+        mid = (n + hi + 1) >> 1
+        if buf[i + n : i + mid] == buf[j + n : j + mid]:
+            n = mid
+        else:
+            hi = mid - 1
+    return n
+
+
 # Largest slots that can ever be emitted, used to size the entropy alphabets.
 MAX_LEN_SLOT = value_slot(MAX_MATCH - MIN_MATCH + 1)[0]
 MAX_DIST_SLOT = value_slot(WINDOW)[0]
@@ -71,9 +94,7 @@ def _find_lz(data, pos, head, prev, window, max_match, max_chain):
         chain = max_chain
         limit = min(max_match, n - pos)
         while cand != -1 and pos - cand <= window and chain > 0:
-            length = 0
-            while length < limit and data[cand + length] == data[pos + length]:
-                length += 1
+            length = _match_len(data, cand, pos, limit)
             if length > best_len:
                 best_len, best_dist = length, pos - cand
                 if length == limit:
@@ -226,9 +247,7 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
         chain = max_chain
         limit = min(max_match, N - p)
         while cand != -1 and p - cand <= window and chain > 0:
-            length = 0
-            while length < limit and combined[cand + length] == combined[p + length]:
-                length += 1
+            length = _match_len(combined, cand, p, limit)
             if length >= min_match:
                 dist = p - cand
                 if length not in found or dist < found[length]:
