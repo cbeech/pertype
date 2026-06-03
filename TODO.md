@@ -119,10 +119,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       intra-only JXL (60 frames, round-trip verified): akiyo +52%→+55%, foreman
       −16%→**+3%**, stefan −18%→**−1%**. A ±16 search barely changed it (residual
       cost dominates). Same block-search idea as the LZ match-finder.
-- [ ] **NEXT for video: per-block intra/inter mode selection** — code a block
-      intra (or skip) when its MC residual is more expensive than intra; recovers
-      the remaining stefan gap (occlusion / newly-revealed content that block
-      matching can't predict). Then sub-pel / half-pel MVs.
+- [x] **per-block intra/inter mode selection** (`scripts/video_mode_benchmark.py`):
+      each block picks the cheaper of INTER (MC residual) or INTRA (causal "Up"
+      prediction in the current frame); mode bit + inter-only MVs + residual all
+      ctxcoder-coded, row-causal reconstruction verified bit-exact. Removes the
+      last loss — stefan −1% → ≈tie (3.251 vs 3.250 MB), foreman 2.780 → 2.756 MB;
+      8–11% of motion-clip blocks pick intra. No clip now loses to intra-only.
+- [ ] **NEXT for video: stronger intra predictor** — the mode-selection intra is
+      only vertical ("Up"); a MED/Paeth (LOCO-I) predictor, or multiple intra
+      directions chosen per block, would turn stefan's tie into a win. Then
+      sub-pel / half-pel MVs, and per-block skip.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

@@ -433,8 +433,26 @@ MC turns foreman's 16% loss into a 3% win and stefan's 18% loss into a tie —
 beating intra-only JXL (itself stronger than FFV1's intra) on 2 of 3 clips. A
 wider ±16 search barely moved the numbers, so the residual cost dominates: the
 remaining stefan gap is occlusion / newly-revealed content that block matching
-can't predict, which per-block intra/inter **mode selection** would recover. This
-is the same block-search idea as our LZ match-finder, applied across frames.
+can't predict. This is the same block-search idea as our LZ match-finder, applied
+across frames.
+
+**Per-block intra/inter mode selection** removes that last loss
+(`scripts/video_mode_benchmark.py`). Each 16×16 block picks the cheaper of INTER
+(the MC residual) or INTRA (a causal "Up" prediction *within* the current frame),
+so occlusion / newly-revealed blocks with no good past match fall back to intra.
+The mode bit, motion vectors (inter blocks only) and residual are all
+ctxcoder-coded; reconstruction is row-causal and verified bit-exact.
+
+| clip | intra-JXL | MC | MC + mode | intra blocks |
+|--|--|--|--|--|
+| akiyo (static) | 2.10 MB | 0.946 MB | 0.946 MB (+55%) | 1% |
+| foreman (medium) | 2.86 MB | 2.780 MB | 2.756 MB (+3%) | 11% |
+| stefan (high motion) | 3.25 MB | 3.284 MB | 3.251 MB (≈ tie) | 8% |
+
+Now **no clip loses to intra-only**: akiyo and foreman win, stefan ties to within
+0.03%, with 8–11% of blocks on the motion clips choosing intra. The intra
+predictor here is just vertical ("Up"); a stronger one (MED/Paeth, multiple
+directions) would turn stefan's tie into a win — the natural next refinement.
 
 ## Roadmap
 
