@@ -192,14 +192,29 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   it cannot use the shared palette/style across an icon theme; our cross-image
   trained dictionary can. A genuine niche (sprite atlases, icon themes, map tiles).
 - **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
-- **Photographic raw — we now win** (1.40x → **1.84x**, first place), after adding
-  the **transform stage**. Raw was our worst case: high sensor noise, no
-  cross-image structure, and — crucially — we did no spatial/numeric
-  decorrelation. We measured the actual entropy (10.27 bits/pixel order-0, 6.87
-  after prediction) and added a reversible per-type transform (here byte-plane
-  *split* + stride *delta*) that decorrelates the 16-bit mosaic before coding.
-  zstd/gzip/PNG can't infer that structure from opaque bytes; our per-type gate
-  selects it. The remaining noise floor is irreducible for everyone.
+- **Photographic raw — from dead-last to parity with JPEG XL.** Raw was our worst
+  case (1.51x, last) until the **transform stage**: we measured the entropy (10.27
+  bits/pixel order-0, 6.87 after prediction) and added a reversible per-type
+  transform (here `delta(4)` then byte-plane `split(2)`) that decorrelates the
+  16-bit mosaic before coding. zstd/gzip/PNG can't infer that structure from
+  opaque bytes; our per-type gate discovers it from the data.
+
+  A full 8-frame sweep of real Canon raw vs **JPEG XL lossless** (`cjxl -d 0`, the
+  state-of-the-art) — `scripts/cr2_multiframe.py`:
+
+  | | Canon | JPEG XL | **ours** | ours+model |
+  |--|-------|---------|----------|------------|
+  | mean over 8 frames | 1.60x | 1.89x | **1.90x** | 1.86x |
+
+  We **match JPEG XL** (1.90x vs 1.89x mean), trading the lead frame-to-frame —
+  ours wins the more-compressible frames, JXL the noisier ones (its learned
+  predictor extracts more from near-pure noise). Counting our shipped ~0.5 MB
+  model, JXL is marginally ahead (1.89x vs 1.86x; it wins 5/8 frames). Both
+  decisively beat Canon's own codec. Caveat: JXL is 1-pass and ~40 s; ours is
+  2-pass, self-trained per frame, and minutes in pure Python — JXL is far more
+  practical. The result is **statistical parity, not a win** — but reaching it
+  with a from-scratch byte coder + one auto-discovered transform, no hardcoded
+  image knowledge, is the point.
 
 ## Roadmap
 
