@@ -271,11 +271,17 @@ Still high-value untested, in rough priority:
       The gap is purely zstd's **repeat-offset-aware optimal parser**: json is
       fragmented (~9.7 K matches, avg 44 B), and zstd restructures the token sequence
       to turn more of those into near-free rep-hits; ours prices every match as a full
-      distance and can't. The one real lever is a rep-aware cost-optimal parser — a
-      substantial rewrite of the C DP (`lz_dp`), uncertain payoff. **Needs a decision
-      before starting.** (Measured aside: the parse is search-limited — bumping
+      distance and can't. BUT a ceiling test (`scripts/json_repaware_ceiling.py`)
+      shows even that lever is small: only 2.5% of matches have an equal-length match
+      available at a cached distance (json's matches hit too many distinct blob
+      positions), so rep-aware distance-swapping saves just ~186 B. **Conclusion: no
+      single lever closes the ~2 KB gap** — not the dictionary, literals, offset
+      entropy, rep cache, deeper search, or a rep-aware parser. It is the diffuse sum
+      of zstd's mature, integrated parser+coder. Marking this **won't-fix** unless we
+      commit to reimplementing zstd's sequence coder wholesale (high effort, no
+      demonstrated win). (Measured aside: the parse is search-limited — bumping
       `max_chain` 128 → 2048 alone recovers ~1 KB, json → ~51.7 KB / ~4% behind, at a
-      real speed cost; a candidate default bump independent of the parser rewrite.)
+      real speed cost; a candidate default bump independent of the parser question.)
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the

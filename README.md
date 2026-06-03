@@ -704,9 +704,12 @@ The honest open frontier (full list in `TODO.md`):
   entropy coding (the distance extra bits are provably ~incompressible — a per-slot
   model recovers ~178 B of 11.2 KB). It is purely zstd's repeat-offset-aware optimal
   parser turning more of json's many short matches (~9.7 K, avg 44 B) into near-free
-  rep-hits. The one real lever is a rep-aware cost-optimal parser — a substantial DP
-  rewrite, uncertain payoff. (A deeper hash-chain search recovers ~1 KB more on its
-  own, to ~4% behind, at a real speed cost.)
+  rep-hits. But a ceiling test shows even that lever is small — only 2.5% of matches
+  have an equal-length alternative at a cached distance (json's matches hit too many
+  distinct blob positions), worth ~186 B. So **no single lever closes the ~2 KB gap**;
+  it is the diffuse sum of zstd's mature, integrated parser+coder, won't-fix short of
+  reimplementing its sequence coder wholesale. (A deeper hash-chain search recovers
+  ~1 KB more on its own, to ~4% behind, at a real speed cost.)
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video), and
   proper float machinery (FCM/DFCM value prediction + Gorilla leading-zero coding)
   for the floating-point boundary the integer transforms don't cross.
