@@ -224,8 +224,13 @@ Still high-value untested, in rough priority:
       (marginal; `split` proxy-selection already adapts). Real FP compression needs
       FCM/DFCM value prediction + leading-zero/Gorilla coding — a separate build,
       low priority. Raw bytes + general coder is the pragmatic best.
-- [ ] **Seismic / vibration / accelerometer** — genuinely high-rate, low-repetition
-      signals: the regime where prediction should beat LZ. Confirms the niche.
+- [x] **Seismic** (`scripts/seismic_benchmark.py`) — real broadband waveforms (int
+      ADC counts from IRIS; 2010 Chile M8.8 at ANMO + a quiet window, round-trip
+      verified). Prediction **crushes** xz: 6.60× / 7.36× vs xz 2.29× / 3.73× — beats
+      xz by +97% to +188%, the largest margin of any dataset. Winner: the audio
+      codec's fixed-2 + 16/256-tap LMS cascade + `ctxcoder` (generalises directly —
+      seismic is a smooth waveform like music). Confirms the prediction niche
+      decisively.
 - [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (Parquet/ORC).
 - [ ] **Scientific / medical arrays** — HDF5, FITS, DICOM 16-bit volumes,
       hyperspectral / satellite (de-interleave bands + delta).

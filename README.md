@@ -43,6 +43,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **raw image** | Canon CR2 Bayer | **statistical parity with JPEG XL**; beats Canon / PNG / zstd |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
+| **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
 | **sensor numeric** | UCI power (int columns) | 6.27× — beats gzip; xz wins (repetition-heavy) |
 | **video** | CIF clips (full YUV) | **beats FFV1 +8% to +53%** (motion compensation) |
 
@@ -452,6 +453,25 @@ Rice ≈ weak predictor + context coder.** Both ship as selectable back-ends,
 chosen per type — Rice for audio, ctx for weakly-predicted signals. The honest
 boundary: we win where prediction beats LZ (audio, ECG); strong LZ (xz/LZMA)
 still wins on repetitive/periodic data until our own LZ path is ported to native.
+
+**Seismic: prediction crushes LZ** (`scripts/seismic_benchmark.py`). Real broadband
+seismic waveforms (integer ADC counts from IRIS — the 2010 Chile M8.8 at station
+ANMO, plus a quiet microseism window; round-trip verified): high-rate, smooth,
+strongly autocorrelated, with no exact-repeat structure, so LZ coders are nearly
+helpless while an adaptive predictor + context coder thrives.
+
+| segment | gzip | zstd | xz | ours |
+|--|--|--|--|--|
+| quake + aftershocks (416 K) | 1.57× | 1.84× | 2.29× | **6.60×** |
+| quiet / microseisms (432 K) | 2.42× | 3.29× | 3.73× | **7.36×** |
+
+We beat xz by **+97% to +188%** (2–3×) — the largest xz margin of any dataset
+here. The winning configuration is the *audio* codec's fixed-2 + 16/256-tap LMS
+cascade feeding `ctxcoder`: seismic is a smooth continuous waveform like music, so
+those adaptive filters generalise directly (where on ECG they overshot the sharp
+QRS spikes and a plain delta won). This is the sharpest point on the prediction-
+friendly map — smooth, high-rate signals are exactly where prediction +
+context-adaptive entropy beats general LZ coders outright.
 
 **Floating-point: a boundary the repertoire doesn't cross** (`scripts/float_benchmark.py`).
 IEEE-754 floats don't subtract meaningfully in byte space, and the test confirms
