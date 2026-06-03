@@ -240,6 +240,13 @@ Still high-value untested, in rough priority:
       (+3.3%), widening the lead over xz to +7.6%. Chosen by measuring the
       residual's conditional entropy (order-2 4.97 b/s vs order-1 5.14, xz 5.39);
       order-3 and mantissa-bit modelling measured and rejected (too sparse / ~0.7%).
+- [x] **beat xz where prediction wins** — direct head-to-head: **audio** ours 1.96×
+      vs xz 1.24× (+59%, 8/8 PCM tracks); **ECG** 3.06× vs 2.94×. On LZ-friendly
+      *repetitive* numeric (UCI power) xz wins (8.55× vs our 6.27×) and tried
+      approaches (per-column predictor selection, zero-run-length + ctx) don't close
+      it — xz codes long runs as one LZ match where our coder pays per symbol;
+      matching it would mean reimplementing LZMA's LZ + range coder. Honest boundary:
+      we beat xz on prediction-friendly signals, xz beats us on repetitive data.
 - [ ] Better **dictionary trainer for heterogeneous text** (proper COVER /
       suffix-automaton) — close the remaining gap to `zstd --train` on real text.
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation

@@ -330,9 +330,12 @@ the per-sample magnitude, beating FLAC's per-partition Rice. Over 10 real tracks
 |--|---------|----------|------|----------|
 | mean | 1.10x | 1.12x | 1.80x | **1.92x** |
 
-**Ours beats FLAC on 9/10 tracks, mean +7.4%** (up to +22%). The third (512-tap)
-LMS stage added +1.5 points of margin over the prior two-stage cascade (measured
-on 12 tracks, better on 11/12). Caveats: vs
+**Ours beats FLAC on 9/10 tracks, mean +7.4%** (up to +22%). And against **xz**
+directly on the PCM (where music gives LZ nothing to grab): ours 1.96× vs xz 1.24×
+— **+59% on 8/8 tracks**. This is the flip side of the power result: high-entropy
+smooth signals are exactly where prediction crushes a general LZ coder. The third
+(512-tap) LMS stage added +1.5 points of margin over the prior two-stage cascade
+(measured on 12 tracks, better on 11/12). Caveats: vs
 libsndfile's FLAC (the `flac -8` CLI may be ~1–3% stronger); measured on 3 s
 chunks where our adaptive filters only partly converge (full tracks likely favour
 us more); and pure-Python, so slow — a *ratio* result, not a fast codec.
@@ -383,6 +386,17 @@ hash chains. The order-2 context coder captures the runs better *and* faster.) T
 lesson: the same `delta + ctxcoder` is the right tool for *both* repetitive sensor
 data and smooth biosignals — the earlier "loss" was a wrong coder choice, not a
 missing LZ stage.
+
+*Can we beat xz on this data?* Tried, and no — and the diagnosis is precise. Per
+column, `delta+ctx` ties xz on the dense columns (G_active 4.9×=4.9×) but loses on
+the run-heavy ones (Sub_1 41.7× vs xz **111×**, G_intensity 6.5× vs 10.9×): xz
+codes a run of N identical values as one range-coded LZ match, where our coder
+pays per symbol. A better predictor (2nd-difference, fixed-order-2) and an explicit
+**zero-run-length** stage both fail to close it (RLE+ctx 6.29× vs xz 8.55×) —
+ctx's raw mantissa bits and per-symbol overhead can't match integrated LZ + range
+coding. Beating xz *here* would mean reimplementing LZMA; the honest boundary is
+that **xz wins on LZ-friendly repetitive data, we win where prediction beats LZ**
+(below, and audio).
 
 **Smooth biosignals: a better entropy coder beats xz.** PhysioNet Apnea-ECG
 (8 records, 21 M samples, int16). The diagnosis came from entropy bounds: our
