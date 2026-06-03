@@ -95,7 +95,7 @@ every file.
 | `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` |
+| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-encode` / `video-decode` |
 
 ## Usage
 
@@ -114,6 +114,10 @@ python3 -m compressor.cli decompress some.json.cz -m json.model -o roundtrip.jso
 # Benchmark against gzip and zstd on the held-out test set
 python3 -m compressor.cli benchmark json                      # synthetic corpus
 python3 -m compressor.cli benchmark json --root corpus_real   # real-world corpus
+
+# Lossless video: encode/decode a 4:2:0 .y4m (byte-exact round-trip)
+python3 -m compressor.cli video-encode clip.y4m -o clip.vid
+python3 -m compressor.cli video-decode clip.vid -o roundtrip.y4m
 ```
 
 Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):

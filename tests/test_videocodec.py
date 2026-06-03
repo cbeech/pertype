@@ -62,6 +62,35 @@ def test_yuv_roundtrip():
     assert np.array_equal(out[2], V)
 
 
+def test_cli_y4m_roundtrip(tmp_path=None):
+    """CLI video-encode -> video-decode reproduces the .y4m byte-exact."""
+    import os
+    import tempfile
+    from compressor import cli
+
+    H, W, T = 32, 64, 3                          # chroma 16x32 -> multiples of 16
+    rng = np.random.default_rng(11)
+    header = b"YUV4MPEG2 W64 H32 F30:1 Ip A0:0 C420jpeg\n"
+    body = bytearray()
+    bg = rng.integers(40, 60, (H, W), dtype=np.uint8)
+    for t in range(T):
+        f = bg.copy()
+        f[2 + t:10 + t, 3 + t:11 + t] = rng.integers(0, 256, (8, 8))     # motion + change
+        body += b"FRAME\n" + f.tobytes()
+        body += rng.integers(0, 256, (H // 2, W // 2), dtype=np.uint8).tobytes()  # U
+        body += rng.integers(0, 256, (H // 2, W // 2), dtype=np.uint8).tobytes()  # V
+    src = header + bytes(body)
+
+    d = tempfile.mkdtemp()
+    y4m, vid, out = os.path.join(d, "c.y4m"), os.path.join(d, "c.vid"), os.path.join(d, "o.y4m")
+    with open(y4m, "wb") as fh:
+        fh.write(src)
+    cli.main(["video-encode", y4m, "-o", vid])
+    cli.main(["video-decode", vid, "-o", out])
+    with open(out, "rb") as fh:
+        assert fh.read() == src, "CLI .y4m round-trip not byte-exact"
+
+
 def test_dimension_check():
     bad = np.zeros((2, 30, 30), dtype=np.uint8)               # not multiples of 16
     try:

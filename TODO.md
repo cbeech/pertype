@@ -166,10 +166,15 @@ temporal redundancy, which is usually the dominant source of compressibility.
       Round-trip tests added (all modes / single-frame / static / YUV; 78 tests
       pass) and verified on real clips (akiyo 6.58x, foreman 2.30x vs raw luma,
       bit-exact). Decode's MED loop only touches intra pixels (fast).
+- [x] **video via the CLI** (`video-encode` / `video-decode` in `cli.py`): operate
+      on 4:2:0 `.y4m`; the container stores the y4m header so decode reproduces the
+      file byte-exact (verified on akiyo: 6.73x, `cmp`-identical). CLI round-trip
+      test added.
 - [ ] **NEXT for video**: real `ffmpeg`/FFV1 baseline once available; SKIP against
       the best MC MV (not just MV 0); native port of the per-pixel MED
-      reconstruction loop if speed matters; expose video via `cli.py`; and refactor
-      the `scripts/video_*` experiments to import `videocodec` (drop duplication).
+      reconstruction loop if speed matters; refactor the `scripts/video_*`
+      experiments to import `videocodec` (drop the duplication); preserve arbitrary
+      per-frame y4m headers / non-4:2:0 in the CLI.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 
