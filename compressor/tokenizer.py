@@ -372,6 +372,43 @@ def tokenize_optimal(data, dictionary, costs, prefix=b"", window=WINDOW,
     combined = prefix + data if base else data
     N = len(combined)
 
+    # Native fast path: forward match-finding, dict matching and the backward DP
+    # all in C. Match cost depends only on (length-slot, distance-slot), so a tiny
+    # lookup table built by probing the cost callables reproduces it exactly — no
+    # model access needed, and the DP's double arithmetic is bit-identical, so the
+    # tokens match the Python parse below.
+    nat = _get_native()
+    if nat and min_match == 3:
+        fwd = nat.lz_forward_arr(combined, base, window, max_match, max_chain)
+        if fwd is not None:
+            import numpy as np
+            off, clen, cdist = fwd
+            dpid, dlen = nat.dict_match_all(combined, base, min_match,
+                                            dictionary.flat_index())
+            lit_table = np.array([lit_cost(b) for b in range(256)], dtype=np.float64)
+            ndict = len(dictionary.patterns)
+            dict_table = np.array([dict_cost(pid) for pid in range(ndict)],
+                                  dtype=np.float64)
+            ND = MAX_DIST_SLOT + 1
+            mc = np.empty((MAX_LEN_SLOT + 1) * ND, dtype=np.float64)
+            for ls in range(MAX_LEN_SLOT + 1):
+                length = value_from(ls, 0) + min_match - 1
+                for ds in range(ND):
+                    mc[ls * ND + ds] = match_cost(length, value_from(ds, 0))
+            kind, aval, bval = nat.lz_dp(combined, base, off, clen, cdist, dpid, dlen,
+                                         lit_table, dict_table, mc, ND, min_match)
+            kl, al, bl = kind.tolist(), aval.tolist(), bval.tolist()
+            tokens = []
+            for i in range(len(kl)):
+                k = kl[i]
+                if k == 0:
+                    tokens.append(("lit", al[i]))
+                elif k == 1:
+                    tokens.append(("dict", al[i]))
+                else:
+                    tokens.append(("match", al[i], bl[i]))
+            return tokens
+
     # Forward pass: per data position, the smallest distance achieving each
     # maximal match length, flattened CSR-style — candidates for position p are
     # ``cand_len[off[p-base] : off[p-base+1]]`` (and the parallel ``cand_dist``),

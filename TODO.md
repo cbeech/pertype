@@ -32,10 +32,14 @@ Primitives:
       position) in C; the greedy/lazy walk and the optimal DP read the resulting
       integer-exact arrays (identical tokens, all 3 parse paths verified). compress
       7.6 s → 2.9 s, train 103 s → 67 s. The numeric `use_lz=False` path is native too.
-- [ ] **NEXT: cost-optimal backward DP** — the last pure-Python parse loop (the
-      ~2.9 s left in compress; a linear float loop, not a hot search). Port via a
-      match-cost lookup table built from the cost callables (mind float-identical
-      compares). Training's remaining cost is then mining + blob building, not the parse.
+- [x] **cost-optimal backward DP (`lz_dp`)** — done. The DP runs in C on a
+      match-cost lookup table built by probing the cost callables (no model
+      access); double arithmetic is bit-identical, tokens match. **The entire
+      compress/decompress hot path is now native** — `compress` of 0.8 MB text
+      111 s → 0.78 s (~140×). Remaining pure-Python is *training*-only (pattern
+      mining + blob building), not the parse.
+- [ ] (optional) port **pattern mining / blob building** — the last Python in
+      training (~54 s of it); not on the compress path, so lower priority.
 - [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
       both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
       *beat xz* is now fast.

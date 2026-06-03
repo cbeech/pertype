@@ -93,6 +93,14 @@ try:
             _U8, _I32, _ci, _I32, _I32, _I32, _I32,
         ]
         _lib.dict_match_all.restype = None
+        _F64 = ctypes.POINTER(ctypes.c_double)
+        _lib.lz_dp.argtypes = [
+            _U8, ctypes.c_long, ctypes.c_long,
+            _I32, _I32, _I32, _I32, _I32,
+            _F64, _F64, _F64, _ci, _ci,
+            _I32, _I64, _I64,
+        ]
+        _lib.lz_dp.restype = ctypes.c_long
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -108,6 +116,10 @@ def _u8ptr(a):
 
 def _i32ptr(a):
     return a.ctypes.data_as(_I32)
+
+
+def _f64ptr(a):
+    return a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
 
 
 def lms_fwd(x, taps, shift):
@@ -246,6 +258,53 @@ def lz_forward(combined, base, window, max_match, max_chain):
         if total >= 0:
             return off.tolist(), clen[:total].tolist(), cdist[:total].tolist()
         cap *= 2
+
+
+def lz_forward_arr(combined, base, window, max_match, max_chain):
+    """Like lz_forward but returns int32 numpy arrays (off, clen, cdist) without
+    converting to lists — for feeding straight into the native DP."""
+    c = np.frombuffer(combined, dtype=np.uint8)
+    N = len(c)
+    npos = N - base
+    off = np.empty(npos + 1, dtype=np.int32)
+    cap = npos * 4 + 1024
+    while True:
+        clen = np.empty(cap, dtype=np.int32)
+        cdist = np.empty(cap, dtype=np.int32)
+        total = _lib.lz_forward(_u8ptr(c), N, base, window, max_match, max_chain, 3,
+                                _i32ptr(off), _i32ptr(clen), _i32ptr(cdist), cap)
+        if total == -2:
+            return None
+        if total >= 0:
+            return off, clen[:total], cdist[:total]
+        cap *= 2
+
+
+def lz_dp(combined, base, off, clen, cdist, dpid, dlen,
+          lit_table, dict_table, mc_table, ND, min_match):
+    """Cost-optimal backward DP + path walk in C. Returns (kind, aval, bval)
+    int arrays of length n_tokens."""
+    c = np.frombuffer(combined, dtype=np.uint8)
+    N = len(c)
+    npos = N - base
+    off = np.ascontiguousarray(off, dtype=np.int32)
+    clen = np.ascontiguousarray(clen, dtype=np.int32)
+    cdist = np.ascontiguousarray(cdist, dtype=np.int32)
+    dpid = np.ascontiguousarray(dpid, dtype=np.int32)
+    dlen = np.ascontiguousarray(dlen, dtype=np.int32)
+    lit_table = np.ascontiguousarray(lit_table, dtype=np.float64)
+    dict_table = np.ascontiguousarray(dict_table, dtype=np.float64)
+    mc_table = np.ascontiguousarray(mc_table, dtype=np.float64)
+    out_kind = np.empty(npos, dtype=np.int32)
+    out_aval = np.empty(npos, dtype=np.int64)
+    out_bval = np.empty(npos, dtype=np.int64)
+    nt = _lib.lz_dp(
+        _u8ptr(c), N, base,
+        _i32ptr(off), _i32ptr(clen), _i32ptr(cdist), _i32ptr(dpid), _i32ptr(dlen),
+        _f64ptr(lit_table), _f64ptr(dict_table), _f64ptr(mc_table), ND, min_match,
+        _i32ptr(out_kind), _ptr(out_aval), _ptr(out_bval),
+    )
+    return out_kind[:nt], out_aval[:nt], out_bval[:nt]
 
 
 def lz_best(combined, base, window, max_match, max_chain):

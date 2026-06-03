@@ -160,6 +160,7 @@ Ported so far, with measured speedups:
 | text/LZ codec arithmetic loop (`codec.py`) | enc ~27× / dec ~46× | the per-symbol token coder (3 freq models + repeat-offset cache + slot bits), byte-identical |
 | LZ match-finder (`lz_forward`) | ~15× (whole optimal parse) | the 3-byte hash-chain search + `_match_len`, 61% of the parse; integer-exact candidates → identical tokens. `compress` of 0.8 MB text: 111 s → 7.6 s |
 | greedy match-finder + dict matcher (`lz_best`, `dict_match_all`) | compress 7.6 s → 2.9 s; train 103 s → 67 s | the per-position search for the greedy/lazy parse (training) and the trained-dictionary longest-match; integer-exact → identical tokens |
+| cost-optimal backward DP (`lz_dp`) | compress 2.9 s → 0.78 s | the parse's DP, on a match-cost lookup table; double arithmetic bit-identical → identical tokens. **End-to-end `compress` of 0.8 MB: 111 s → 0.78 s (~140×).** |
 
 The arithmetic coder is pure integer math, so the C port reproduces the
 Witten–Neal–Cleary state machine and MSB-first bit I/O exactly — its output is
@@ -169,12 +170,14 @@ its whole per-symbol token loop — three frequency models, the repeat-offset
 cache, and the length/distance slot bits — is in C, so the entropy stage encodes
 ~27× / decodes ~46× faster, byte-identical. Net: the FLAC-beating audio codec now
 does **~12 s of audio in ~0.4 s each way** (was minutes), and the context coder
-is fast enough to use in anger. The LZ **match-finder** — the 3-byte hash-chain
-search and `_match_len` that dominates the cost-optimal parse — is now in C too
-(`lz_forward`), producing integer-exact candidates so the Python DP runs
-unchanged and tokens are identical; `compress` of a 0.8 MB text file dropped from
-111 s to 7.6 s. The remaining pure-Python parse cost (next target, see `TODO.md`)
-is the backward DP itself and the *greedy* match-finder used during training.
+is fast enough to use in anger. The **entire LZ parse** is now native too — the
+match-finder (`lz_forward`/`lz_best`), the trained-dictionary matcher
+(`dict_match_all`), and the cost-optimal backward DP (`lz_dp`) — every stage
+integer- or bit-identical to the Python reference, so the produced tokens are the
+same. End-to-end **`compress` of a 0.8 MB text file went from 111 s to 0.78 s
+(~140×)**, and the whole compress/decompress hot path now runs in C. The only
+remaining pure-Python cost is *training*-side (pattern mining + blob building),
+not compression.
 
 ## Tests
 

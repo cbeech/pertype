@@ -537,6 +537,61 @@ long lz_best(const uint8_t *c, long N, long base, long window,
     return 0;
 }
 
+/* --- cost-optimal backward DP (mirrors tokenizer.tokenize_optimal's DP) ------
+ *
+ * Given the per-position LZ candidates (CSR off/clen/cdist), the per-position
+ * dict match (dpid/dlen), and cost tables built from the model, compute the
+ * minimum-cost parse and walk it into tokens. All arithmetic is on the exact
+ * double cost values supplied (lit_table[byte], dict_table[pid], and
+ * mc_table[lslot*ND+dslot] — match cost depends only on the two slots), in the
+ * same order and with the same strict-< tie-breaking as the Python DP, so the
+ * tokens are identical. Returns the token count. Token encoding matches
+ * lz_encode's: kind 0 lit (aval=byte), 1 dict (aval=pid), 2 match (aval=length,
+ * bval=distance). */
+long lz_dp(const uint8_t *c, long N, long base,
+           const int *off, const int *clen, const int *cdist,
+           const int *dpid, const int *dlen,
+           const double *lit_table, const double *dict_table,
+           const double *mc_table, int ND, int min_match,
+           int *out_kind, int64_t *out_aval, int64_t *out_bval) {
+    double *cte = (double *)malloc((size_t)(N + 1) * sizeof(double));
+    int *ck = (int *)malloc((size_t)N * sizeof(int));
+    int *ca = (int *)malloc((size_t)N * sizeof(int));
+    int *cb = (int *)malloc((size_t)N * sizeof(int));
+    if (!cte || !ck || !ca || !cb) { free(cte); free(ck); free(ca); free(cb); return -1; }
+    cte[N] = 0.0;
+    for (long p = N - 1; p >= base; p--) {
+        long pi = p - base;
+        double best = lit_table[c[p]] + cte[p + 1];
+        int bk = 0, ba = c[p], bb = 0;
+        int dl = dlen[pi];
+        if (dl >= min_match) {
+            double cc = dict_table[dpid[pi]] + cte[p + dl];
+            if (cc < best) { best = cc; bk = 1; ba = dpid[pi]; bb = dl; }
+        }
+        for (int idx = off[pi]; idx < off[pi + 1]; idx++) {
+            int length = clen[idx], dist = cdist[idx];
+            int lslot = 63 - __builtin_clzll((uint64_t)(length - min_match + 1));
+            int dslot = 63 - __builtin_clzll((uint64_t)dist);
+            double cc = mc_table[lslot * ND + dslot] + cte[p + length];
+            if (cc < best) { best = cc; bk = 2; ba = length; bb = dist; }
+        }
+        cte[p] = best; ck[pi] = bk; ca[pi] = ba; cb[pi] = bb;
+    }
+    long nt = 0;
+    for (long p = base; p < N; ) {
+        long pi = p - base;
+        int k = ck[pi];
+        out_kind[nt] = k;
+        if (k == 0)      { out_aval[nt] = ca[pi]; out_bval[nt] = 0;      p += 1; }
+        else if (k == 1) { out_aval[nt] = ca[pi]; out_bval[nt] = 0;      p += cb[pi]; }
+        else             { out_aval[nt] = ca[pi]; out_bval[nt] = cb[pi]; p += ca[pi]; }
+        nt++;
+    }
+    free(cte); free(ck); free(ca); free(cb);
+    return nt;
+}
+
 /* --- trained-dictionary longest-match per position (mirrors Dictionary.match) -
  *
  * For each position p in [base, N), the longest dictionary pattern that is a
