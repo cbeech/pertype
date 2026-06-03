@@ -41,6 +41,7 @@ def _build():
 
 
 _I64 = ctypes.POINTER(ctypes.c_int64)
+_I32 = ctypes.POINTER(ctypes.c_int32)
 _U8 = ctypes.POINTER(ctypes.c_uint8)
 try:
     if _build():
@@ -64,6 +65,19 @@ try:
         _lib.ctx_encode.restype = ctypes.c_long
         _lib.ctx_decode.argtypes = [_U8, ctypes.c_long, ctypes.c_long, _I64]
         _lib.ctx_decode.restype = None
+        _ci = ctypes.c_int
+        _lib.lz_encode.argtypes = [
+            _I32, _I64, _I64, ctypes.c_long,
+            _I32, _ci, _I32, _ci, _I32, _ci,
+            _ci, _ci, _U8, ctypes.c_long,
+        ]
+        _lib.lz_encode.restype = ctypes.c_long
+        _lib.lz_decode.argtypes = [
+            _U8, ctypes.c_long, ctypes.c_long,
+            _I32, _ci, _I32, _ci, _I32, _ci,
+            _ci, _ci, _ci, _I32, _I64, _I64,
+        ]
+        _lib.lz_decode.restype = None
         HAVE_NATIVE = True
 except Exception:
     HAVE_NATIVE = False
@@ -75,6 +89,10 @@ def _ptr(a):
 
 def _u8ptr(a):
     return a.ctypes.data_as(_U8)
+
+
+def _i32ptr(a):
+    return a.ctypes.data_as(_I32)
 
 
 def lms_fwd(x, taps, shift):
@@ -155,3 +173,41 @@ def ctx_decode(blob, n):
     out = np.empty(n, dtype=np.int64)
     _lib.ctx_decode(_u8ptr(buf), len(blob), n, _ptr(out))
     return out
+
+
+def lz_encode(kind, aval, bval, mcum, dcum, ocum, len_base, min_match):
+    kind = np.ascontiguousarray(kind, dtype=np.int32)
+    aval = np.ascontiguousarray(aval, dtype=np.int64)
+    bval = np.ascontiguousarray(bval, dtype=np.int64)
+    mcum = np.ascontiguousarray(mcum, dtype=np.int32)
+    dcum = np.ascontiguousarray(dcum, dtype=np.int32)
+    ocum = np.ascontiguousarray(ocum, dtype=np.int32)
+    n = len(kind)
+    cap = n * 8 + 1024
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = _lib.lz_encode(
+            _i32ptr(kind), _ptr(aval), _ptr(bval), n,
+            _i32ptr(mcum), len(mcum) - 1, _i32ptr(dcum), len(dcum) - 1,
+            _i32ptr(ocum), len(ocum) - 1, len_base, min_match, _u8ptr(out), cap,
+        )
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+
+
+def lz_decode(blob, n_tokens, mcum, dcum, ocum, len_base, n_patterns, min_match):
+    buf = np.frombuffer(blob, dtype=np.uint8).copy()
+    mcum = np.ascontiguousarray(mcum, dtype=np.int32)
+    dcum = np.ascontiguousarray(dcum, dtype=np.int32)
+    ocum = np.ascontiguousarray(ocum, dtype=np.int32)
+    kind = np.empty(n_tokens, dtype=np.int32)
+    aval = np.empty(n_tokens, dtype=np.int64)
+    bval = np.empty(n_tokens, dtype=np.int64)
+    _lib.lz_decode(
+        _u8ptr(buf), len(blob), n_tokens,
+        _i32ptr(mcum), len(mcum) - 1, _i32ptr(dcum), len(dcum) - 1,
+        _i32ptr(ocum), len(ocum) - 1, len_base, n_patterns, min_match,
+        _i32ptr(kind), _ptr(aval), _ptr(bval),
+    )
+    return kind, aval, bval

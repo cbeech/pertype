@@ -157,14 +157,19 @@ Ported so far, with measured speedups:
 | audio fixed-2 predictor + adaptive Rice | — | removes the remaining Python loops |
 | byte-stream `delta` transform | ~133× | raw/numeric path (42 MB frame delta: seconds → ms) |
 | context-adaptive arithmetic coder (`ctxcoder`) | ~45–60× | the coder that beats xz on ECG: a record went 12.6 s → 0.28 s to encode |
+| text/LZ codec arithmetic loop (`codec.py`) | enc ~27× / dec ~46× | the per-symbol token coder (3 freq models + repeat-offset cache + slot bits), byte-identical |
 
 The arithmetic coder is pure integer math, so the C port reproduces the
 Witten–Neal–Cleary state machine and MSB-first bit I/O exactly — its output is
 byte-identical to the Python coder (verified both directions on random and real
-data). Net: the FLAC-beating audio codec now does **~12 s of audio in ~0.4 s each
-way** (was minutes), and the context coder is fast enough to use in anger. Still
-pure Python (next port target, see `TODO.md`): the LZ cost-optimal parse /
-match-finder.
+data). The same WNC machine now also drives the **text/LZ codec** (`codec.py`):
+its whole per-symbol token loop — three frequency models, the repeat-offset
+cache, and the length/distance slot bits — is in C, so the entropy stage encodes
+~27× / decodes ~46× faster, byte-identical. Net: the FLAC-beating audio codec now
+does **~12 s of audio in ~0.4 s each way** (was minutes), and the context coder
+is fast enough to use in anger. The remaining pure-Python hot path (next port
+target, see `TODO.md`) is the LZ **cost-optimal parse / match-finder** — the
+token *production* stage, not the coding of them.
 
 ## Tests
 

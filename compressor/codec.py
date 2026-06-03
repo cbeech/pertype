@@ -36,6 +36,35 @@ from compressor.tokenizer import (
 MAGIC = b"CZ"
 FMT_VERSION = 4
 
+# Optional native acceleration of the per-symbol arithmetic loop. Imported lazily
+# so the core stays zero-dependency; byte-identical to the Python path below, so
+# files are interchangeable across both.
+_native = None
+
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
+
+def _contig_cum(fm):
+    """The model's prefix sums if its alphabet is contiguous 0..n-1 (then symbol
+    == index, which the native coder relies on); else None."""
+    s = fm.symbols
+    return fm.cum if s and s[0] == 0 and s[-1] == len(s) - 1 else None
+
+
+def _native_cums(model):
+    cums = (_contig_cum(model.main_model), _contig_cum(model.dist_model),
+            _contig_cum(model.mode_model))
+    return cums if all(c is not None for c in cums) else None
+
 
 def _encode_tokens(tokens, model, enc):
     main, dist, mode, len_base = (
@@ -95,6 +124,53 @@ def _decode_tokens(dec, model, n_tokens):
     return tokens
 
 
+def _encode_payload(tokens, model):
+    """Arithmetic-code the token stream; native loop if available, else Python."""
+    nat = _get_native()
+    cums = _native_cums(model) if nat else None
+    if cums is not None:
+        import numpy as np
+        n = len(tokens)
+        kind = np.empty(n, dtype=np.int32)
+        aval = np.empty(n, dtype=np.int64)
+        bval = np.zeros(n, dtype=np.int64)
+        for i, tok in enumerate(tokens):
+            t = tok[0]
+            if t == "lit":
+                kind[i] = 0; aval[i] = tok[1]
+            elif t == "dict":
+                kind[i] = 1; aval[i] = tok[1]
+            else:
+                kind[i] = 2; aval[i] = tok[1]; bval[i] = tok[2]
+        return nat.lz_encode(kind, aval, bval, cums[0], cums[1], cums[2],
+                             model.len_base, MIN_MATCH)
+    enc = ArithmeticEncoder()
+    _encode_tokens(tokens, model, enc)
+    enc.finish()
+    return enc.getvalue()
+
+
+def _decode_payload(payload, model, n_tokens):
+    nat = _get_native()
+    cums = _native_cums(model) if nat else None
+    if cums is not None:
+        n_patterns = len(model.dictionary.patterns)
+        kind, aval, bval = nat.lz_decode(payload, n_tokens, cums[0], cums[1],
+                                         cums[2], model.len_base, n_patterns, MIN_MATCH)
+        kl, al, bl = kind.tolist(), aval.tolist(), bval.tolist()
+        tokens = []
+        for i in range(n_tokens):
+            k = kl[i]
+            if k == 0:
+                tokens.append(("lit", al[i]))
+            elif k == 1:
+                tokens.append(("dict", al[i]))
+            else:
+                tokens.append(("match", al[i], bl[i]))
+        return tokens
+    return _decode_tokens(ArithmeticDecoder(payload), model, n_tokens)
+
+
 def compress(data, model, max_chain=None):
     # Decorrelate first; the rest of the pipeline encodes the transformed bytes.
     tdata = transform.apply(data, model.transform)
@@ -104,10 +180,7 @@ def compress(data, model, max_chain=None):
                                   prefix=model.blob, **kw)
     else:
         tokens = tokenize(tdata, model.dictionary, use_lz=False)
-    enc = ArithmeticEncoder()
-    _encode_tokens(tokens, model, enc)
-    enc.finish()
-    payload = enc.getvalue()
+    payload = _encode_payload(tokens, model)
 
     tid = model.type_id.encode("utf-8")
     header = bytearray()
@@ -149,8 +222,7 @@ def decompress(blob, model):
     pos += 4
 
     try:
-        dec = ArithmeticDecoder(blob[pos:])
-        tokens = _decode_tokens(dec, model, n_tokens)
+        tokens = _decode_payload(blob[pos:], model, n_tokens)
         tdata = detokenize(tokens, model.dictionary, prefix=model.blob)
         data = transform.invert(tdata, model.transform)
     except (EOFError, ValueError, IndexError) as exc:

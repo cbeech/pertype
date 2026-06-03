@@ -28,9 +28,11 @@ Primitives:
 - [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
       both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
       *beat xz* is now fast.
-- [ ] arithmetic / range coder for the **text/LZ codec's** bit loop — the same
-      WNC machine is now in C for `ctxcoder`; remaining work is wiring `codec.py`
-      through it (this is what made the 57 MB numeric run pure-Python-slow).
+- [x] arithmetic / range coder for the **text/LZ codec's** bit loop — done.
+      `codec.py`'s whole per-symbol token loop (main/dist/mode models +
+      repeat-offset cache + slot bits) is in C (`lz_encode`/`lz_decode`),
+      byte-identical, enc ~27× / dec ~46×. The entropy half of the 57 MB numeric
+      run is now fast.
 - [ ] `split` transform (already fast via slicing; low priority)
 
 **Multi-threading / parallelism** (large data splits into independent blocks):

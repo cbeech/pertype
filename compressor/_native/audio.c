@@ -277,3 +277,131 @@ void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
         ctx = k;
     }
 }
+
+/* --- LZ token-stream coder for codec.py (mirrors codec._encode/_decode_tokens)
+ *
+ * Drives the same WNC arithmetic coder with three static frequency models
+ * (main / dist / mode), each passed as a prefix-sum array `cum` of length n+1
+ * (total == cum[n]); the models' symbol alphabets are contiguous 0..n-1, so the
+ * symbol value indexes `cum` directly. Length/distance slot "extra" bits are
+ * coded as uniform symbols through the coder, and the repeat-offset cache is
+ * maintained identically here, so the output is byte-identical to the Python
+ * reference and the streams are interchangeable.
+ */
+#define LZ_REP_N 3
+
+static void model_encode(aenc *e, const int *cum, int n, int s) {
+    ae_encode(e, (uint64_t)cum[s], (uint64_t)(cum[s + 1] - cum[s]), (uint64_t)cum[n]);
+}
+
+static int model_decode(adec *d, const int *cum, int n) {
+    uint64_t total = (uint64_t)cum[n];
+    uint64_t target = ad_target(d, total);
+    int lo = 0, hi = n + 1;                 /* bisect_right(cum, target) */
+    while (lo < hi) {
+        int mid = (lo + hi) >> 1;
+        if ((uint64_t)cum[mid] <= target) lo = mid + 1; else hi = mid;
+    }
+    int s = lo - 1;
+    ad_update(d, (uint64_t)cum[s], (uint64_t)(cum[s + 1] - cum[s]), total);
+    return s;
+}
+
+static void enc_bits(aenc *e, uint64_t value, int nbits) {
+    for (int shift = nbits - 1; shift >= 0; shift--)
+        ae_encode(e, (value >> shift) & 1, 1, 2);
+}
+
+static uint64_t dec_bits(adec *d, int nbits) {
+    uint64_t v = 0;
+    for (int i = 0; i < nbits; i++) {
+        int bit = (ad_target(d, 2) >= 1) ? 1 : 0;
+        ad_update(d, (uint64_t)bit, 1, 2);
+        v = (v << 1) | (uint64_t)bit;
+    }
+    return v;
+}
+
+/* reps: pop element at index p, then insert `distance` at the front (len stays 3) */
+static void rep_update(int64_t *reps, int p, int64_t distance) {
+    for (int j = p; j < LZ_REP_N - 1; j++) reps[j] = reps[j + 1];
+    for (int j = LZ_REP_N - 1; j > 0; j--) reps[j] = reps[j - 1];
+    reps[0] = distance;
+}
+
+long lz_encode(const int *kind, const int64_t *aval, const int64_t *bval, long n_tokens,
+               const int *mcum, int m_n, const int *dcum, int d_n, const int *ocum, int o_n,
+               int len_base, int min_match, uint8_t *out, long cap) {
+    bitw w = { out, cap, 0, 0, 0, 0 };
+    aenc e = { 0, AC_MAX, 0, &w };
+    int64_t reps[LZ_REP_N] = { 1, 2, 3 };
+    for (long i = 0; i < n_tokens; i++) {
+        int k = kind[i];
+        if (k == 0) {                                   /* literal */
+            model_encode(&e, mcum, m_n, (int)aval[i]);
+        } else if (k == 1) {                            /* dict ref */
+            model_encode(&e, mcum, m_n, 256 + (int)aval[i]);
+        } else {                                        /* match */
+            int64_t length = aval[i], distance = bval[i];
+            int64_t v = length - min_match + 1;
+            int lslot = 63 - __builtin_clzll((uint64_t)v);
+            model_encode(&e, mcum, m_n, len_base + lslot);
+            enc_bits(&e, (uint64_t)(v - ((int64_t)1 << lslot)), lslot);
+            int ri = -1;
+            for (int j = 0; j < LZ_REP_N; j++) if (reps[j] == distance) { ri = j; break; }
+            if (ri >= 0) {
+                model_encode(&e, ocum, o_n, ri + 1);
+            } else {
+                model_encode(&e, ocum, o_n, 0);         /* MODE_NORMAL */
+                int dslot = 63 - __builtin_clzll((uint64_t)distance);
+                model_encode(&e, dcum, d_n, dslot);
+                enc_bits(&e, (uint64_t)(distance - ((int64_t)1 << dslot)), dslot);
+            }
+            rep_update(reps, ri >= 0 ? ri : LZ_REP_N - 1, distance);
+        }
+        if (w.overflow) return -1;
+    }
+    e.pending++;
+    ae_emit(&e, e.low < AC_QUARTER ? 0 : 1);
+    if (w.overflow) return -1;
+    if (w.nbits > 0) {
+        if (w.byte >= w.cap) return -1;
+        w.out[w.byte++] = (uint8_t)(w.cur << (8 - w.nbits));
+    }
+    return w.byte;
+}
+
+void lz_decode(const uint8_t *in, long len, long n_tokens,
+               const int *mcum, int m_n, const int *dcum, int d_n, const int *ocum, int o_n,
+               int len_base, int n_patterns, int min_match,
+               int *kind, int64_t *aval, int64_t *bval) {
+    adec d = { 0, AC_MAX, 0, in, len, 0 };
+    for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
+    int64_t reps[LZ_REP_N] = { 1, 2, 3 };
+    for (long i = 0; i < n_tokens; i++) {
+        int sym = model_decode(&d, mcum, m_n);
+        if (sym < 256) {
+            kind[i] = 0; aval[i] = sym; bval[i] = 0;
+        } else if (sym < 256 + n_patterns) {
+            kind[i] = 1; aval[i] = sym - 256; bval[i] = 0;
+        } else {
+            int lslot = sym - len_base;
+            uint64_t lextra = dec_bits(&d, lslot);
+            int64_t length = ((int64_t)1 << lslot) + (int64_t)lextra + min_match - 1;
+            int m = model_decode(&d, ocum, o_n);
+            int64_t distance;
+            int p;
+            if (m == 0) {
+                int dslot = model_decode(&d, dcum, d_n);
+                uint64_t dextra = dec_bits(&d, dslot);
+                distance = ((int64_t)1 << dslot) + (int64_t)dextra;
+                p = LZ_REP_N - 1;
+            } else {
+                distance = reps[m - 1];
+                p = m - 1;
+            }
+            rep_update(reps, p, distance);
+            kind[i] = 2; aval[i] = length; bval[i] = distance;
+        }
+    }
+}
