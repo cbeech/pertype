@@ -151,12 +151,18 @@ temporal redundancy, which is usually the dominant source of compressibility.
       on motion it's a wash/slight loss (stefan U/V −2–4%) because an *independent*
       chroma motion search spends MV+mode bits that don't pay on smooth low-energy
       planes.
-- [ ] **NEXT for video: derive chroma MVs from luma** (scaled by subsampling)
-      instead of an independent chroma search — removes the chroma MV/mode overhead
-      that costs on motion clips. Then a real `ffmpeg`/FFV1 baseline; SKIP against
-      the best MC MV (not just MV 0); move off the per-pixel MED reconstruction
-      loop if speed matters; fold the prototype into a real `Transform`/`Coder`
-      video path.
+- [x] **derive chroma MVs from luma** (`scripts/video_joint_benchmark.py`): tested
+      the textbook joint design — one mode + one luma MV per block, chroma inherits
+      a scaled MV, no chroma MV/mode coded. **Slightly worse** than independent
+      per-plane (akiyo −2.7%, foreman −0.2%, stefan −0.5%, 60 frames, round-trip
+      verified): it gives up per-plane SKIP (chroma static while luma moves) and a
+      plane-optimal mode, while `ctxcoder` already codes chroma MVs/modes so cheaply
+      that the saved overhead is negligible. Kept the independent coder. Lesson:
+      the shared-MV design only pays when MV/mode coding is expensive.
+- [ ] **NEXT for video**: real `ffmpeg`/FFV1 baseline once available; SKIP against
+      the best MC MV (not just MV 0); move off the per-pixel MED reconstruction loop
+      (diagonal-wavefront or C) if speed matters; fold the prototype into a real
+      `Transform`/`Coder` video path.
 - [ ] Real FFV1 baseline once `ffmpeg` is available (JXL stood in); test colour
       planes (U/V), not just luma; more clips across the motion spectrum.
 

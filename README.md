@@ -507,11 +507,23 @@ totals vs per-plane intra-only JXL:
 The total beats intra-only on every clip. On static content chroma compresses as
 well as luma (+49%), but on the motion clips chroma is a wash or slight loss
 (stefan U/V −2–4%): chroma is smooth and low-energy where intra-JXL is already
-strong, and running an *independent* motion search per chroma plane spends MV and
-mode bits that don't pay off. The standard fix — **derive chroma MVs from the luma
-MVs** (scaled by the subsampling) rather than searching again — would remove that
-overhead and is the next step. Remaining polish: a real FFV1 baseline once
-`ffmpeg` is available, and SKIP against the best MV (not just MV 0).
+strong.
+
+**Deriving chroma MVs from luma — tested, doesn't help here.** The textbook codec
+design (one mode + one luma MV per block; chroma inherits the mode and a MV scaled
+by the 4:2:0 subsampling, coding *no* chroma MV/mode — `scripts/video_joint_benchmark.py`)
+was the obvious fix for that chroma softness. It instead **slightly regressed** vs
+the independent per-plane coder (akiyo −2.7%, foreman −0.2%, stefan −0.5%; 60
+frames, round-trip verified). Two reasons: joint coding gives up per-plane **SKIP**
+— a chroma block is often exactly static while its luma block moves, which the
+independent coder skips but the joint coder can't — and it forces a shared mode;
+meanwhile `ctxcoder` already codes the small chroma MVs and mode flags so cheaply
+that the removed "overhead" is negligible. So the chroma softness was never
+MV/mode cost — chroma is simply smooth content intra-JXL handles well. We keep the
+independent per-plane coder; the shared-MV design only pays when MV/mode coding is
+expensive, which it isn't here — a reminder that codec choices are
+entropy-coder-dependent. Remaining polish: a real FFV1 baseline once `ffmpeg` is
+available, and SKIP against the best MV (not just MV 0).
 
 ## Roadmap
 
