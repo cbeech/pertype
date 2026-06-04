@@ -488,6 +488,87 @@ void gap_fill(int64_t *rec, const uint8_t *intra, const int64_t *residual,
     }
 }
 
+/* --- CALIC GAP + context bias correction (sequential, encode & decode) ------
+ *
+ * On top of the GAP prediction, a per-context running mean prediction error
+ * (B[k]/C[k]) is subtracted, removing GAP's systematic bias in that context.
+ * The context k = energy_bin*64 + texture, where energy = dh+dv+2|e_west| (the
+ * causal west-pixel error) quantised into 11 bins, and texture is 6 neighbour
+ * sign bits vs the prediction. The bias state evolves identically on encode and
+ * decode, so one function serves both via ``mode`` (0 = encode: img -> res;
+ * 1 = decode: res -> img). All integer, byte-exact. NCTX = 11*64 = 704. */
+#define CALIC_NCTX 704
+
+static int64_t calic_round(int64_t B, int64_t C) {
+    if (C <= 0) return 0;
+    return (B >= 0) ? (B + C / 2) / C : -(((-B) + C / 2) / C);
+}
+
+void calic_code(int64_t *img, int64_t *res, int mode, long H, long W, long scale) {
+    static const long base_th[10] = {1, 3, 6, 11, 18, 30, 50, 90, 160, 300};
+    long th[10];
+    for (int k = 0; k < 10; k++) th[k] = base_th[k] * scale;
+    int64_t *B = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    int64_t *C = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    if (!B || !C) { free(B); free(C); return; }
+
+    for (long y = 0; y < H; y++) {
+        int64_t e_left = 0;
+        for (long x = 0; x < W; x++) {
+            long i = y * W + x;
+            int64_t a  = (x > 0) ? img[i - 1] : 0;
+            int64_t b  = (y > 0) ? img[i - W] : 0;
+            int64_t nw = (x > 0 && y > 0) ? img[i - W - 1] : 0;
+            int64_t ne = (y > 0 && x < W - 1) ? img[i - W + 1] : 0;
+            int64_t ww = (x > 1) ? img[i - 2] : 0;
+            int64_t nn = (y > 1) ? img[i - 2 * W] : 0;
+
+            int64_t pred;
+            if (y == 0 && x == 0)      pred = 128;
+            else if (y == 0)           pred = a;
+            else if (x == 0)           pred = b;
+            else {
+                int64_t base = ((a + b) >> 1) + ((ne - nw) >> 2);
+                int64_t dhp = llabs(a - ww) + llabs(b - nw) + llabs(b - ne);
+                int64_t dvp = llabs(a - nw) + llabs(b - nn) + llabs(ne - nn);
+                int64_t d = dvp - dhp, t1 = 80 * scale, t2 = 32 * scale, t3 = 8 * scale;
+                if (d > t1)       pred = a;
+                else if (d < -t1) pred = b;
+                else if (d > t2)  pred = (base + a) >> 1;
+                else if (d < -t2) pred = (base + b) >> 1;
+                else if (d > t3)  pred = (3 * base + a) >> 2;
+                else if (d < -t3) pred = (3 * base + b) >> 2;
+                else              pred = base;
+            }
+
+            int64_t dh = llabs(a - ww) + llabs(b - nw) + llabs(b - ne);
+            int64_t dv = llabs(a - nw) + llabs(b - nn) + llabs(ne - nn);
+            int64_t energy = dh + dv + 2 * llabs(e_left);
+            int delta = 0;
+            while (delta < 10 && energy >= th[delta]) delta++;
+            int tex = (a >= pred) | ((b >= pred) << 1) | ((nw >= pred) << 2)
+                    | ((ne >= pred) << 3) | ((ww >= pred) << 4) | ((nn >= pred) << 5);
+            long k = (long)delta * 64 + tex;
+            int64_t corr = calic_round(B[k], C[k]);
+
+            int64_t e;
+            if (mode == 0) {                 /* encode: img known, write residual */
+                e = img[i] - pred;
+                res[i] = e - corr;
+            } else {                         /* decode: residual known, write img */
+                e = res[i] + corr;
+                img[i] = e + pred;
+            }
+            B[k] += e;
+            C[k] += 1;
+            if (C[k] >= 256) { B[k] >>= 1; C[k] >>= 1; }
+            e_left = e;
+        }
+    }
+    free(B);
+    free(C);
+}
+
 /* --- LZ match-finder forward pass (mirrors tokenizer.tokenize_optimal) ------
  *
  * Builds 3-byte hash chains over the combined buffer and, for each data position

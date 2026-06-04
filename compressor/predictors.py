@@ -91,21 +91,102 @@ def gap_predict(P, scale=1):
     return pred
 
 
+_CALIC_TH = (1, 3, 6, 11, 18, 30, 50, 90, 160, 300)
+
+
+def _calic_py(data, scale, encode):
+    """Pure-Python CALIC bias correction, byte-identical to the native ``calic_code``.
+    ``encode``: data=image -> residual; else data=residual -> image."""
+    H, W = data.shape
+    out = np.zeros((H, W), dtype=np.int64)
+    img, res = (data, out) if encode else (out, data)
+    th = [t * scale for t in _CALIC_TH]
+    t1, t2, t3 = 80 * scale, 32 * scale, 8 * scale
+    B = [0] * 704
+    C = [0] * 704
+    for y in range(H):
+        e_left = 0
+        for x in range(W):
+            a = int(img[y, x - 1]) if x > 0 else 0
+            b = int(img[y - 1, x]) if y > 0 else 0
+            nw = int(img[y - 1, x - 1]) if (x > 0 and y > 0) else 0
+            ne = int(img[y - 1, x + 1]) if (y > 0 and x < W - 1) else 0
+            ww = int(img[y, x - 2]) if x > 1 else 0
+            nn = int(img[y - 2, x]) if y > 1 else 0
+            if y == 0 and x == 0:
+                pred = 128
+            elif y == 0:
+                pred = a
+            elif x == 0:
+                pred = b
+            else:
+                base = ((a + b) >> 1) + ((ne - nw) >> 2)
+                d = (abs(a - nw) + abs(b - nn) + abs(ne - nn)) \
+                    - (abs(a - ww) + abs(b - nw) + abs(b - ne))
+                if d > t1: pred = a
+                elif d < -t1: pred = b
+                elif d > t2: pred = (base + a) >> 1
+                elif d < -t2: pred = (base + b) >> 1
+                elif d > t3: pred = (3 * base + a) >> 2
+                elif d < -t3: pred = (3 * base + b) >> 2
+                else: pred = base
+            dh = abs(a - ww) + abs(b - nw) + abs(b - ne)
+            dv = abs(a - nw) + abs(b - nn) + abs(ne - nn)
+            energy = dh + dv + 2 * abs(e_left)
+            delta = 0
+            while delta < 10 and energy >= th[delta]:
+                delta += 1
+            tex = ((a >= pred) | ((b >= pred) << 1) | ((nw >= pred) << 2)
+                   | ((ne >= pred) << 3) | ((ww >= pred) << 4) | ((nn >= pred) << 5))
+            k = delta * 64 + tex
+            ck = C[k]
+            if ck <= 0:
+                corr = 0
+            elif B[k] >= 0:
+                corr = (B[k] + ck // 2) // ck
+            else:
+                corr = -(((-B[k]) + ck // 2) // ck)
+            if encode:
+                e = int(img[y, x]) - pred
+                res[y, x] = e - corr
+            else:
+                e = int(res[y, x]) + corr
+                img[y, x] = e + pred
+            B[k] += e
+            C[k] += 1
+            if C[k] >= 256:
+                B[k] >>= 1
+                C[k] >>= 1
+            e_left = e
+    return (res if encode else img).astype(np.int32)
+
+
 _PREDICT = {"med": med_predict, "paeth": paeth_predict}
 
 
 def forward(P, kind, scale=1):
-    """Residual ``P - prediction`` as int32 (signed; feed to ctxcoder)."""
+    """Residual to feed ctxcoder. ``med``/``paeth``/``gap`` give ``P - prediction``;
+    ``calic`` adds CALIC context bias correction (sequential, native when available)."""
+    if kind == "calic":
+        nat = _get_native()
+        if nat:
+            return nat.calic_encode(P.astype(np.int32), scale)
+        return _calic_py(np.ascontiguousarray(P, dtype=np.int64), scale, encode=True)
     pred = gap_predict(P, scale) if kind == "gap" else _PREDICT[kind](P)
     return P.astype(np.int32) - pred
 
 
 def reconstruct(res, kind, scale=1):
     """Invert ``forward``: causal raster reconstruction. Uses the native ``med_fill``
-    / ``gap_fill`` (byte-identical to the loops below) when available, else the
-    pure-Python raster. Exact."""
+    / ``gap_fill`` / ``calic_code`` (byte-identical to the loops below) when
+    available, else the pure-Python raster. Exact."""
     res = np.ascontiguousarray(res)
     H, W = res.shape
+    if kind == "calic":
+        nat = _get_native()
+        if nat:
+            return nat.calic_decode(res, scale)
+        return _calic_py(np.ascontiguousarray(res, dtype=np.int64), scale, encode=False)
     nat = _get_native()
     if nat and kind in ("med", "gap"):
         rec = np.zeros((H, W), dtype=np.int64)

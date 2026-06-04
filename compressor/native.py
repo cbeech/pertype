@@ -88,6 +88,9 @@ try:
         _lib.gap_fill.argtypes = [_I64, _U8, _I64, ctypes.c_long, ctypes.c_long,
                                   ctypes.c_long, ctypes.c_long, ctypes.c_long]
         _lib.gap_fill.restype = None
+        _lib.calic_code.argtypes = [_I64, _I64, ctypes.c_int, ctypes.c_long,
+                                    ctypes.c_long, ctypes.c_long]
+        _lib.calic_code.restype = None
         _lib.lz_best.argtypes = [
             _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
             _ci, _ci, _ci, _I32, _I32,
@@ -261,6 +264,22 @@ def gap_fill(rec, intra, residual, t1, t2, t3):
     intra = np.ascontiguousarray(intra, dtype=np.uint8)
     residual = np.ascontiguousarray(residual, dtype=np.int64)
     _lib.gap_fill(_ptr(rec), _u8ptr(intra), _ptr(residual), H, W, t1, t2, t3)
+
+
+def calic_encode(img, scale):
+    """GAP + context bias correction. Returns the int32 residual plane."""
+    img = np.ascontiguousarray(img, dtype=np.int64)
+    res = np.empty_like(img)
+    _lib.calic_code(_ptr(img), _ptr(res), 0, img.shape[0], img.shape[1], scale)
+    return res.astype(np.int32)
+
+
+def calic_decode(res, scale):
+    """Invert ``calic_encode``: reconstruct the int32 image plane from residuals."""
+    res = np.ascontiguousarray(res, dtype=np.int64)
+    img = np.empty_like(res)
+    _lib.calic_code(_ptr(img), _ptr(res), 1, res.shape[0], res.shape[1], scale)
+    return img.astype(np.int32)
 
 
 def lz_forward(combined, base, window, max_match, max_chain):

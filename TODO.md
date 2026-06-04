@@ -159,8 +159,19 @@ temporal redundancy, which is usually the dominant source of compressibility.
         tests green, byte-output unchanged.
       Honest note: the predictor gain is modest because `ctxcoder`'s order-2 context
       already compensates for predictor choice; GAP only clearly helps the smooth raw
-      planes. Follow-up: CALIC-style context bias correction is the next lever if more
-      is wanted; a native Paeth reconstruct if Paeth is ever re-enabled.
+      planes.
+- [x] **CALIC-style context bias correction** — added as a 3rd selectable predictor
+      (`calic`, code 3). On top of GAP, a running mean prediction error per context
+      (energy = dh+dv+2|e_west| quantised to 11 bins × 6 texture sign-bits = 704
+      contexts; B[k]/C[k] with 256-halving) is subtracted, removing GAP's systematic
+      per-context bias. Native `calic_code` (one sequential function for encode and
+      decode, all-integer, byte-exact; pure-Python fallback matches). Selected on
+      ~20/24 Bayer and ~14/18 RGB planes; full-frame **Bayer 2.17 → 2.20×, RGB
+      2.57 → 2.62×** (+1.6% / +2.0%; the 704-context-no-wrap fix turned an earlier
+      Bayer regression into a gain). Decode ~5 s/frame (sequential). 91 tests green.
+      Follow-up: a native Paeth reconstruct if Paeth is ever re-enabled; CALIC-style
+      context-conditional *entropy* coding (bin the arithmetic coder on the error
+      energy) is the next lever beyond bias correction.
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs
