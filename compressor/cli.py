@@ -169,13 +169,17 @@ def cmd_image_encode(args):
     else:
         img = np.load(path)
         bayer = not args.no_bayer
-    if img.ndim != 2:
-        sys.exit("image must be a 2D array (a single Bayer or grayscale plane)")
+    if img.ndim == 3:                       # HxWx3 RGB
+        kind = "RGB"
+    elif img.ndim == 2:
+        kind = "Bayer" if bayer else "gray plane"
+    else:
+        sys.exit("image must be 2D (Bayer/gray) or 3D HxWx3 (RGB)")
     blob = imagecodec.encode(img, bayer=bayer)
     dest = args.output or path + ".rimg"
     _write(dest, blob)
-    raw_bytes = img.size * 2
-    print(f"{path}: {img.shape[1]}x{img.shape[0]} {'Bayer' if bayer else 'plane'}  "
+    raw_bytes = img.nbytes
+    print(f"{path}: {img.shape[1]}x{img.shape[0]} {kind}  "
           f"{raw_bytes:,} -> {len(blob):,} bytes ({raw_bytes / len(blob):.2f}x) -> {dest}")
 
 
@@ -187,7 +191,8 @@ def cmd_image_decode(args):
     dest = args.output or (args.input[:-5] if args.input.endswith(".rimg") else args.input)
     np.save(dest, img)                      # np.save ensures a .npy suffix
     out = dest if dest.endswith(".npy") else dest + ".npy"
-    print(f"{args.input}: -> {img.shape[1]}x{img.shape[0]} uint16 -> {out}")
+    kind = "RGB" if img.ndim == 3 else "plane"
+    print(f"{args.input}: -> {img.shape[1]}x{img.shape[0]} {kind} {img.dtype} -> {out}")
 
 
 def build_parser():

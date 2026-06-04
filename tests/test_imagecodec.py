@@ -18,6 +18,15 @@ def test_roundtrip_bayer_and_plane():
             _rt(rng.integers(0, 16384, shape, dtype=np.uint16), bayer)
 
 
+def test_roundtrip_rgb():
+    rng = np.random.default_rng(1)
+    for shape in [(2, 2, 3), (64, 48, 3), (101, 77, 3)]:
+        for dt, hi in [(np.uint8, 256), (np.uint16, 16384)]:
+            img = rng.integers(0, hi, shape, dtype=dt)
+            out = imagecodec.decode(imagecodec.encode(img))
+            assert out.dtype == dt and np.array_equal(out, img), (shape, dt)
+
+
 def test_roundtrip_value_extremes_and_flat():
     _rt(np.zeros((32, 40), dtype=np.uint16), True)
     _rt(np.full((32, 40), 65535, dtype=np.uint16), True)

@@ -40,7 +40,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | domain | data | our result vs the standard codec |
 |--|--|--|
 | **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%, 6% behind on json |
-| **raw image** | Canon CR2 Bayer | **statistical parity with JPEG XL**; beats Canon / PNG / zstd |
+| **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED codec: **Bayer 2.12× (beats Canon's own lossless +35%)**, **RGB photo 2.57× (beats PNG +9%)** |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
@@ -322,14 +322,23 @@ lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
 | tiny icons (16–96 px, homogeneous) | 3.43x | 3.60x | 4.82x | 2.37x | **5.39x** | **1st** |
 | flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
 | Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **2.12x** | **1st** |
+| demosaiced RGB photo (8-bit) | — | 1.73x | 1.88x (xz) | 2.33x | **2.57x** | **1st** |
 
-The raw-Bayer number is the dedicated **raw-image codec** (`compressor/imagecodec.py`):
-Bayer-deinterleave → 2D MED → `ctxcoder`, no LZ, no trained model. On **10 held-out
-full-frame Canon raws** (423 MB), round-trip verified: **ours 2.12×** vs xz-9 1.81×,
-**Canon's own lossless .CR2 1.57×**, zstd 1.52×, PNG-16 1.33× — beating the camera's
-own encoder by +35% and xz by +17%. Fast, too (native MED reconstruction: ~2 s
-encode / ~3 s decode per 21-MP frame). Exposed on the CLI as `image-encode` /
-`image-decode` (`.npy` or `.CR2` → `.rimg`).
+Both image rows are the dedicated **image codec** (`compressor/imagecodec.py`): 2D MED
+prediction → `ctxcoder`, no LZ, no trained model (sensor/photo noise has no exact
+repeats for LZ; prediction + adaptive arithmetic is what helps). It has three modes,
+each measured on real Canon data, round-trip verified:
+
+* **Bayer raw** — deinterleave RGGB into 4 same-colour sub-planes. 10 full-frame raws
+  (423 MB): **2.12×** vs xz 1.81×, **Canon's own lossless .CR2 1.57×**, PNG-16 1.33×
+  (beats the camera's encoder by +35%).
+* **RGB photo** — a reversible green-subtract colour transform (G, R−G, B−G) decorrelates
+  the channels, then MED per plane. 8 full-frame demosaiced photos (507 MB): **2.57×**
+  vs PNG 2.33×, xz 1.88× (beats PNG by +9%, xz +37%).
+* **gray** — a single MED plane.
+
+Fast (native MED reconstruction, ~2 s enc / ~3 s dec per 21-MP frame) and exposed on
+the CLI as `image-encode` / `image-decode` (`.npy` 2D/3D, or `.CR2` → `.rimg`).
 
 (The raw row is crop-level, ranked among the columns shown; the full-frame
 comparison against **JPEG XL** — the real state-of-the-art — is in the bullet

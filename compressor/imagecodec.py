@@ -1,25 +1,27 @@
-"""Lossless raw-image codec: 2D MED prediction + context-adaptive arithmetic coding.
+"""Lossless raw/photo image codec: 2D MED prediction + context-adaptive arithmetic.
 
-The measure-first benchmarks (scripts/cr2_med_benchmark.py) showed this is the right
-tool for continuous-tone sensor data (real Canon CR2 Bayer): on held-out raw, MED +
-``ctxcoder`` reaches ~1.99x vs the generic LZ codec's 1.76x and PNG-16's 1.28x, and
-crucially needs *no* trained model or dictionary — sensor noise has no exact repeats
-for LZ to exploit, so prediction + a good entropy coder is all that helps. (Graphics,
-which DO repeat, stay with the LZ+dictionary codec; see README.)
+The measure-first benchmarks (scripts/cr2_med_benchmark.py, image_med_benchmark.py)
+showed prediction — not LZ — is the right tool for continuous-tone images:
 
-A Bayer (RGGB) sensor plane is deinterleaved into its 4 same-colour 2x2 phase
-sub-planes first, so MED predicts each pixel from same-colour neighbours. Each plane's
-MED residuals are coded independently with ``ctxcoder``. Decode replays the (native,
-byte-identical) causal MED reconstruction. Byte-exact; a CRC guards the round-trip.
+* **Bayer raw** (Canon CR2): deinterleave the RGGB mosaic into 4 same-colour 2x2
+  sub-planes, MED-predict each. ~2.12x on full frames, beating Canon's own lossless.
+* **RGB photo**: a reversible green-subtract colour transform (G, R-G, B-G) decorrelates
+  the channels, then MED per plane. ~2.34x on full-res photo crops, beating PNG (2.09x).
+* **gray**: a single MED plane.
+
+No LZ, no trained model (sensor/photo noise has no exact repeats for LZ; prediction +
+adaptive arithmetic is what helps). Decode replays the native, byte-identical causal
+MED reconstruction. Byte-exact; a CRC guards the round-trip.
 
 Container (big-endian)::
 
     magic     "RIMG"   4 bytes
     version   u8
-    flags     u8       bit0 = Bayer 2x2 deinterleave
+    mode      u8       0 = gray (1 plane), 1 = Bayer (4 sub-planes), 2 = RGB (3 planes)
+    itemsize  u8       bytes per sample (1 or 2)
     height    u32
     width     u32
-    crc32     u32      of the original uint16 little-endian bytes
+    crc32     u32      of the original array's C-order bytes
     n_planes  u8
     planes    n_planes x (u32 length + ctxcoder blob)
 """
@@ -30,34 +32,71 @@ import numpy as np
 from compressor import ctxcoder, predictors
 
 MAGIC = b"RIMG"
-VERSION = 1
-FLAG_BAYER = 1
+VERSION = 2
+GRAY, BAYER, RGB = 0, 1, 2
 
 
-def _plane_slices(bayer):
-    if bayer:
-        return [np.s_[0::2, 0::2], np.s_[0::2, 1::2], np.s_[1::2, 0::2], np.s_[1::2, 1::2]]
-    return [np.s_[:, :]]
+def _split(src, mode):
+    """Forward decorrelation into a list of 2D int32 planes to MED+code."""
+    if mode == BAYER:
+        return [np.ascontiguousarray(src[s]) for s in
+                (np.s_[0::2, 0::2], np.s_[0::2, 1::2], np.s_[1::2, 0::2], np.s_[1::2, 1::2])]
+    if mode == RGB:
+        R, G, B = src[:, :, 0], src[:, :, 1], src[:, :, 2]
+        return [np.ascontiguousarray(G), np.ascontiguousarray(R - G),
+                np.ascontiguousarray(B - G)]            # reversible green-subtract
+    return [src]                                        # gray
+
+
+def _merge(planes, mode, H, W):
+    """Invert ``_split``: planes -> the original int32 array."""
+    if mode == BAYER:
+        out = np.zeros((H, W), dtype=np.int32)
+        for sl, p in zip((np.s_[0::2, 0::2], np.s_[0::2, 1::2],
+                          np.s_[1::2, 0::2], np.s_[1::2, 1::2]), planes):
+            out[sl] = p
+        return out
+    if mode == RGB:
+        G, RmG, BmG = planes
+        return np.stack([RmG + G, G, BmG + G], axis=-1)
+    return planes[0]
+
+
+def _empty_planes(mode, H, W):
+    """Zero int32 planes with the right shapes for decode (to learn plane sizes)."""
+    if mode == BAYER:
+        z = np.zeros((H, W), dtype=np.int32)
+        return [np.ascontiguousarray(z[s]) for s in
+                (np.s_[0::2, 0::2], np.s_[0::2, 1::2], np.s_[1::2, 0::2], np.s_[1::2, 1::2])]
+    if mode == RGB:
+        return [np.zeros((H, W), dtype=np.int32) for _ in range(3)]
+    return [np.zeros((H, W), dtype=np.int32)]
 
 
 def encode(img, bayer=True):
-    """Encode a 2D integer image plane (uint16, e.g. a Bayer sensor frame)."""
+    """Encode an image. A 3D HxWx3 array is treated as RGB; a 2D array as a Bayer
+    mosaic (``bayer=True``, default) or a single gray plane (``bayer=False``)."""
     img = np.ascontiguousarray(img)
-    if img.ndim != 2:
-        raise ValueError("imagecodec.encode expects a 2D array")
-    H, W = img.shape
-    src = img.astype(np.int32)
-    parts = []
-    for sl in _plane_slices(bayer):
-        res = predictors.forward(np.ascontiguousarray(src[sl]), "med")
-        parts.append(ctxcoder.encode(res.reshape(-1)))
+    itemsize = img.dtype.itemsize
+    if img.ndim == 3:
+        if img.shape[2] != 3:
+            raise ValueError("RGB image must be HxWx3")
+        mode = RGB
+        H, W = img.shape[:2]
+    elif img.ndim == 2:
+        mode = BAYER if bayer else GRAY
+        H, W = img.shape
+    else:
+        raise ValueError("image must be 2D (gray/Bayer) or 3D HxWx3 (RGB)")
+
+    parts = [ctxcoder.encode(predictors.forward(p, "med").reshape(-1))
+             for p in _split(img.astype(np.int32), mode)]
 
     header = bytearray(MAGIC)
-    header.append(VERSION)
-    header.append(FLAG_BAYER if bayer else 0)
+    header += bytes([VERSION, mode, itemsize])
     header += int(H).to_bytes(4, "big")
     header += int(W).to_bytes(4, "big")
-    header += (zlib.crc32(img.astype("<u2").tobytes()) & 0xFFFFFFFF).to_bytes(4, "big")
+    header += (zlib.crc32(img.tobytes()) & 0xFFFFFFFF).to_bytes(4, "big")
     header.append(len(parts))
     body = bytearray()
     for b in parts:
@@ -67,32 +106,34 @@ def encode(img, bayer=True):
 
 
 def decode(blob):
-    """Decode an ``encode`` container back to the 2D uint16 image (byte-exact)."""
+    """Decode a RIMG container back to the original array (byte-exact)."""
     if blob[:4] != MAGIC:
         raise ValueError("not a RIMG container")
     if blob[4] != VERSION:
         raise ValueError(f"unsupported RIMG version {blob[4]}")
-    bayer = bool(blob[5] & FLAG_BAYER)
-    H = int.from_bytes(blob[6:10], "big")
-    W = int.from_bytes(blob[10:14], "big")
-    crc = int.from_bytes(blob[14:18], "big")
-    n_planes = blob[18]
-    pos = 19
+    mode = blob[5]
+    itemsize = blob[6]
+    H = int.from_bytes(blob[7:11], "big")
+    W = int.from_bytes(blob[11:15], "big")
+    crc = int.from_bytes(blob[15:19], "big")
+    n_planes = blob[19]
+    pos = 20
 
-    out = np.zeros((H, W), dtype=np.int32)
-    slices = _plane_slices(bayer)
-    if len(slices) != n_planes:
+    templates = _empty_planes(mode, H, W)
+    if len(templates) != n_planes:
         raise ValueError("plane count mismatch")
-    for sl in slices:
+    planes = []
+    for tmpl in templates:
         n = int.from_bytes(blob[pos:pos + 4], "big")
         pos += 4
         chunk = blob[pos:pos + n]
         pos += n
-        target = out[sl]
-        res = np.asarray(ctxcoder.decode(chunk, target.size), dtype=np.int32).reshape(target.shape)
-        out[sl] = predictors.reconstruct(res, "med")
+        res = np.asarray(ctxcoder.decode(chunk, tmpl.size), dtype=np.int32).reshape(tmpl.shape)
+        planes.append(predictors.reconstruct(res, "med"))
 
-    img = out.astype("<u2")
-    if (zlib.crc32(img.tobytes()) & 0xFFFFFFFF) != crc:
+    arr = _merge(planes, mode, H, W)
+    dtype = "<u2" if itemsize == 2 else np.uint8
+    img = arr.astype(dtype)
+    if (zlib.crc32(np.ascontiguousarray(img).tobytes()) & 0xFFFFFFFF) != crc:
         raise ValueError("checksum mismatch — corrupt data")
-    return np.asarray(img)
+    return np.ascontiguousarray(img)

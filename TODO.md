@@ -137,9 +137,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       vectorised forward and the C reconstruction are byte-identical) — ~2 s enc /
       ~3 s dec per 21-MP frame. On 10 held-out full-frame Canon raws (423 MB),
       round-trip verified: **ours 2.12×** vs xz 1.81×, Canon .CR2 1.57×, zstd 1.52×,
-      PNG-16 1.33× (beats the camera's own lossless +35%). 90 tests green.
-      Follow-up: unify videocodec's uint8-modular MED onto `predictors.py`; a native
-      Paeth reconstruct if Paeth ever beats MED on some plane.
+      PNG-16 1.33× (beats the camera's own lossless +35%).
+- [x] **RGB/photo mode** for the image codec — a reversible green-subtract colour
+      transform (G, R-G, B-G; +7% over no-RCT, edged out YCoCg-R) then MED per plane;
+      RIMG v2 container carries mode (gray/Bayer/RGB) + itemsize (8/16-bit). On 8
+      held-out full-frame demosaiced Canon photos (507 MB), round-trip verified:
+      **ours 2.57×** vs PNG 2.33×, xz 1.88×, zstd 1.73× — beats PNG +9%, xz +37%.
+      CLI `image-encode`/`image-decode` handle 2D (Bayer/gray) and 3D (RGB) .npy.
+      91 tests green. Follow-up: unify videocodec's uint8-modular MED onto
+      `predictors.py`; try a GAP/CALIC predictor or per-plane predictor selection to
+      push past plain MED; a native Paeth reconstruct if Paeth ever wins on a plane.
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs
