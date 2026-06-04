@@ -445,6 +445,49 @@ void med_fill(int64_t *rec, const uint8_t *intra, const int64_t *residual,
     }
 }
 
+/* --- causal GAP reconstruction (CALIC gradient-adjusted predictor) ----------
+ *
+ * Mirrors predictors.gap_predict: the first row predicts from the left, the
+ * first column from above, the origin from 128, and the interior uses the GAP
+ * gradient logic with same-row/col 2-back neighbours zero when out of range.
+ * All divisions are arithmetic right shifts (matching numpy int floor-division),
+ * so this is byte-identical to the vectorised forward. Thresholds t1>t2>t3 scale
+ * with bit depth. All-intra (mask all 1) for the image codec. */
+void gap_fill(int64_t *rec, const uint8_t *intra, const int64_t *residual,
+              long H, long W, long t1, long t2, long t3) {
+    for (long y = 0; y < H; y++) {
+        for (long x = 0; x < W; x++) {
+            long i = y * W + x;
+            if (!intra[i]) continue;
+            int64_t pred;
+            if (y == 0 && x == 0) {
+                pred = 128;
+            } else if (y == 0) {
+                pred = rec[i - 1];                       /* left  (W) */
+            } else if (x == 0) {
+                pred = rec[i - W];                       /* above (N) */
+            } else {
+                int64_t a = rec[i - 1], b = rec[i - W], nw = rec[i - W - 1];
+                int64_t ne = (x < W - 1) ? rec[i - W + 1] : 0;
+                int64_t ww = (x > 1) ? rec[i - 2] : 0;
+                int64_t nn = (y > 1) ? rec[i - 2 * W] : 0;
+                int64_t dh = llabs(a - ww) + llabs(b - nw) + llabs(b - ne);
+                int64_t dv = llabs(a - nw) + llabs(b - nn) + llabs(ne - nn);
+                int64_t base = ((a + b) >> 1) + ((ne - nw) >> 2);
+                int64_t d = dv - dh;
+                if (d > t1)       pred = a;
+                else if (d < -t1) pred = b;
+                else if (d > t2)  pred = (base + a) >> 1;
+                else if (d < -t2) pred = (base + b) >> 1;
+                else if (d > t3)  pred = (3 * base + a) >> 2;
+                else if (d < -t3) pred = (3 * base + b) >> 2;
+                else              pred = base;
+            }
+            rec[i] = pred + residual[i];
+        }
+    }
+}
+
 /* --- LZ match-finder forward pass (mirrors tokenizer.tokenize_optimal) ------
  *
  * Builds 3-byte hash chains over the combined buffer and, for each data position

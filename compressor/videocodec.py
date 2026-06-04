@@ -21,7 +21,7 @@ Single plane: :func:`encode` / :func:`decode` on a ``(T, H, W)`` uint8 array
 """
 import numpy as np
 
-from compressor import ctxcoder
+from compressor import ctxcoder, predictors
 
 _native = None
 
@@ -108,15 +108,11 @@ def _refine(prev, curr, bdy, bdx, yy, xx):
 
 
 def _med_predict(P):
-    a = np.zeros_like(P); a[:, 1:] = P[:, :-1]
-    b = np.zeros_like(P); b[1:, :] = P[:-1, :]
-    c = np.zeros_like(P); c[1:, 1:] = P[:-1, :-1]
-    mx, mn = np.maximum(a, b), np.minimum(a, b)
-    pred = np.where(c >= mx, mn, np.where(c <= mn, mx, a + b - c))
-    pred[0, 1:] = P[0, :-1]
-    pred[1:, 0] = P[:-1, 0]
-    pred[0, 0] = 128
-    return pred
+    # The shared JPEG-LS MED predictor (compressor/predictors.py). Returns P's dtype
+    # (uint8) — byte-identical to the old in-line version: the gradient branch a+b-c
+    # only fires for c in [min(a,b), max(a,b)], so the result stays in [0, 255] and
+    # never overflows, and the origin/edge convention (128, left, up) matches.
+    return predictors.med_predict(P.astype(np.int32)).astype(P.dtype)
 
 
 def _med_fill(rec, intra_px, residual):

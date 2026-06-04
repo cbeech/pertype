@@ -144,9 +144,23 @@ temporal redundancy, which is usually the dominant source of compressibility.
       held-out full-frame demosaiced Canon photos (507 MB), round-trip verified:
       **ours 2.57×** vs PNG 2.33×, xz 1.88×, zstd 1.73× — beats PNG +9%, xz +37%.
       CLI `image-encode`/`image-decode` handle 2D (Bayer/gray) and 3D (RGB) .npy.
-      91 tests green. Follow-up: unify videocodec's uint8-modular MED onto
-      `predictors.py`; try a GAP/CALIC predictor or per-plane predictor selection to
-      push past plain MED; a native Paeth reconstruct if Paeth ever wins on a plane.
+- [x] **Stronger predictor + per-plane selection + MED unification.**
+      * Added a **GAP** (CALIC gradient-adjusted) predictor to `predictors.py`
+        (vectorised forward with arithmetic-shift divisions + a native `gap_fill`
+        that's byte-identical; pure-Python fallback). Per-plane selection in
+        imagecodec (RIMG v3, 1-byte selector/plane; scale from itemsize): each plane
+        takes the cheaper of MED or GAP. Measured: GAP wins ~20/24 Bayer sub-planes,
+        **full-frame Bayer 2.12 → 2.17× (+2.3%)**; MED stays best on RGB (no
+        regression). Paeth measured, never won, dropped from the shipped set (decode
+        still honours selector 1, so re-enabling is format-compatible).
+      * **Unified videocodec's MED onto `predictors.py`** — `_med_predict` now
+        delegates to `predictors.med_predict` (byte-identical: the gradient branch
+        never overflows uint8, origin/edges match), removing the duplicate. 12 video
+        tests green, byte-output unchanged.
+      Honest note: the predictor gain is modest because `ctxcoder`'s order-2 context
+      already compensates for predictor choice; GAP only clearly helps the smooth raw
+      planes. Follow-up: CALIC-style context bias correction is the next lever if more
+      is wanted; a native Paeth reconstruct if Paeth is ever re-enabled.
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs

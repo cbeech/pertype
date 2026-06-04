@@ -66,46 +66,94 @@ def paeth_predict(P):
     return pred
 
 
+def gap_predict(P, scale=1):
+    """CALIC gradient-adjusted predictor over an int32 plane. Uses 2-back
+    neighbours (W,N,NE,NW,WW,NN) and a gradient test to follow edges; thresholds
+    ``80/32/8 * scale`` adapt to bit depth. All divisions are arithmetic shifts so
+    this is byte-identical to the native ``gap_fill`` reconstruction."""
+    P = P.astype(np.int32)
+    a, b, nw = _neighbours(P)                        # W, N, NW
+    ne = np.zeros_like(P); ne[1:, :-1] = P[:-1, 1:]  # NE (up-right)
+    ww = np.zeros_like(P); ww[:, 2:] = P[:, :-2]     # WW (left-left)
+    nn = np.zeros_like(P); nn[2:, :] = P[:-2, :]     # NN (up-up)
+    dh = np.abs(a - ww) + np.abs(b - nw) + np.abs(b - ne)
+    dv = np.abs(a - nw) + np.abs(b - nn) + np.abs(ne - nn)
+    base = ((a + b) >> 1) + ((ne - nw) >> 2)
+    d = dv - dh
+    t1, t2, t3 = 80 * scale, 32 * scale, 8 * scale
+    pred = np.where(d > t1, a, np.where(d < -t1, b,
+           np.where(d > t2, (base + a) >> 1, np.where(d < -t2, (base + b) >> 1,
+           np.where(d > t3, (3 * base + a) >> 2, np.where(d < -t3, (3 * base + b) >> 2,
+           base))))))
+    pred[0, 1:] = P[0, :-1]
+    pred[1:, 0] = P[:-1, 0]
+    pred[0, 0] = _ORIGIN
+    return pred
+
+
 _PREDICT = {"med": med_predict, "paeth": paeth_predict}
 
 
-def forward(P, kind):
+def forward(P, kind, scale=1):
     """Residual ``P - prediction`` as int32 (signed; feed to ctxcoder)."""
-    return P.astype(np.int32) - _PREDICT[kind](P)
+    pred = gap_predict(P, scale) if kind == "gap" else _PREDICT[kind](P)
+    return P.astype(np.int32) - pred
 
 
-def reconstruct(res, kind):
+def reconstruct(res, kind, scale=1):
     """Invert ``forward``: causal raster reconstruction. Uses the native ``med_fill``
-    for MED (byte-identical to the loop below), else the pure-Python raster. Exact."""
+    / ``gap_fill`` (byte-identical to the loops below) when available, else the
+    pure-Python raster. Exact."""
     res = np.ascontiguousarray(res)
     H, W = res.shape
-    if kind == "med":
-        nat = _get_native()
-        if nat:
-            rec = np.zeros((H, W), dtype=np.int64)
-            intra = np.ones((H, W), dtype=np.uint8)
-            nat.med_fill(rec, intra, np.ascontiguousarray(res, dtype=np.int64))
-            return rec.astype(np.int32)
+    nat = _get_native()
+    if nat and kind in ("med", "gap"):
+        rec = np.zeros((H, W), dtype=np.int64)
+        intra = np.ones((H, W), dtype=np.uint8)
+        r64 = np.ascontiguousarray(res, dtype=np.int64)
+        if kind == "med":
+            nat.med_fill(rec, intra, r64)
+        else:
+            nat.gap_fill(rec, intra, r64, 80 * scale, 32 * scale, 8 * scale)
+        return rec.astype(np.int32)
+
     rec = np.zeros((H, W), dtype=np.int32)
-    med = kind == "med"
+    t1, t2, t3 = 80 * scale, 32 * scale, 8 * scale
     for y in range(H):
         row = rec[y]
         prev = rec[y - 1] if y > 0 else None
+        prev2 = rec[y - 2] if y > 1 else None
         ry = res[y]
         for x in range(W):
             if x == 0:
                 pred = prev[0] if y > 0 else _ORIGIN
             elif y == 0:
                 pred = row[x - 1]
-            else:
+            elif kind == "med":
                 a = int(row[x - 1]); b = int(prev[x]); c = int(prev[x - 1])
-                if med:
-                    mx = a if a > b else b
-                    mn = a if a < b else b
-                    pred = mn if c >= mx else (mx if c <= mn else a + b - c)
-                else:
-                    p = a + b - c
-                    pa = abs(p - a); pb = abs(p - b); pc = abs(p - c)
-                    pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                mx = a if a > b else b
+                mn = a if a < b else b
+                pred = mn if c >= mx else (mx if c <= mn else a + b - c)
+            elif kind == "paeth":
+                a = int(row[x - 1]); b = int(prev[x]); c = int(prev[x - 1])
+                p = a + b - c
+                pa = abs(p - a); pb = abs(p - b); pc = abs(p - c)
+                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+            else:  # gap
+                a = int(row[x - 1]); b = int(prev[x]); nw = int(prev[x - 1])
+                ne = int(prev[x + 1]) if x < W - 1 else 0
+                ww = int(row[x - 2]) if x > 1 else 0
+                nn = int(prev2[x]) if y > 1 else 0
+                dh = abs(a - ww) + abs(b - nw) + abs(b - ne)
+                dv = abs(a - nw) + abs(b - nn) + abs(ne - nn)
+                base = ((a + b) >> 1) + ((ne - nw) >> 2)
+                d = dv - dh
+                if d > t1: pred = a
+                elif d < -t1: pred = b
+                elif d > t2: pred = (base + a) >> 1
+                elif d < -t2: pred = (base + b) >> 1
+                elif d > t3: pred = (3 * base + a) >> 2
+                elif d < -t3: pred = (3 * base + b) >> 2
+                else: pred = base
             row[x] = pred + ry[x]
     return rec

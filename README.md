@@ -40,7 +40,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | domain | data | our result vs the standard codec |
 |--|--|--|
 | **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%, 6% behind on json |
-| **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED codec: **Bayer 2.12× (beats Canon's own lossless +35%)**, **RGB photo 2.57× (beats PNG +9%)** |
+| **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP codec: **Bayer 2.17× (beats Canon's own lossless +38%)**, **RGB photo 2.57× (beats PNG +9%)** |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
@@ -321,7 +321,7 @@ lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
 |------|------|----------|------------|-----|----------|------|
 | tiny icons (16–96 px, homogeneous) | 3.43x | 3.60x | 4.82x | 2.37x | **5.39x** | **1st** |
 | flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
-| Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **2.12x** | **1st** |
+| Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **2.17x** | **1st** |
 | demosaiced RGB photo (8-bit) | — | 1.73x | 1.88x (xz) | 2.33x | **2.57x** | **1st** |
 
 Both image rows are the dedicated **image codec** (`compressor/imagecodec.py`): 2D MED
@@ -330,8 +330,10 @@ repeats for LZ; prediction + adaptive arithmetic is what helps). It has three mo
 each measured on real Canon data, round-trip verified:
 
 * **Bayer raw** — deinterleave RGGB into 4 same-colour sub-planes. 10 full-frame raws
-  (423 MB): **2.12×** vs xz 1.81×, **Canon's own lossless .CR2 1.57×**, PNG-16 1.33×
-  (beats the camera's encoder by +35%).
+  (423 MB): **2.17×** vs xz 1.81×, **Canon's own lossless .CR2 1.57×**, PNG-16 1.33×
+  (beats the camera's encoder by +38%). Each plane picks the cheaper of MED or **GAP**
+  (CALIC's gradient-adjusted predictor, 1-byte selector); GAP wins most Bayer planes
+  for +2.3% over MED-only, while MED stays best on RGB (no regression).
 * **RGB photo** — a reversible green-subtract colour transform (G, R−G, B−G) decorrelates
   the channels, then MED per plane. 8 full-frame demosaiced photos (507 MB): **2.57×**
   vs PNG 2.33×, xz 1.88× (beats PNG by +9%, xz +37%).

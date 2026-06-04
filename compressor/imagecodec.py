@@ -32,8 +32,23 @@ import numpy as np
 from compressor import ctxcoder, predictors
 
 MAGIC = b"RIMG"
-VERSION = 2
+VERSION = 3
 GRAY, BAYER, RGB = 0, 1, 2
+
+# Per-plane predictor selection: each plane is coded with whichever predictor gives
+# the smallest residual (a 1-byte selector per plane). MED is near-optimal on most
+# planes (and has the fastest native reconstruction); GAP (CALIC) wins on the smooth
+# same-colour Bayer sub-planes (+2.3% on full-frame raw). Paeth (code 1) was measured
+# and never won a plane, so it's not in the shipped set — but decode still honours the
+# selector value, so it could be re-enabled without a format change.
+_PREDICTORS = [(0, "med"), (2, "gap")]
+_KIND = {0: "med", 1: "paeth", 2: "gap"}
+
+
+def _scale(itemsize):
+    """GAP threshold scale: ~1 for 8-bit, ~64 for 16-bit, so the gradient tests
+    track the value range."""
+    return 64 if itemsize == 2 else 1
 
 
 def _split(src, mode):
@@ -89,8 +104,15 @@ def encode(img, bayer=True):
     else:
         raise ValueError("image must be 2D (gray/Bayer) or 3D HxWx3 (RGB)")
 
-    parts = [ctxcoder.encode(predictors.forward(p, "med").reshape(-1))
-             for p in _split(img.astype(np.int32), mode)]
+    scale = _scale(itemsize)
+    parts = []                                  # (selector, ctxcoder blob) per plane
+    for p in _split(img.astype(np.int32), mode):
+        best = None
+        for code, kind in _PREDICTORS:
+            blob = ctxcoder.encode(predictors.forward(p, kind, scale).reshape(-1))
+            if best is None or len(blob) < len(best[1]):
+                best = (code, blob)
+        parts.append(best)
 
     header = bytearray(MAGIC)
     header += bytes([VERSION, mode, itemsize])
@@ -99,7 +121,8 @@ def encode(img, bayer=True):
     header += (zlib.crc32(img.tobytes()) & 0xFFFFFFFF).to_bytes(4, "big")
     header.append(len(parts))
     body = bytearray()
-    for b in parts:
+    for code, b in parts:
+        body.append(code)
         body += len(b).to_bytes(4, "big")
         body += b
     return bytes(header) + bytes(body)
@@ -122,14 +145,17 @@ def decode(blob):
     templates = _empty_planes(mode, H, W)
     if len(templates) != n_planes:
         raise ValueError("plane count mismatch")
+    scale = _scale(itemsize)
     planes = []
     for tmpl in templates:
+        code = blob[pos]
+        pos += 1
         n = int.from_bytes(blob[pos:pos + 4], "big")
         pos += 4
         chunk = blob[pos:pos + n]
         pos += n
         res = np.asarray(ctxcoder.decode(chunk, tmpl.size), dtype=np.int32).reshape(tmpl.shape)
-        planes.append(predictors.reconstruct(res, "med"))
+        planes.append(predictors.reconstruct(res, _KIND[code], scale))
 
     arr = _merge(planes, mode, H, W)
     dtype = "<u2" if itemsize == 2 else np.uint8

@@ -85,6 +85,9 @@ try:
         _lib.lz_forward.restype = ctypes.c_long
         _lib.med_fill.argtypes = [_I64, _U8, _I64, ctypes.c_long, ctypes.c_long]
         _lib.med_fill.restype = None
+        _lib.gap_fill.argtypes = [_I64, _U8, _I64, ctypes.c_long, ctypes.c_long,
+                                  ctypes.c_long, ctypes.c_long, ctypes.c_long]
+        _lib.gap_fill.restype = None
         _lib.lz_best.argtypes = [
             _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
             _ci, _ci, _ci, _I32, _I32,
@@ -249,6 +252,15 @@ def med_fill(rec, intra, residual):
     intra = np.ascontiguousarray(intra, dtype=np.uint8)
     residual = np.ascontiguousarray(residual, dtype=np.int64)
     _lib.med_fill(_ptr(rec), _u8ptr(intra), _ptr(residual), H, W)
+
+
+def gap_fill(rec, intra, residual, t1, t2, t3):
+    """Causal GAP (CALIC) reconstruction of intra pixels, in place on ``rec``
+    (int64, C-contiguous). Thresholds ``t1>t2>t3`` scale with bit depth."""
+    H, W = rec.shape
+    intra = np.ascontiguousarray(intra, dtype=np.uint8)
+    residual = np.ascontiguousarray(residual, dtype=np.int64)
+    _lib.gap_fill(_ptr(rec), _u8ptr(intra), _ptr(residual), H, W, t1, t2, t3)
 
 
 def lz_forward(combined, base, window, max_match, max_chain):
