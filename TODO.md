@@ -264,6 +264,17 @@ temporal redundancy, which is usually the dominant source of compressibility.
 
 Fits structured / numeric data; useless on already-compressed / encrypted / noise.
 
+- [~] **Auto-detect + dispatch (the `file`-command idea)** — built `compressor/detect.py`
+      + a `cli identify` subcommand: sniffs a file's type (magic bytes for PNG/JPEG/GIF/
+      FITS/DICOM/TIFF/CR2/WAV/y4m/npy/gzip/zip/xz/zstd/bzip2/ELF/PDF, then text-content
+      heuristics for json/xml/html/code/log/csv/plain) and names the ideal codec. 4 tests.
+      The unifying layer over the specialist codecs. Open: a full `auto-compress` /
+      `auto-decompress` that *routes* — clean for the no-model array/media codecs
+      (image/FITS/DICOM/npy → imagecodec, y4m → videocodec, WAV → audiocodec, with the
+      format's non-array metadata preserved verbatim for byte-exact round-trip). Honest
+      limit: the text codec is model-based, so auto can't get the trained-dict win on
+      arbitrary text without a shipped model — it would fall back to the generic codec.
+
 **Tested (2026-06):** two real datasets, every result round-trip verified — see
 README "Scientific numeric time-series". Key finding: **the predictor and the
 entropy coder interact** — strong adaptive predictor + Rice ≈ weak predictor +

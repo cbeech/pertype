@@ -1,4 +1,4 @@
-"""Command-line interface: train / compress / decompress / benchmark."""
+"""Command-line interface: identify / train / compress / decompress / benchmark."""
 import argparse
 import os
 import sys
@@ -195,6 +195,14 @@ def cmd_image_decode(args):
     print(f"{args.input}: -> {img.shape[1]}x{img.shape[0]} {kind} {img.dtype} -> {out}")
 
 
+def cmd_identify(args):
+    """The 'file'-like tool: sniff a file's type and name the codec that suits it."""
+    from compressor.detect import identify
+    for path in args.inputs:
+        d = identify(_read(path), name=path)
+        print(f"{path}: {d.kind}  ->  {d.codec}  ({d.detail})")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="compressor", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -247,6 +255,10 @@ def build_parser():
     idc.add_argument("input", help="input .rimg")
     idc.add_argument("-o", "--output", help="output .npy (default: strips .rimg)")
     idc.set_defaults(func=cmd_image_decode)
+
+    idn = sub.add_parser("identify", help="sniff a file's type + the ideal codec (like `file`)")
+    idn.add_argument("inputs", nargs="+", help="files to identify")
+    idn.set_defaults(func=cmd_identify)
     return p
 
 

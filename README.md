@@ -114,6 +114,7 @@ every file.
 | `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
 | `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
 | `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
+| `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` |
