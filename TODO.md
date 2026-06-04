@@ -264,16 +264,21 @@ temporal redundancy, which is usually the dominant source of compressibility.
 
 Fits structured / numeric data; useless on already-compressed / encrypted / noise.
 
-- [~] **Auto-detect + dispatch (the `file`-command idea)** — built `compressor/detect.py`
-      + a `cli identify` subcommand: sniffs a file's type (magic bytes for PNG/JPEG/GIF/
+- [x] **Auto-detect + dispatch (the `file`-command idea)** — `compressor/detect.py`
+      + a `cli identify` subcommand sniffs a file's type (magic bytes for PNG/JPEG/GIF/
       FITS/DICOM/TIFF/CR2/WAV/y4m/npy/gzip/zip/xz/zstd/bzip2/ELF/PDF, then text-content
-      heuristics for json/xml/html/code/log/csv/plain) and names the ideal codec. 4 tests.
-      The unifying layer over the specialist codecs. Open: a full `auto-compress` /
-      `auto-decompress` that *routes* — clean for the no-model array/media codecs
-      (image/FITS/DICOM/npy → imagecodec, y4m → videocodec, WAV → audiocodec, with the
-      format's non-array metadata preserved verbatim for byte-exact round-trip). Honest
-      limit: the text codec is model-based, so auto can't get the trained-dict win on
-      arbitrary text without a shipped model — it would fall back to the generic codec.
+      heuristics for json/xml/html/code/log/csv/plain) and names the ideal codec.
+      `compressor/auto.py` + `cli auto-compress` / `auto-decompress` then *route*: detect →
+      build candidate encodings (matching specialist + universal fallbacks) → **verify each
+      round-trips byte-exact** → keep the smallest verified, tagged in a 4-byte header so
+      decompress routes back. Wired specialists: **.npy** 2D/3D int arrays and **FITS** int16
+      images → imagecodec (gray / RGB / inter-slice-delta volume), with the format's
+      non-array metadata (npy/FITS headers, padding) preserved verbatim. Because *store*
+      always verifies, the result is never larger than the original and never wrong. 8 tests.
+      Honest limits: (1) on a tiny image the verbatim format header lets deflate win — auto
+      correctly picks the smaller; (2) the text codec is model-based, so auto can't get the
+      trained-dict win on arbitrary text without a shipped model and falls back to deflate.
+      Open: route the other no-model media codecs (y4m → videocodec, WAV → audiocodec, DICOM).
 
 **Tested (2026-06):** two real datasets, every result round-trip verified — see
 README "Scientific numeric time-series". Key finding: **the predictor and the

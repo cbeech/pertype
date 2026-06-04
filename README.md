@@ -115,9 +115,10 @@ every file.
 | `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
 | `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
 | `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
+| `compressor/auto.py` | detect → route → **verify byte-exact** → keep smallest; self-describing `.az` blob |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` |
+| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` |
 
 ## Usage
 
@@ -140,6 +141,13 @@ python3 -m compressor.cli benchmark json --root corpus_real   # real-world corpu
 # Lossless video: encode/decode a .y4m (4:2:0/4:2:2/4:4:4/mono, byte-exact)
 python3 -m compressor.cli video-encode clip.y4m -o clip.vid
 python3 -m compressor.cli video-decode clip.vid -o roundtrip.y4m
+
+# Identify a file's type + the codec that suits it (like `file`)
+python3 -m compressor.cli identify image.fits data.npy api.json
+
+# Auto: detect → route to the best codec → verify byte-exact → keep smallest (.az)
+python3 -m compressor.cli auto-compress image.fits -o image.az
+python3 -m compressor.cli auto-decompress image.az -o roundtrip.fits
 ```
 
 Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):

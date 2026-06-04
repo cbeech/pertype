@@ -203,6 +203,26 @@ def cmd_identify(args):
         print(f"{path}: {d.kind}  ->  {d.codec}  ({d.detail})")
 
 
+def cmd_auto_compress(args):
+    """Detect, route to the best codec, and write a self-describing .az blob."""
+    from compressor import auto
+    data = _read(args.input)
+    blob = auto.auto_compress(data, name=args.input)
+    dest = args.output or args.input + ".az"
+    _write(dest, blob)
+    ratio = len(data) / len(blob) if blob else 0.0
+    print(f"{args.input}: {len(data):,} -> {len(blob):,} bytes ({ratio:.2f}x) "
+          f"[{auto.method_name(blob)}] -> {dest}")
+
+
+def cmd_auto_decompress(args):
+    from compressor import auto
+    data = auto.auto_decompress(_read(args.input))
+    dest = args.output or (args.input[:-3] if args.input.endswith(".az") else args.input + ".out")
+    _write(dest, data)
+    print(f"{args.input}: -> {len(data):,} bytes -> {dest}")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="compressor", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -259,6 +279,17 @@ def build_parser():
     idn = sub.add_parser("identify", help="sniff a file's type + the ideal codec (like `file`)")
     idn.add_argument("inputs", nargs="+", help="files to identify")
     idn.set_defaults(func=cmd_identify)
+
+    ac = sub.add_parser("auto-compress",
+                        help="detect + route to the best codec, verified byte-exact (.az)")
+    ac.add_argument("input")
+    ac.add_argument("-o", "--output", help="output .az (default: <input>.az)")
+    ac.set_defaults(func=cmd_auto_compress)
+
+    ad = sub.add_parser("auto-decompress", help="decompress a self-describing .az blob")
+    ad.add_argument("input")
+    ad.add_argument("-o", "--output", help="output (default: strips .az)")
+    ad.set_defaults(func=cmd_auto_decompress)
     return p
 
 
