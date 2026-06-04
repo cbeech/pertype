@@ -109,9 +109,11 @@ every file.
 | `compressor/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
 | `compressor/ctxcoder.py` | context-adaptive arithmetic residual coder (beats xz on ECG) |
 | `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
+| `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
+| `compressor/imagecodec.py` | lossless raw/photo image codec: MED/GAP/CALIC, beats Canon & PNG (numpy) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-encode` / `video-decode` |
+| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` |
 
 ## Usage
 
@@ -143,6 +145,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/image_benchmark.py` | icons / graphics | gzip, zstd, PNG | Pillow |
 | `scripts/image_med_benchmark.py` | 2D MED/Paeth prediction | PNG, zstd, xz | Pillow, numpy |
 | `scripts/cr2_med_benchmark.py` | Bayer MED on raw photos | PNG-16, zstd, xz | rawpy, numpy |
+| `scripts/imagecodec_benchmark.py` | shipped image codec (Bayer+RGB) | PNG, zstd, xz, Canon | rawpy, Pillow |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
@@ -375,7 +378,7 @@ exists** — and the transform stage now exposes redundancy we previously couldn
       to find. Continuous-tone data is where spatial prediction was always meant to
       win, and on the real raws it does (+13% over our prior best, no model to ship).
   So the predictor earned a dedicated **raw-image path** — now built
-  (`compressor/imagecodec.py`, MED + ctxcoder, no LZ; see the raw table above, 2.12×
+  (`compressor/imagecodec.py`, MED/GAP/CALIC, no LZ; see the raw table above, 2.22×
   beating Canon's own lossless); on graphics the existing LZ+dictionary codec stays
   the right tool. (The video intra path uses the same MED via the shared
   `predictors.py`, where post-motion-compensation residuals suit it.)

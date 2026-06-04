@@ -350,8 +350,8 @@ Still high-value untested, in rough priority:
       The gap is purely zstd's **repeat-offset-aware optimal parser**: json is
       fragmented (~9.7 K matches, avg 44 B), and zstd restructures the token sequence
       to turn more of those into near-free rep-hits; ours prices every match as a full
-      distance and can't. BUT a ceiling test (`scripts/json_repaware_ceiling.py`)
-      shows even that lever is small: only 2.5% of matches have an equal-length match
+      distance and can't. BUT a ceiling test (one-off, see git history) showed even
+      that lever is small: only 2.5% of matches have an equal-length match
       available at a cached distance (json's matches hit too many distinct blob
       positions), so rep-aware distance-swapping saves just ~186 B. **Conclusion: no
       single lever closes the ~2 KB gap** — not the dictionary, literals, offset
