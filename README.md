@@ -142,6 +142,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 |--------|--------|-------------|-------|
 | `scripts/image_benchmark.py` | icons / graphics | gzip, zstd, PNG | Pillow |
 | `scripts/image_med_benchmark.py` | 2D MED/Paeth prediction | PNG, zstd, xz | Pillow, numpy |
+| `scripts/cr2_med_benchmark.py` | Bayer MED on raw photos | PNG-16, zstd, xz | rawpy, numpy |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
@@ -335,17 +336,23 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   it cannot use the shared palette/style across an icon theme; our cross-image
   trained dictionary can. A genuine niche (sprite atlases, icon themes, map tiles).
 - **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
-- **2D MED/Paeth prediction — built, but it doesn't pay on this data.** A shared
-  intra predictor (`compressor/predictors.py`, MED + Paeth) was added and a
-  measure-first benchmark (`scripts/image_med_benchmark.py`) asked whether to build
-  an image-codec path around it. The answer, honestly, is no for the images we have:
-  MED-residuals through the full codec beat PNG on icons (5.94× vs 4.98×) but our
-  generic codec *without* prediction is 6.18× — MED **hurts 4%** because it breaks
-  the exact cross-image repetition the dictionary exploits. 2D intra prediction only
-  wins on continuous-tone, noisy data (real photographs, CR2 Bayer) with no exact
-  repeats; that data isn't on hand right now, so the predictor stays a tested
-  foundation rather than a shipped image path. (The video intra path already uses
-  the same MED idea, where post-motion-compensation residuals suit it.)
+- **2D MED/Paeth prediction — a loss on graphics, a clear win on photographic raw.**
+  A shared intra predictor (`compressor/predictors.py`, MED + Paeth) plus two
+  measure-first benchmarks (`scripts/image_med_benchmark.py`, `cr2_med_benchmark.py`)
+  show the data decides, exactly along the predict-vs-LZ line:
+    * **Graphics (icons):** MED *hurts*. MED→full-codec beats PNG (5.94× vs 4.98×),
+      but our generic codec with no prediction is 6.18× — prediction breaks the exact
+      cross-image repetition the dictionary exploits, so LZ alone wins.
+    * **Photographic raw (real Canon CR2 Bayer, held-out):** MED *wins decisively*.
+      Deinterleaving the RGGB mosaic into same-colour sub-planes, **MED + ctxcoder
+      (pure prediction, no LZ, no trained model) hits 1.99×** vs our generic codec
+      1.76×, xz 1.68×, PNG-16 1.28× — and routing the MED residuals through the LZ
+      codec instead drops to 1.74×, because sensor noise has no exact repeats for LZ
+      to find. Continuous-tone data is where spatial prediction was always meant to
+      win, and on the real raws it does (+13% over our prior best, no model to ship).
+  So the predictor earns a dedicated **raw-image path** (MED + ctxcoder, no LZ); on
+  graphics the existing LZ+dictionary codec stays the right tool. (The video intra
+  path already uses the same MED, where post-motion-compensation residuals suit it.)
 - **Photographic raw — from dead-last to parity with JPEG XL.** Raw was our worst
   case (1.51x, last) until the **transform stage**: we measured the entropy (10.27
   bits/pixel order-0, 6.87 after prediction) and added a reversible per-type
