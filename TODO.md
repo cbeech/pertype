@@ -310,12 +310,25 @@ Still high-value untested, in rough priority:
       codec's fixed-2 + 16/256-tap LMS cascade + `ctxcoder` (generalises directly —
       seismic is a smooth waveform like music). Confirms the prediction niche
       decisively.
-- [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (Parquet/ORC).
-- [~] **Scientific / medical arrays** — the image codec's **gray mode handles 16-bit
-      grayscale**: on a 16-bit monochrome plane (DICOM/FITS/microscopy proxy) it hits
-      **1.45× vs xz 1.37×, PNG-16 1.24×** — beats all (`scripts/imagecodec_benchmark.py`,
-      gray section). Open: real DICOM/FITS volumes (3D slice-delta), HDF5, hyperspectral
-      (de-interleave bands + delta).
+- [~] **Columnar / numeric CSV** — probed a real numeric CSV (768×9): **column-major
+      reorder helps** (zstd 5.77× vs row-major 5.17×, +12% — grouping a column's values
+      raises repetition), but **per-column delta *hurts*** (4.35×) because the rows are
+      unordered tabular, not a time-series (delta only pays when rows are sorted/
+      sequential). So the lever is a **transpose transform**, gated on column
+      numericness + row ordering — not blanket delta. Open: add it as a transform
+      (needs row/col structure, which the byte-stream transform layer doesn't carry —
+      likely a small CSV-aware front-end). Parquet/ORC, RLE, dictionary next.
+- [~] **Scientific / medical images** — tested on **real** public data
+      (`scripts/scientific_image_benchmark.py`; pydicom test CT/MR + NASA FITS):
+        * **DICOM 16-bit medical (CT/MR)** through the gray mode: **4.47× vs PNG-16
+          3.33×, xz 2.78×** (+34% over PNG) — a clear win; dense continuous-tone tissue
+          is the predictor's domain.
+        * **FITS int16 astronomy**: **loses** (xz 5.01× vs ours 1.86×) — the image is a
+          mostly-zero sky background, which LZ run-length-crushes but a prediction-only
+          codec can't (same boundary as graphics). Honest.
+        * **FITS float32**: ~1.2× for everyone (near the entropy floor), like float64.
+      Open: 3D DICOM/FITS volumes (inter-slice delta), an LZ pre-pass for sparse
+      astronomy, HDF5, hyperspectral (de-interleave bands + delta).
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive

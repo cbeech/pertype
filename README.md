@@ -41,7 +41,8 @@ audio codec, and a motion-compensated video codec — extends across domains.
 |--|--|--|
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
-| **scientific image** | 16-bit grayscale (DICOM/FITS-like) | **beats all: 1.45× vs xz 1.37×, PNG-16 1.24×** — the medical/microscopy domain |
+| **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.47× vs PNG-16 3.33×, xz 2.78×** (+34% over PNG) — dense continuous-tone is the predictor's domain |
+| **astronomy (FITS)** | NASA 16-bit / float32 | sparse zero-background → **LZ wins** (xz 5.01× vs ours 1.86×); float is near the floor (~1.2× for all) — honest predict-vs-LZ boundary |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
@@ -146,7 +147,8 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/image_benchmark.py` | icons / graphics | gzip, zstd, PNG | Pillow |
 | `scripts/image_med_benchmark.py` | 2D MED/Paeth prediction | PNG, zstd, xz | Pillow, numpy |
 | `scripts/cr2_med_benchmark.py` | Bayer MED on raw photos | PNG-16, zstd, xz | rawpy, numpy |
-| `scripts/imagecodec_benchmark.py` | shipped image codec (Bayer+RGB) | PNG, zstd, xz, Canon | rawpy, Pillow |
+| `scripts/imagecodec_benchmark.py` | shipped image codec (Bayer+RGB+gray) | PNG, zstd, xz, Canon | rawpy, Pillow |
+| `scripts/scientific_image_benchmark.py` | real DICOM / FITS (medical+astronomy) | PNG-16, zstd, xz | pydicom, Pillow |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
@@ -351,10 +353,12 @@ gradient energy rather than scan-order history). CALIC wins most planes:
 * **RGB photo** — a reversible green-subtract colour transform (G, R−G, B−G) decorrelates
   the channels, then predict per plane. 8 full-frame demosaiced photos (507 MB): **2.64×**
   vs PNG 2.33×, xz 1.88× (beats PNG by +13%, xz +40%).
-* **gray** — a single predicted plane. On 16-bit grayscale (the DICOM / FITS /
-  microscopy case, here a 16-bit monochrome channel) it reaches **1.45×** vs xz 1.37×
-  and PNG-16 1.24× — continuous-tone 16-bit medical/scientific imaging is squarely the
-  predictor's domain.
+* **gray** — a single predicted plane. On **real DICOM CT/MR** (16-bit medical) it
+  reaches **4.47×** vs PNG-16 3.33×, xz 2.78× (+34% over PNG) — dense continuous-tone
+  medical imaging is squarely the predictor's domain. The flip side, on real data:
+  **sparse astronomy FITS** (a mostly-zero sky background) goes the other way — xz
+  5.01× vs ours 1.86×, because LZ run-length-crushes the exact-zero runs a
+  prediction-only codec can't, the same boundary as graphics. (`scripts/scientific_image_benchmark.py`.)
 
 The MED/GAP paths use a native reconstruction (~2 s enc / ~3 s dec per 21-MP frame);
 CALIC's predict+bias+code loop is sequential (native, ~3 s dec). Exposed on the CLI as
