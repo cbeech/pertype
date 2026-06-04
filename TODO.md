@@ -110,9 +110,23 @@ temporal redundancy, which is usually the dominant source of compressibility.
       stefan −18% (motion). Our `ctxcoder` is the best residual back-end. See
       README "Lossless video". Frame-delta wins static, loses motion — exactly the
       boundary needing motion compensation.
-- [ ] 2D spatial predictor (MED / Paeth) for intra frames (shared with images) —
-      would help the *intra* side on all clips (and is needed for the motion case
-      where temporal delta loses).
+- [~] 2D spatial predictor (MED / Paeth) for intra frames (shared with images) —
+      built `compressor/predictors.py` (MED + Paeth, vectorised forward + causal
+      inverse, round-trip tested incl. odd shapes; `tests/test_predictors.py`).
+      Measure-first (`scripts/image_med_benchmark.py`) settled whether to build an
+      image-codec path around it, and the answer is **no, on the data we have**:
+        * MED/Paeth + ctxcoder ALONE loses badly to PNG/xz on icons (4.4x vs 7-8x)
+          and natural wallpaper crops (3.7x vs 7x) — it discards LZ, while those
+          images are repetition-heavy and PNG/xz/our-codec exploit that.
+        * MED-residual -> our FULL codec beats PNG on icons (5.94x vs 4.98x) BUT our
+          generic codec with no prediction is 6.18x — **MED hurts by 4%** there,
+          because it breaks the exact cross-image repetition the dictionary matches.
+      So 2D intra prediction only pays off on genuinely continuous-tone, noisy data
+      (real photographs, CR2 Bayer) with no exact repeats — and that data isn't
+      available locally right now (CR2 mount empty; /usr/share is all graphics). The
+      predictor module is the foundation; revisit when natural-photo/CR2 data is in
+      hand, and unify videocodec's uint8-modular MED onto it then (left separate now
+      to avoid changing video byte-output).
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs

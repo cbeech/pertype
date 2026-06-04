@@ -141,6 +141,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | script | domain | competitors | needs |
 |--------|--------|-------------|-------|
 | `scripts/image_benchmark.py` | icons / graphics | gzip, zstd, PNG | Pillow |
+| `scripts/image_med_benchmark.py` | 2D MED/Paeth prediction | PNG, zstd, xz | Pillow, numpy |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |
@@ -334,6 +335,17 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   it cannot use the shared palette/style across an icon theme; our cross-image
   trained dictionary can. A genuine niche (sprite atlases, icon themes, map tiles).
 - **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
+- **2D MED/Paeth prediction — built, but it doesn't pay on this data.** A shared
+  intra predictor (`compressor/predictors.py`, MED + Paeth) was added and a
+  measure-first benchmark (`scripts/image_med_benchmark.py`) asked whether to build
+  an image-codec path around it. The answer, honestly, is no for the images we have:
+  MED-residuals through the full codec beat PNG on icons (5.94× vs 4.98×) but our
+  generic codec *without* prediction is 6.18× — MED **hurts 4%** because it breaks
+  the exact cross-image repetition the dictionary exploits. 2D intra prediction only
+  wins on continuous-tone, noisy data (real photographs, CR2 Bayer) with no exact
+  repeats; that data isn't on hand right now, so the predictor stays a tested
+  foundation rather than a shipped image path. (The video intra path already uses
+  the same MED idea, where post-motion-compensation residuals suit it.)
 - **Photographic raw — from dead-last to parity with JPEG XL.** Raw was our worst
   case (1.51x, last) until the **transform stage**: we measured the entropy (10.27
   bits/pixel order-0, 6.87 after prediction) and added a reversible per-type
