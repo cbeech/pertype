@@ -186,6 +186,22 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
   FLAC; `imageio-ffmpeg` bundles a static ffmpeg for the FFV1 video baseline).
   These are *only* for the optional benchmarks, never the codec itself.
 
+## Running the tests
+
+```bash
+python3 -m pytest -q                 # full suite (106 tests)
+python3 -m pytest tests/test_auto.py # one module
+```
+
+Use a **Python 3 interpreter that has `numpy`** — the media/image/array test
+modules (`test_auto`, `test_imagecodec`, `test_predictors`, `test_videocodec`)
+import it at module load, so without numpy those modules fail to collect. On some
+machines bare `python` is Python 2; prefer `python3` (e.g. `/usr/bin/python3`).
+`pytest` is the only test-time dependency beyond `numpy`: `pip install --user
+pytest`. To run just the stdlib-only text/byte core, deselect the numpy modules:
+`python3 -m pytest -q --ignore=tests/test_auto.py --ignore=tests/test_imagecodec.py
+--ignore=tests/test_predictors.py --ignore=tests/test_videocodec.py`.
+
 ## Native acceleration (the optimised port)
 
 Pure Python validated the *ratios*; for speed, the hot loops are ported to C
