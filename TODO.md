@@ -319,8 +319,11 @@ Still high-value untested, in rough priority:
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive
-      text where zstd's COVER+FSE win. Reproducible via `cli benchmark code`. Open:
-      XML, YAML, TOML, CSV, FASTA/FASTQ/VCF.
+      text where zstd's COVER+FSE win. Also added **XML** — held-out **ours 8.29×
+      beats `zstd --train` 7.80× (+6%)** and plain gzip/zstd by +140% (verbose,
+      tag-repetitive markup is the blob's sweet spot, like html). Both reproducible via
+      `cli benchmark {code,xml}`. Open: YAML, TOML, CSV (the local CSVs are text, not
+      numeric, so a columnar transform wouldn't help), FASTA/FASTQ/VCF.
 
 ---
 

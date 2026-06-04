@@ -39,7 +39,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 
 | domain | data | our result vs the standard codec |
 |--|--|--|
-| **text** | JSON / logs / HTML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
+| **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
 | **scientific image** | 16-bit grayscale (DICOM/FITS-like) | **beats all: 1.45× vs xz 1.37×, PNG-16 1.24×** — the medical/microscopy domain |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
@@ -247,11 +247,12 @@ zstd at its strongest, not a fixed default.
 | logs | 7.40x | 7.76x | 14.06x (110 KB) | **15.12x** |
 | html | 3.86x | 3.98x | 7.08x (110 KB) | **7.55x** |
 | code (Python) | 3.67x | 3.75x | **6.26x** (512 KB) | 5.82x |
+| xml | 3.43x | 3.46x | 7.80x (256 KB) | **8.29x** |
 
 On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%**, and —
 after scaling the trained **blob** to the 512 KB LZ match window — we **beat
-`zstd --train` on logs (+7%) and html (+6%)** even when zstd picks its best
-dictionary. The blob is prepended to each file's history and shipped once
+`zstd --train` on logs (+7%), html (+6%) and XML (+6%)** even when zstd picks its
+best dictionary (verbose, tag/line-repetitive markup is the blob's sweet spot). The blob is prepended to each file's history and shipped once
 (amortised, like zstd's dictionary), so a larger one just means more cross-file
 content to match; the validation gate picks the size per type. On logs/html zstd's
 larger dictionaries are actually *worse* (110 KB is its best), so we beat its best.

@@ -105,8 +105,14 @@ def main():
         ["/usr/lib/python3", "/usr/lib/python3.13", "/usr/lib/python3/dist-packages"],
         (".py",), 300, 32_768, want,
     )
+    # XML: real markup (AppStream metadata, docs, configs) — verbose, tag-repetitive
+    # like HTML.
+    xml_files = _walk_collect(
+        ["/usr/share", "/usr/lib", "/etc"], (".xml",), 300, 65_536, want,
+    )
     for type_id, files in (("json", json_files), ("html", html_files),
-                           ("logs", log_files), ("code", code_files)):
+                           ("logs", log_files), ("code", code_files),
+                           ("xml", xml_files)):
         if len(files) < 20:
             print(f"{type_id}: only {len(files)} files found — skipping")
             continue
