@@ -63,11 +63,14 @@ def main():
 
     bayer = {k: 0 for k in ("n", "raw", "png", "zstd", "xz", "ours", "cr2")}
     rgb = {k: 0 for k in ("n", "raw", "png", "zstd", "xz", "ours")}
+    gray = {k: 0 for k in ("n", "raw", "png", "zstd", "xz", "ours")}
     for p in paths:
         with rawpy.imread(p) as raw:
             b = np.ascontiguousarray(raw.raw_image_visible)               # uint16 Bayer
             im = np.ascontiguousarray(raw.postprocess(
                 use_camera_wb=True, output_bps=8, no_auto_bright=True))   # uint8 RGB
+            g = np.ascontiguousarray(raw.postprocess(
+                use_camera_wb=True, output_bps=16, no_auto_bright=True)[:, :, 1])  # 16-bit gray
 
         eb = imagecodec.encode(b, bayer=True)
         assert np.array_equal(imagecodec.decode(eb), b), f"Bayer round-trip {p}"
@@ -84,8 +87,16 @@ def main():
         rgb["png"] += png(im); rgb["zstd"] += sh(["zstd", "-19", "-c"], rb)
         rgb["xz"] += sh(["xz", "-9", "-c"], rb)
 
+        eg = imagecodec.encode(g, bayer=False)                            # gray mode
+        assert np.array_equal(imagecodec.decode(eg), g), f"gray round-trip {p}"
+        gray["n"] += 1; gray["raw"] += g.nbytes; gray["ours"] += len(eg)
+        gb = g.astype("<u2").tobytes()
+        gray["png"] += png(g); gray["zstd"] += sh(["zstd", "-19", "-c"], gb)
+        gray["xz"] += sh(["xz", "-9", "-c"], gb)
+
     report("Bayer raw (16-bit)", bayer, extra=[("Canon .CR2", bayer["cr2"])])
     report("demosaiced RGB (8-bit)", rgb)
+    report("16-bit grayscale (DICOM/FITS-like)", gray)
 
 
 if __name__ == "__main__":

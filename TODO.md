@@ -311,9 +311,16 @@ Still high-value untested, in rough priority:
       seismic is a smooth waveform like music). Confirms the prediction niche
       decisively.
 - [ ] **Columnar DB numeric columns** — delta / RLE / dictionary (Parquet/ORC).
-- [ ] **Scientific / medical arrays** — HDF5, FITS, DICOM 16-bit volumes,
-      hyperspectral / satellite (de-interleave bands + delta).
-- [ ] **More text formats** — XML, YAML, TOML, CSV, source code, FASTA/FASTQ/VCF.
+- [~] **Scientific / medical arrays** — the image codec's **gray mode handles 16-bit
+      grayscale**: on a 16-bit monochrome plane (DICOM/FITS/microscopy proxy) it hits
+      **1.45× vs xz 1.37×, PNG-16 1.24×** — beats all (`scripts/imagecodec_benchmark.py`,
+      gray section). Open: real DICOM/FITS volumes (3D slice-delta), HDF5, hyperspectral
+      (de-interleave bands + delta).
+- [~] **More text formats** — added **source code** (Python) as a trained type
+      (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
+      but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive
+      text where zstd's COVER+FSE win. Reproducible via `cli benchmark code`. Open:
+      XML, YAML, TOML, CSV, FASTA/FASTQ/VCF.
 
 ---
 

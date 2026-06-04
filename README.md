@@ -39,8 +39,9 @@ audio codec, and a motion-compensated video codec — extends across domains.
 
 | domain | data | our result vs the standard codec |
 |--|--|--|
-| **text** | JSON / logs / HTML (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%, 6% behind on json |
+| **text** | JSON / logs / HTML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7% & html +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
+| **scientific image** | 16-bit grayscale (DICOM/FITS-like) | **beats all: 1.45× vs xz 1.37×, PNG-16 1.24×** — the medical/microscopy domain |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
@@ -245,6 +246,7 @@ zstd at its strongest, not a fixed default.
 | json | 5.70x | 6.18x | **9.95x** (256 KB) | 9.39x |
 | logs | 7.40x | 7.76x | 14.06x (110 KB) | **15.12x** |
 | html | 3.86x | 3.98x | 7.08x (110 KB) | **7.55x** |
+| code (Python) | 3.67x | 3.75x | **6.26x** (512 KB) | 5.82x |
 
 On real, heterogeneous files we **beat plain gzip / zstd -19 by 29–62%**, and —
 after scaling the trained **blob** to the 512 KB LZ match window — we **beat
@@ -254,8 +256,11 @@ dictionary. The blob is prepended to each file's history and shipped once
 content to match; the validation gate picks the size per type. On logs/html zstd's
 larger dictionaries are actually *worse* (110 KB is its best), so we beat its best.
 
-**json is the one type zstd still wins** — 49.7 KB (256 KB dict) vs our 52.7 KB,
-a 6% gap. A controlled experiment pins down *why*, and it is **not** the
+**json and code are where zstd still wins** — both are cross-file-repetitive text
+where zstd's COVER dictionary + FSE shine: json 49.7 KB (256 KB dict) vs our 52.7 KB
+(a 6% gap), Python source 79.4 KB vs our 85.5 KB (~7%); both still beat plain
+gzip/zstd by 55–62%. A controlled experiment pins down *why* (for json), and it is
+**not** the
 dictionary: feeding zstd's *own* 256 KB COVER dictionary into our codec gives
 54.1 KB, still behind zstd using the identical dictionary, so the gap is our
 codec's **coding efficiency**. Two fixes have since closed part of it — a compact
@@ -326,6 +331,7 @@ lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
 | flat UI graphics (256 px) | 25.90x | 30.90x | 30.54x | 25.70x | **30.70x** | tied top |
 | Canon CR2 raw Bayer (photographic) | 1.46x | 1.56x | 1.52x | 1.39x (PNG-16) | **2.22x** | **1st** |
 | demosaiced RGB photo (8-bit) | — | 1.73x | 1.88x (xz) | 2.33x | **2.64x** | **1st** |
+| 16-bit grayscale (DICOM/FITS-like) | — | 1.27x | 1.37x (xz) | 1.24x (PNG-16) | **1.45x** | **1st** |
 
 Both image rows are the dedicated **image codec** (`compressor/imagecodec.py`): 2D
 prediction → adaptive arithmetic coding, no LZ, no trained model (sensor/photo noise
@@ -344,7 +350,10 @@ gradient energy rather than scan-order history). CALIC wins most planes:
 * **RGB photo** — a reversible green-subtract colour transform (G, R−G, B−G) decorrelates
   the channels, then predict per plane. 8 full-frame demosaiced photos (507 MB): **2.64×**
   vs PNG 2.33×, xz 1.88× (beats PNG by +13%, xz +40%).
-* **gray** — a single predicted plane.
+* **gray** — a single predicted plane. On 16-bit grayscale (the DICOM / FITS /
+  microscopy case, here a 16-bit monochrome channel) it reaches **1.45×** vs xz 1.37×
+  and PNG-16 1.24× — continuous-tone 16-bit medical/scientific imaging is squarely the
+  predictor's domain.
 
 The MED/GAP paths use a native reconstruction (~2 s enc / ~3 s dec per 21-MP frame);
 CALIC's predict+bias+code loop is sequential (native, ~3 s dec). Exposed on the CLI as

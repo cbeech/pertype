@@ -99,7 +99,14 @@ def main():
         ["/usr/share/doc", "/usr/share", "/usr/lib"], (".html", ".htm"), 500, 65_536, want
     )
     log_files = _collect_logs(want)
-    for type_id, files in (("json", json_files), ("html", html_files), ("logs", log_files)):
+    # source code: real Python modules (shared keywords/idioms/imports across files —
+    # the trained-dictionary niche, like logs/html).
+    code_files = _walk_collect(
+        ["/usr/lib/python3", "/usr/lib/python3.13", "/usr/lib/python3/dist-packages"],
+        (".py",), 300, 32_768, want,
+    )
+    for type_id, files in (("json", json_files), ("html", html_files),
+                           ("logs", log_files), ("code", code_files)):
         if len(files) < 20:
             print(f"{type_id}: only {len(files)} files found — skipping")
             continue
