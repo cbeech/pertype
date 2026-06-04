@@ -15,6 +15,24 @@ share one definition.
 """
 import numpy as np
 
+_native = None
+
+
+def _get_native():
+    global _native
+    if _native is None:
+        try:
+            from compressor import native as n
+            _native = n if n.HAVE_NATIVE else False
+        except Exception:
+            _native = False
+    return _native
+
+
+# Origin (top-left) prediction: 128, matching the native ``med_fill`` and the video
+# intra path, so the vectorised forward here and that fast C reconstruction agree.
+_ORIGIN = 128
+
 
 def _neighbours(P):
     a = np.zeros_like(P); a[:, 1:] = P[:, :-1]      # W  (left)
@@ -31,7 +49,7 @@ def med_predict(P):
     pred = np.where(c >= mx, mn, np.where(c <= mn, mx, a + b - c))
     pred[0, 1:] = P[0, :-1]      # first row: predict from the left
     pred[1:, 0] = P[:-1, 0]      # first col: predict from above
-    pred[0, 0] = 0
+    pred[0, 0] = _ORIGIN
     return pred
 
 
@@ -44,7 +62,7 @@ def paeth_predict(P):
     pred = np.where((pa <= pb) & (pa <= pc), a, np.where(pb <= pc, b, c))
     pred[0, 1:] = P[0, :-1]
     pred[1:, 0] = P[:-1, 0]
-    pred[0, 0] = 0
+    pred[0, 0] = _ORIGIN
     return pred
 
 
@@ -57,9 +75,17 @@ def forward(P, kind):
 
 
 def reconstruct(res, kind):
-    """Invert ``forward``: causal raster reconstruction. Pure-Python (a native
-    port would speed it up, as for the video MED); exact."""
+    """Invert ``forward``: causal raster reconstruction. Uses the native ``med_fill``
+    for MED (byte-identical to the loop below), else the pure-Python raster. Exact."""
+    res = np.ascontiguousarray(res)
     H, W = res.shape
+    if kind == "med":
+        nat = _get_native()
+        if nat:
+            rec = np.zeros((H, W), dtype=np.int64)
+            intra = np.ones((H, W), dtype=np.uint8)
+            nat.med_fill(rec, intra, np.ascontiguousarray(res, dtype=np.int64))
+            return rec.astype(np.int32)
     rec = np.zeros((H, W), dtype=np.int32)
     med = kind == "med"
     for y in range(H):
@@ -68,7 +94,7 @@ def reconstruct(res, kind):
         ry = res[y]
         for x in range(W):
             if x == 0:
-                pred = prev[0] if y > 0 else 0
+                pred = prev[0] if y > 0 else _ORIGIN
             elif y == 0:
                 pred = row[x - 1]
             else:

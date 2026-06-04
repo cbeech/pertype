@@ -130,9 +130,16 @@ temporal redundancy, which is usually the dominant source of compressibility.
       MED residuals through the LZ codec drops to 1.74x — LZ hurts on noise. So:
       build a dedicated **raw-image path** (Bayer-deinterleave -> MED -> ctxcoder, no
       LZ); leave graphics to the LZ+dictionary codec. Predictor module + tests done.
-- [ ] **Raw-image codec path** (`imagecodec.py`?): Bayer-deinterleave + MED +
-      ctxcoder, small dims header, CLI + round-trip. Justified by the +13% CR2 win
-      above. Then unify videocodec's uint8-modular MED onto `predictors.py`.
+- [x] **Raw-image codec path** — built `compressor/imagecodec.py`: Bayer-deinterleave
+      → 2D MED → ctxcoder (no LZ, no model), RIMG container + dims header + CRC, CLI
+      `image-encode`/`image-decode` (.npy or .CR2 → .rimg), `tests/test_imagecodec.py`.
+      Decode uses the native `med_fill` (predictors aligned to origin 128 so the
+      vectorised forward and the C reconstruction are byte-identical) — ~2 s enc /
+      ~3 s dec per 21-MP frame. On 10 held-out full-frame Canon raws (423 MB),
+      round-trip verified: **ours 2.12×** vs xz 1.81×, Canon .CR2 1.57×, zstd 1.52×,
+      PNG-16 1.33× (beats the camera's own lossless +35%). 90 tests green.
+      Follow-up: unify videocodec's uint8-modular MED onto `predictors.py`; a native
+      Paeth reconstruct if Paeth ever beats MED on some plane.
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs

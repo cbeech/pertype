@@ -154,6 +154,42 @@ def cmd_video_decode(args):
     print(f"{args.input}: -> {len(planes[0])} frames -> {dest}")
 
 
+def cmd_image_encode(args):
+    """Encode a raw image plane to .rimg (MED + ctxcoder). Input is a .npy holding a
+    2D uint16 array, or a .CR2 (decoded to its Bayer plane via rawpy if installed)."""
+    import numpy as np
+
+    from compressor import imagecodec
+    path = args.input
+    if path.lower().endswith(".cr2"):
+        import rawpy
+        with rawpy.imread(path) as raw:
+            img = np.ascontiguousarray(raw.raw_image_visible)
+        bayer = True
+    else:
+        img = np.load(path)
+        bayer = not args.no_bayer
+    if img.ndim != 2:
+        sys.exit("image must be a 2D array (a single Bayer or grayscale plane)")
+    blob = imagecodec.encode(img, bayer=bayer)
+    dest = args.output or path + ".rimg"
+    _write(dest, blob)
+    raw_bytes = img.size * 2
+    print(f"{path}: {img.shape[1]}x{img.shape[0]} {'Bayer' if bayer else 'plane'}  "
+          f"{raw_bytes:,} -> {len(blob):,} bytes ({raw_bytes / len(blob):.2f}x) -> {dest}")
+
+
+def cmd_image_decode(args):
+    import numpy as np
+
+    from compressor import imagecodec
+    img = imagecodec.decode(_read(args.input))
+    dest = args.output or (args.input[:-5] if args.input.endswith(".rimg") else args.input)
+    np.save(dest, img)                      # np.save ensures a .npy suffix
+    out = dest if dest.endswith(".npy") else dest + ".npy"
+    print(f"{args.input}: -> {img.shape[1]}x{img.shape[0]} uint16 -> {out}")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="compressor", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -193,6 +229,19 @@ def build_parser():
     vd.add_argument("input", help="input .vid")
     vd.add_argument("-o", "--output", help="output .y4m (default: strips .vid)")
     vd.set_defaults(func=cmd_video_decode)
+
+    ie = sub.add_parser("image-encode",
+                        help="encode a raw image (.npy 2D uint16, or .CR2) to .rimg")
+    ie.add_argument("input", help="input .npy (2D uint16 plane) or .CR2")
+    ie.add_argument("-o", "--output", help="output .rimg (default: <input>.rimg)")
+    ie.add_argument("--no-bayer", action="store_true",
+                    help="treat as one plane (no RGGB 2x2 deinterleave)")
+    ie.set_defaults(func=cmd_image_encode)
+
+    idc = sub.add_parser("image-decode", help="decode a .rimg back to a .npy uint16 array")
+    idc.add_argument("input", help="input .rimg")
+    idc.add_argument("-o", "--output", help="output .npy (default: strips .rimg)")
+    idc.set_defaults(func=cmd_image_decode)
     return p
 
 
