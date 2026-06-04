@@ -369,5 +369,15 @@ Still high-value untested, in rough priority:
       variant and is cheaper.
 - [ ] **Audio**: still longer / per-track-adaptive filter orders; definitive
       comparison vs `flac -8` (needs the `flac` binary, on the unmounted NAS).
-- [ ] **Faster training** even before a full port: reuse blob hash chains across
-      files; rep-offset-aware cost-optimal parsing.
+- [~] **Faster training.** The blob-spec validation search (9 independent specs,
+      ~80% of training time) is now **fanned out across processes** (`_search_costs`,
+      ProcessPoolExecutor; order-preserved so the cheapest-wins pick is identical to
+      serial; gated to corpora ≥512 KB so small models/tests stay serial). json
+      training 232 s → 127 s on 8 cores (~1.8×; sub-linear due to memory-bandwidth
+      contention from concurrent 512 KB-blob tokenisation + the serial final rebuild).
+      Still open: reuse blob hash chains across specs/files; rep-offset-aware parse.
+- [x] **Faster image encode.** GAP (selector code 2) was measured to never win once
+      CALIC is in the trial set (0/56 planes — CALIC subsumes GAP's prediction), so
+      it's dropped from the encoder's per-plane trial (now MED + CALIC, 2 not 3).
+      Zero compression change (GAP never selected; decode still honours the selector);
+      encode ~35–44% faster (Bayer 7.2 → 4.7 s, RGB 13.1 → 7.4 s per 21-MP frame).

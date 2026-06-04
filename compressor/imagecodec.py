@@ -35,14 +35,14 @@ MAGIC = b"RIMG"
 VERSION = 3
 GRAY, BAYER, RGB = 0, 1, 2
 
-# Per-plane predictor selection: each plane is coded with whichever predictor gives
-# the smallest residual (a 1-byte selector per plane). MED is the fast baseline; GAP
-# (CALIC's gradient predictor) helps smooth raw planes; CALIC adds context bias
-# correction on top of GAP and usually wins on both raw and photo planes. Paeth
-# (code 1) was measured and never won, so it's out of the shipped set — but decode
-# still honours every selector value, so any of them can be re-enabled without a
-# format change.
-_PREDICTORS = [(0, "med"), (2, "gap"), (3, "calic")]
+# Per-plane coder selection: each plane is coded with whichever gives the smallest
+# output (a 1-byte selector per plane). MED is the fast baseline; CALIC (a full
+# integrated codec: GAP prediction + bias correction + energy-conditional coding)
+# wins almost everywhere. GAP (code 2) and Paeth (code 1) were measured and *never*
+# win once CALIC is in the set — CALIC subsumes GAP's prediction — so they're dropped
+# from the encoder's trial (it tries 2 coders, not 4). Decode still honours every
+# selector value, so any can be re-enabled without a format change.
+_PREDICTORS = [(0, "med"), (3, "calic")]
 _KIND = {0: "med", 1: "paeth", 2: "gap", 3: "calic"}
 
 

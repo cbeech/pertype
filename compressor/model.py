@@ -19,6 +19,7 @@ on all samples.
 Every symbol that could ever be emitted gets a baseline count, so any input is
 encodable later — that is what guarantees losslessness on unseen files.
 """
+import os
 from collections import Counter
 
 from compressor import transform
@@ -310,6 +311,34 @@ def _price(samples, dictionary, blob, main_model, dist_model, mode_model,
     return bits
 
 
+def _eval_spec(args):
+    """Build artifacts for one blob spec on the fit slice and price them on val.
+    Module-level so it's picklable for the parallel search."""
+    spec, fit, val, max_patterns, min_len, max_len = args
+    blob = _blob_for(spec, fit)
+    d, mm, dm, mo = _artifacts(fit, blob, max_patterns, min_len, max_len, DECISION_CHAIN)
+    return _price(val, d, blob, mm, dm, mo, DECISION_CHAIN)
+
+
+def _search_costs(specs, fit, val, max_patterns, min_len, max_len):
+    """Price every blob spec on the validation slice. The specs are independent, so
+    fan them out across processes (the dominant training cost is this search); falls
+    back to serial for small corpora or if a pool can't start. Order is preserved, so
+    the cheapest-wins tie-break is identical to the serial loop."""
+    args = [(s, fit, val, max_patterns, min_len, max_len) for s in specs]
+    if sum(len(s) for s in fit) >= (1 << 19):          # only worth a pool for real work
+                                                       # (per-spec compute >> fork cost)
+        try:
+            import concurrent.futures as cf
+            workers = min(len(specs), os.cpu_count() or 1)
+            if workers > 1:
+                with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+                    return list(ex.map(_eval_spec, args))
+        except Exception:
+            pass
+    return [_eval_spec(a) for a in args]
+
+
 def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     samples = list(samples)
 
@@ -329,11 +358,9 @@ def train(samples, type_id, max_patterns=4096, min_len=3, max_len=256):
     # whichever is cheapest on the validation slice — a shallow search depth keeps
     # the decision fast. Each type ends up with the blob that suits it, so the
     # smarter coverage builder can win where it helps without regressing others.
+    costs = _search_costs(BLOB_SPECS, fit, val, max_patterns, min_len, max_len)
     best_cost, best_spec = None, ("none", 0)
-    for spec in BLOB_SPECS:
-        blob = _blob_for(spec, fit)
-        d, mm, dm, mo = _artifacts(fit, blob, max_patterns, min_len, max_len, DECISION_CHAIN)
-        cost = _price(val, d, blob, mm, dm, mo, DECISION_CHAIN)
+    for spec, cost in zip(BLOB_SPECS, costs):
         if best_cost is None or cost < best_cost:
             best_cost, best_spec = cost, spec
 
