@@ -91,6 +91,12 @@ try:
         _lib.calic_code.argtypes = [_I64, _I64, ctypes.c_int, ctypes.c_long,
                                     ctypes.c_long, ctypes.c_long]
         _lib.calic_code.restype = None
+        _lib.calic_codec_encode.argtypes = [_I64, ctypes.c_long, ctypes.c_long,
+                                            ctypes.c_long, _U8, ctypes.c_long]
+        _lib.calic_codec_encode.restype = ctypes.c_long
+        _lib.calic_codec_decode.argtypes = [_U8, ctypes.c_long, _I64,
+                                            ctypes.c_long, ctypes.c_long, ctypes.c_long]
+        _lib.calic_codec_decode.restype = None
         _lib.lz_best.argtypes = [
             _U8, ctypes.c_long, ctypes.c_long, ctypes.c_long,
             _ci, _ci, _ci, _I32, _I32,
@@ -279,6 +285,28 @@ def calic_decode(res, scale):
     res = np.ascontiguousarray(res, dtype=np.int64)
     img = np.empty_like(res)
     _lib.calic_code(_ptr(img), _ptr(res), 1, res.shape[0], res.shape[1], scale)
+    return img.astype(np.int32)
+
+
+def calic_codec_encode(img, scale):
+    """Full CALIC codec: predict + bias + energy-conditional entropy coding.
+    ``img`` is a 2D int plane; returns the compressed bytes."""
+    img = np.ascontiguousarray(img, dtype=np.int64)
+    H, W = img.shape
+    cap = img.size * 8 + 1024
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = _lib.calic_codec_encode(_ptr(img), H, W, scale, _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+
+
+def calic_codec_decode(blob, H, W, scale):
+    """Invert ``calic_codec_encode`` -> int32 image plane of shape (H, W)."""
+    buf = np.frombuffer(blob, dtype=np.uint8).copy()
+    img = np.empty((H, W), dtype=np.int64)
+    _lib.calic_codec_decode(_u8ptr(buf), len(blob), _ptr(img), H, W, scale)
     return img.astype(np.int32)
 
 

@@ -569,6 +569,180 @@ void calic_code(int64_t *img, int64_t *res, int mode, long H, long W, long scale
     free(C);
 }
 
+/* --- full CALIC codec: predict + bias + energy-conditional entropy coding ---
+ *
+ * The decisive image step (vs feeding CALIC residuals to the order-2 ctxcoder):
+ * the magnitude-bucket arithmetic model is selected by the local error ENERGY
+ * (dh+dv quantised to 12 bins) rather than the scan-order previous buckets. The
+ * energy is computed from already-reconstructed neighbours, so the model must be
+ * chosen inside the prediction loop — prediction, bias correction (the 704-context
+ * running mean), and energy-conditional coding are one integrated pass. Measured
+ * ~+2.6% (Bayer) / +1.1% (RGB) over the order-2 coder. Encode and decode below
+ * share the exact context/bias arithmetic, so they round-trip byte-exact. */
+#define CALIC_NEBIN 12
+
+static int calic_ebin(int64_t energy, const long *tent) {
+    int e = 0;
+    while (e < 11 && energy >= tent[e]) e++;
+    return e;                                       /* 0..11 */
+}
+
+long calic_codec_encode(const int64_t *img, long H, long W, long scale,
+                        uint8_t *out, long cap) {
+    static const long bbase[10] = {1, 3, 6, 11, 18, 30, 50, 90, 160, 300};
+    static const long ebase[11] = {1, 3, 6, 11, 18, 30, 50, 90, 160, 300, 600};
+    long tbias[10], tent[11];
+    for (int i = 0; i < 10; i++) tbias[i] = bbase[i] * scale;
+    for (int i = 0; i < 11; i++) tent[i] = ebase[i] * scale;
+    long t1 = 80 * scale, t2 = 32 * scale, t3 = 8 * scale;
+    int64_t *B = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    int64_t *C = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    if (!B || !C) { free(B); free(C); return -1; }
+    int freq[CALIC_NEBIN][CTX_NB]; long tot[CALIC_NEBIN];
+    for (int c = 0; c < CALIC_NEBIN; c++) {
+        for (int s = 0; s < CTX_NB; s++) freq[c][s] = 1;
+        tot[c] = CTX_NB;
+    }
+    bitw w = { out, cap, 0, 0, 0, 0 };
+    aenc enc = { 0, AC_MAX, 0, &w };
+
+    for (long y = 0; y < H; y++) {
+        int64_t e_left = 0;
+        for (long x = 0; x < W; x++) {
+            long i = y * W + x;
+            int64_t a  = (x > 0) ? img[i - 1] : 0;
+            int64_t b  = (y > 0) ? img[i - W] : 0;
+            int64_t nw = (x > 0 && y > 0) ? img[i - W - 1] : 0;
+            int64_t ne = (y > 0 && x < W - 1) ? img[i - W + 1] : 0;
+            int64_t ww = (x > 1) ? img[i - 2] : 0;
+            int64_t nn = (y > 1) ? img[i - 2 * W] : 0;
+            int64_t dh = llabs(a - ww) + llabs(b - nw) + llabs(b - ne);
+            int64_t dv = llabs(a - nw) + llabs(b - nn) + llabs(ne - nn);
+            int64_t pred;
+            if (y == 0 && x == 0)      pred = 128;
+            else if (y == 0)           pred = a;
+            else if (x == 0)           pred = b;
+            else {
+                int64_t base = ((a + b) >> 1) + ((ne - nw) >> 2), d = dv - dh;
+                if (d > t1) pred = a; else if (d < -t1) pred = b;
+                else if (d > t2) pred = (base + a) >> 1; else if (d < -t2) pred = (base + b) >> 1;
+                else if (d > t3) pred = (3 * base + a) >> 2; else if (d < -t3) pred = (3 * base + b) >> 2;
+                else pred = base;
+            }
+            int db = 0; int64_t ebias = dh + dv + 2 * llabs(e_left);
+            while (db < 10 && ebias >= tbias[db]) db++;
+            int tex = (a >= pred) | ((b >= pred) << 1) | ((nw >= pred) << 2)
+                    | ((ne >= pred) << 3) | ((ww >= pred) << 4) | ((nn >= pred) << 5);
+            long kb = (long)db * 64 + tex;
+            int64_t corr = calic_round(B[kb], C[kb]);
+            int ebin = calic_ebin(dh + dv, tent);
+
+            int64_t e = img[i] - pred, r = e - corr;
+            uint64_t u = (((uint64_t)r) << 1) ^ (uint64_t)(r >> 63);
+            int k = u ? (64 - __builtin_clzll(u)) : 0;
+            int *f = freq[ebin];
+            uint64_t cum = 0;
+            for (int s = 0; s < k; s++) cum += (uint64_t)f[s];
+            ae_encode(&enc, cum, (uint64_t)f[k], (uint64_t)tot[ebin]);
+            if (k >= 2) {
+                uint64_t mant = u & ((1ULL << (k - 1)) - 1);
+                for (int sh = k - 2; sh >= 0; sh--) ae_encode(&enc, (mant >> sh) & 1, 1, 2);
+            }
+            if (w.overflow) { free(B); free(C); return -1; }
+            ctx_bump(f, &tot[ebin], k);
+            B[kb] += e; C[kb] += 1;
+            if (C[kb] >= 256) { B[kb] >>= 1; C[kb] >>= 1; }
+            e_left = e;
+        }
+    }
+    enc.pending++;
+    ae_emit(&enc, enc.low < AC_QUARTER ? 0 : 1);
+    free(B); free(C);
+    if (w.overflow) return -1;
+    if (w.nbits > 0) { if (w.byte >= w.cap) return -1; w.out[w.byte++] = (uint8_t)(w.cur << (8 - w.nbits)); }
+    return w.byte;
+}
+
+void calic_codec_decode(const uint8_t *in, long len, int64_t *img,
+                        long H, long W, long scale) {
+    static const long bbase[10] = {1, 3, 6, 11, 18, 30, 50, 90, 160, 300};
+    static const long ebase[11] = {1, 3, 6, 11, 18, 30, 50, 90, 160, 300, 600};
+    long tbias[10], tent[11];
+    for (int i = 0; i < 10; i++) tbias[i] = bbase[i] * scale;
+    for (int i = 0; i < 11; i++) tent[i] = ebase[i] * scale;
+    long t1 = 80 * scale, t2 = 32 * scale, t3 = 8 * scale;
+    int64_t *B = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    int64_t *C = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
+    if (!B || !C) { free(B); free(C); return; }
+    int freq[CALIC_NEBIN][CTX_NB]; long tot[CALIC_NEBIN];
+    for (int c = 0; c < CALIC_NEBIN; c++) {
+        for (int s = 0; s < CTX_NB; s++) freq[c][s] = 1;
+        tot[c] = CTX_NB;
+    }
+    adec d = { 0, AC_MAX, 0, in, len, 0 };
+    for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
+
+    for (long y = 0; y < H; y++) {
+        int64_t e_left = 0;
+        for (long x = 0; x < W; x++) {
+            long i = y * W + x;
+            int64_t a  = (x > 0) ? img[i - 1] : 0;
+            int64_t b  = (y > 0) ? img[i - W] : 0;
+            int64_t nw = (x > 0 && y > 0) ? img[i - W - 1] : 0;
+            int64_t ne = (y > 0 && x < W - 1) ? img[i - W + 1] : 0;
+            int64_t ww = (x > 1) ? img[i - 2] : 0;
+            int64_t nn = (y > 1) ? img[i - 2 * W] : 0;
+            int64_t dh = llabs(a - ww) + llabs(b - nw) + llabs(b - ne);
+            int64_t dv = llabs(a - nw) + llabs(b - nn) + llabs(ne - nn);
+            int64_t pred;
+            if (y == 0 && x == 0)      pred = 128;
+            else if (y == 0)           pred = a;
+            else if (x == 0)           pred = b;
+            else {
+                int64_t base = ((a + b) >> 1) + ((ne - nw) >> 2), dd = dv - dh;
+                if (dd > t1) pred = a; else if (dd < -t1) pred = b;
+                else if (dd > t2) pred = (base + a) >> 1; else if (dd < -t2) pred = (base + b) >> 1;
+                else if (dd > t3) pred = (3 * base + a) >> 2; else if (dd < -t3) pred = (3 * base + b) >> 2;
+                else pred = base;
+            }
+            int db = 0; int64_t ebias = dh + dv + 2 * llabs(e_left);
+            while (db < 10 && ebias >= tbias[db]) db++;
+            int tex = (a >= pred) | ((b >= pred) << 1) | ((nw >= pred) << 2)
+                    | ((ne >= pred) << 3) | ((ww >= pred) << 4) | ((nn >= pred) << 5);
+            long kb = (long)db * 64 + tex;
+            int64_t corr = calic_round(B[kb], C[kb]);
+            int ebin = calic_ebin(dh + dv, tent);
+
+            int *f = freq[ebin];
+            uint64_t total = (uint64_t)tot[ebin];
+            uint64_t target = ad_target(&d, total);
+            uint64_t cum = 0; int k = 0;
+            while (cum + (uint64_t)f[k] <= target) { cum += (uint64_t)f[k]; k++; }
+            ad_update(&d, cum, (uint64_t)f[k], total);
+            uint64_t u;
+            if (k == 0) u = 0;
+            else if (k == 1) u = 1;
+            else {
+                uint64_t mant = 0;
+                for (int j = 0; j < k - 1; j++) {
+                    int bit = (ad_target(&d, 2) >= 1) ? 1 : 0;
+                    ad_update(&d, (uint64_t)bit, 1, 2);
+                    mant = (mant << 1) | (uint64_t)bit;
+                }
+                u = (1ULL << (k - 1)) | mant;
+            }
+            int64_t r = (int64_t)(u >> 1) ^ -(int64_t)(u & 1);
+            int64_t e = r + corr;
+            img[i] = e + pred;
+            ctx_bump(f, &tot[ebin], k);
+            B[kb] += e; C[kb] += 1;
+            if (C[kb] >= 256) { B[kb] >>= 1; C[kb] >>= 1; }
+            e_left = e;
+        }
+    }
+    free(B); free(C);
+}
+
 /* --- LZ match-finder forward pass (mirrors tokenizer.tokenize_optimal) ------
  *
  * Builds 3-byte hash chains over the combined buffer and, for each data position

@@ -161,6 +161,125 @@ def _calic_py(data, scale, encode):
     return (res if encode else img).astype(np.int32)
 
 
+def _calic_codec_py(data, scale, H=None, W=None, encode=True):
+    """Byte-identical pure-Python twin of the native ``calic_codec`` (predict +
+    bias + energy-conditional entropy coding). Encode: data=plane -> bytes; decode:
+    data=blob -> plane. Slow; used only when the native lib is unavailable."""
+    from compressor import ctxcoder as _cx
+    from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+    from compressor.bitio import BitReader
+    NB, INCR, RESCALE, NEBIN = 65, 32, 1 << 14, 12
+    tbias = [t * scale for t in (1, 3, 6, 11, 18, 30, 50, 90, 160, 300)]
+    tent = [t * scale for t in (1, 3, 6, 11, 18, 30, 50, 90, 160, 300, 600)]
+    t1, t2, t3 = 80 * scale, 32 * scale, 8 * scale
+    Bb = [0] * 704
+    Cc = [0] * 704
+    freq = [[1] * NB for _ in range(NEBIN)]
+    tot = [NB] * NEBIN
+    if encode:
+        img = np.ascontiguousarray(data, dtype=np.int64)
+        H, W = img.shape
+        ac = ArithmeticEncoder()
+    else:
+        ac = ArithmeticDecoder(BitReader(bytes(data)))
+        img = np.zeros((H, W), dtype=np.int64)
+    for y in range(H):
+        e_left = 0
+        for x in range(W):
+            a = int(img[y, x - 1]) if x > 0 else 0
+            b = int(img[y - 1, x]) if y > 0 else 0
+            nw = int(img[y - 1, x - 1]) if (x > 0 and y > 0) else 0
+            ne = int(img[y - 1, x + 1]) if (y > 0 and x < W - 1) else 0
+            ww = int(img[y, x - 2]) if x > 1 else 0
+            nn = int(img[y - 2, x]) if y > 1 else 0
+            dh = abs(a - ww) + abs(b - nw) + abs(b - ne)
+            dv = abs(a - nw) + abs(b - nn) + abs(ne - nn)
+            if y == 0 and x == 0: pred = 128
+            elif y == 0: pred = a
+            elif x == 0: pred = b
+            else:
+                base = ((a + b) >> 1) + ((ne - nw) >> 2)
+                dd = dv - dh
+                if dd > t1: pred = a
+                elif dd < -t1: pred = b
+                elif dd > t2: pred = (base + a) >> 1
+                elif dd < -t2: pred = (base + b) >> 1
+                elif dd > t3: pred = (3 * base + a) >> 2
+                elif dd < -t3: pred = (3 * base + b) >> 2
+                else: pred = base
+            db = 0
+            ebias = dh + dv + 2 * abs(e_left)
+            while db < 10 and ebias >= tbias[db]:
+                db += 1
+            tex = ((a >= pred) | ((b >= pred) << 1) | ((nw >= pred) << 2)
+                   | ((ne >= pred) << 3) | ((ww >= pred) << 4) | ((nn >= pred) << 5))
+            kb = db * 64 + tex
+            ck = Cc[kb]
+            if ck <= 0: corr = 0
+            elif Bb[kb] >= 0: corr = (Bb[kb] + ck // 2) // ck
+            else: corr = -(((-Bb[kb]) + ck // 2) // ck)
+            ebin = 0
+            en = dh + dv
+            while ebin < 11 and en >= tent[ebin]:
+                ebin += 1
+            f = freq[ebin]
+            if encode:
+                e = int(img[y, x]) - pred
+                u = _cx._zigzag(e - corr)
+                k = u.bit_length()
+                cum = sum(f[:k])
+                ac.encode(cum, f[k], tot[ebin])
+                if k >= 2:
+                    ac.encode_bits(u & ((1 << (k - 1)) - 1), k - 1)
+            else:
+                target = ac.decode_target(tot[ebin])
+                cum = 0
+                k = 0
+                while cum + f[k] <= target:
+                    cum += f[k]
+                    k += 1
+                ac.update(cum, f[k], tot[ebin])
+                if k == 0: u = 0
+                elif k == 1: u = 1
+                else: u = (1 << (k - 1)) | ac.decode_bits(k - 1)
+                e = _cx._unzigzag(u) + corr
+                img[y, x] = e + pred
+            f[k] += INCR
+            tot[ebin] += INCR
+            if tot[ebin] >= RESCALE:
+                s = 0
+                for j in range(NB):
+                    f[j] = (f[j] + 1) >> 1
+                    s += f[j]
+                tot[ebin] = s
+            Bb[kb] += e
+            Cc[kb] += 1
+            if Cc[kb] >= 256:
+                Bb[kb] >>= 1
+                Cc[kb] >>= 1
+            e_left = e
+    if encode:
+        ac.finish()
+        return ac.getvalue()
+    return img.astype(np.int32)
+
+
+def calic_full_encode(plane, scale):
+    """Full CALIC codec (predict + bias + energy-conditional coding) -> bytes."""
+    nat = _get_native()
+    if nat:
+        return nat.calic_codec_encode(plane, scale)
+    return _calic_codec_py(plane, scale, encode=True)
+
+
+def calic_full_decode(blob, H, W, scale):
+    """Invert ``calic_full_encode`` -> int32 plane of shape (H, W)."""
+    nat = _get_native()
+    if nat:
+        return nat.calic_codec_decode(blob, H, W, scale)
+    return _calic_codec_py(blob, scale, H=H, W=W, encode=False)
+
+
 _PREDICT = {"med": med_predict, "paeth": paeth_predict}
 
 

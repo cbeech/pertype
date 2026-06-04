@@ -169,9 +169,18 @@ temporal redundancy, which is usually the dominant source of compressibility.
       ~20/24 Bayer and ~14/18 RGB planes; full-frame **Bayer 2.17 → 2.20×, RGB
       2.57 → 2.62×** (+1.6% / +2.0%; the 704-context-no-wrap fix turned an earlier
       Bayer regression into a gain). Decode ~5 s/frame (sequential). 91 tests green.
-      Follow-up: a native Paeth reconstruct if Paeth is ever re-enabled; CALIC-style
-      context-conditional *entropy* coding (bin the arithmetic coder on the error
-      energy) is the next lever beyond bias correction.
+      Follow-up: a native Paeth reconstruct if Paeth is ever re-enabled.
+- [x] **Context-conditional entropy coding** — the CALIC option is now a full
+      integrated codec (`calic_codec` in C; byte-identical pure-Python fallback):
+      predict + bias + a magnitude-bucket arithmetic model **selected by the local
+      gradient energy** (dh+dv quantised to 12 bins) instead of ctxcoder's scan-order
+      order-2 context. Since the energy is read from reconstructed neighbours, coding
+      is interleaved with the prediction loop (one pass, encode & decode share it).
+      Measured +2.6% (Bayer) / +1.25% (RGB) on the residual *coding* vs order-2
+      ctxcoder; net full-frame **Bayer 2.20 → 2.22×, RGB 2.62 → 2.64×** (+0.6/+0.7% —
+      smaller end-to-end because on big frames ctxcoder's order-2 has plenty of data
+      to adapt, so the energy context adds less). 91 tests green. Full image arc from
+      plain MED: Bayer 2.12 → 2.22×, RGB 2.57 → 2.64×.
 - [x] **block motion compensation** prototyped (`scripts/video_mc_benchmark.py`):
       16×16 blocks, ±8 SAD search of the previous frame, (MV + residual) coded by
       `ctxcoder`. Converts the frame-delta motion losses into wins/ties vs

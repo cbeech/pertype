@@ -106,11 +106,14 @@ def encode(img, bayer=True):
         raise ValueError("image must be 2D (gray/Bayer) or 3D HxWx3 (RGB)")
 
     scale = _scale(itemsize)
-    parts = []                                  # (selector, ctxcoder blob) per plane
+    parts = []                                  # (selector, blob) per plane
     for p in _split(img.astype(np.int32), mode):
         best = None
         for code, kind in _PREDICTORS:
-            blob = ctxcoder.encode(predictors.forward(p, kind, scale).reshape(-1))
+            if kind == "calic":                 # integrated predict+bias+energy coder
+                blob = predictors.calic_full_encode(p, scale)
+            else:                               # predict -> order-2 ctxcoder
+                blob = ctxcoder.encode(predictors.forward(p, kind, scale).reshape(-1))
             if best is None or len(blob) < len(best[1]):
                 best = (code, blob)
         parts.append(best)
@@ -155,8 +158,12 @@ def decode(blob):
         pos += 4
         chunk = blob[pos:pos + n]
         pos += n
-        res = np.asarray(ctxcoder.decode(chunk, tmpl.size), dtype=np.int32).reshape(tmpl.shape)
-        planes.append(predictors.reconstruct(res, _KIND[code], scale))
+        kind = _KIND[code]
+        if kind == "calic":
+            planes.append(predictors.calic_full_decode(chunk, tmpl.shape[0], tmpl.shape[1], scale))
+        else:
+            res = np.asarray(ctxcoder.decode(chunk, tmpl.size), dtype=np.int32).reshape(tmpl.shape)
+            planes.append(predictors.reconstruct(res, kind, scale))
 
     arr = _merge(planes, mode, H, W)
     dtype = "<u2" if itemsize == 2 else np.uint8
