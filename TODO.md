@@ -318,17 +318,26 @@ Still high-value untested, in rough priority:
       numericness + row ordering — not blanket delta. Open: add it as a transform
       (needs row/col structure, which the byte-stream transform layer doesn't carry —
       likely a small CSV-aware front-end). Parquet/ORC, RLE, dictionary next.
-- [~] **Scientific / medical images** — tested on **real** public data
-      (`scripts/scientific_image_benchmark.py`; pydicom test CT/MR + NASA FITS):
-        * **DICOM 16-bit medical (CT/MR)** through the gray mode: **4.47× vs PNG-16
-          3.33×, xz 2.78×** (+34% over PNG) — a clear win; dense continuous-tone tissue
-          is the predictor's domain.
-        * **FITS int16 astronomy**: **loses** (xz 5.01× vs ours 1.86×) — the image is a
-          mostly-zero sky background, which LZ run-length-crushes but a prediction-only
-          codec can't (same boundary as graphics). Honest.
+- [x] **Scientific / medical images** — tested on **real** public data
+      (`scripts/scientific_image_benchmark.py`; pydicom test CT/MR + NASA FITS), both
+      **wins** once the codec handles them right (signed int16 + data-driven scale):
+        * **DICOM 16-bit medical (CT/MR)**: **4.79× vs PNG-16 3.33×, xz 2.78×** (+44%).
+        * **FITS int16 astronomy**: **5.54× vs xz 5.01×, PNG 3.94×** — a win. (An earlier
+          1.86× "loss" was a measurement bug: viewing signed int16 as uint16 wrapped
+          negatives into huge jumps that wrecked prediction; with correct signed +
+          endian handling it beats everything.)
         * **FITS float32**: ~1.2× for everyone (near the entropy floor), like float64.
-      Open: 3D DICOM/FITS volumes (inter-slice delta), an LZ pre-pass for sparse
-      astronomy, HDF5, hyperspectral (de-interleave bands + delta).
+- [x] **LZ pre-pass + data-driven scale + 3D inter-slice delta** (imagecodec v4):
+        * **RLE coder** (selector 4) added to the per-plane choice — the LZ-style pass
+          for sparse / mask / label planes (large constant regions): auto-wins where a
+          predictor can't (127× on a 99.5%-zero image, beats CALIC on binary masks),
+          while CALIC keeps dense planes. No regression (selection picks the smallest).
+        * **Data-driven scale** — the GAP/CALIC gradient threshold scale is now chosen
+          per plane from its value range (candidates tried, best stored), so low-range
+          16-bit (+9% on FITS) and the small inter-slice deltas get tracked thresholds.
+        * **3D volumes** — `encode_volume`/`decode_volume`: slice 0 direct, later slices
+          as inter-slice deltas. **+31%** over per-slice on a correlated volume. 94 tests.
+      Open: HDF5, hyperspectral (de-interleave bands + delta); a CSV transpose front-end.
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive

@@ -70,24 +70,24 @@ def read_fits(path):
         return bp, None
     dt = {8: ">u1", 16: ">i2", 32: ">i4", -32: ">f4", -64: ">f8"}[bp]
     n = int(np.prod(dims))
-    return bp, np.frombuffer(raw[off:off + n * abs(bp) // 8], dt).reshape(dims[::-1])
-
-
-def as_u16(a):
-    a = np.ascontiguousarray(a)
-    return a.view(np.uint16) if a.dtype == np.int16 else a.astype(np.uint16)
+    a = np.frombuffer(raw[off:off + n * abs(bp) // 8], dt).reshape(dims[::-1])
+    # FITS is big-endian; work in native byte order so the codec's little-endian
+    # output round-trips byte-exact.
+    return bp, np.ascontiguousarray(a.astype(a.dtype.newbyteorder("=")))
 
 
 def bench_gray(name, planes):
     raw = ours = png = z = x = 0
     ok = True
     for a in planes:
-        u = as_u16(a)
-        e = imagecodec.encode(u, bayer=False)
-        if not np.array_equal(imagecodec.decode(e), u):
+        a = np.ascontiguousarray(a)               # pass signed int16 AS-IS (the codec
+        e = imagecodec.encode(a, bayer=False)     # handles sign; viewing as uint16 would
+        dec = imagecodec.decode(e)                # wrap negatives and wreck prediction)
+        if not np.array_equal(dec.view(a.dtype), a):
             ok = False
-        rb = u.tobytes()
-        raw += len(rb); ours += len(e); png += png16(u)
+        rb = a.tobytes()
+        raw += len(rb); ours += len(e)
+        png += png16(a.view(np.uint16) if a.dtype == np.int16 else a)
         z += sh(["zstd", "-19", "-c"], rb); x += sh(["xz", "-9", "-c"], rb)
     best = min(png, z, x, ours)
     print(f"\n{name}: {len(planes)} images, {raw:,} B  (round-trip {ok})")

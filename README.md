@@ -41,8 +41,9 @@ audio codec, and a motion-compensated video codec — extends across domains.
 |--|--|--|
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
-| **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.47× vs PNG-16 3.33×, xz 2.78×** (+34% over PNG) — dense continuous-tone is the predictor's domain |
-| **astronomy (FITS)** | NASA 16-bit / float32 | sparse zero-background → **LZ wins** (xz 5.01× vs ours 1.86×); float is near the floor (~1.2× for all) — honest predict-vs-LZ boundary |
+| **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.79× vs PNG-16 3.33×, xz 2.78×** (+44% over PNG) — dense continuous-tone is the predictor's domain |
+| **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
+| **sparse / volumes** | masks, CT/MR/FITS stacks | an **RLE coder** wins on sparse/label data (auto-selected); **3D inter-slice delta** adds +31% on correlated volumes |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
@@ -112,7 +113,7 @@ every file.
 | `compressor/ctxcoder.py` | context-adaptive arithmetic residual coder (beats xz on ECG) |
 | `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
 | `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
-| `compressor/imagecodec.py` | lossless raw/photo image codec: MED/GAP/CALIC, beats Canon & PNG (numpy) |
+| `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` |
@@ -353,12 +354,17 @@ gradient energy rather than scan-order history). CALIC wins most planes:
 * **RGB photo** — a reversible green-subtract colour transform (G, R−G, B−G) decorrelates
   the channels, then predict per plane. 8 full-frame demosaiced photos (507 MB): **2.64×**
   vs PNG 2.33×, xz 1.88× (beats PNG by +13%, xz +40%).
-* **gray** — a single predicted plane. On **real DICOM CT/MR** (16-bit medical) it
-  reaches **4.47×** vs PNG-16 3.33×, xz 2.78× (+34% over PNG) — dense continuous-tone
-  medical imaging is squarely the predictor's domain. The flip side, on real data:
-  **sparse astronomy FITS** (a mostly-zero sky background) goes the other way — xz
-  5.01× vs ours 1.86×, because LZ run-length-crushes the exact-zero runs a
-  prediction-only codec can't, the same boundary as graphics. (`scripts/scientific_image_benchmark.py`.)
+* **gray** — a single predicted plane, with a per-plane choice of MED / **CALIC** /
+  **RLE** and a data-driven threshold scale (so 8-bit, 12/16-bit, and small deltas all
+  track). On **real DICOM CT/MR** it reaches **4.79×** (PNG-16 3.33×, xz 2.78×; +44%
+  over PNG) and on **real FITS int16 astronomy 5.54×** (PNG 3.94×, xz 5.01×) — both
+  beat everything. The **RLE** coder is the LZ-style pre-pass: it auto-wins on sparse /
+  label / mask planes (large constant regions, e.g. 127× on a 99.5%-zero image) that a
+  pure predictor can't beat, while CALIC keeps the dense continuous-tone planes. Signed
+  int16 (CT/FITS often go negative) is handled correctly. (`scripts/scientific_image_benchmark.py`.)
+* **volume** — a stack of slices (`encode_volume`): slice 0 direct, each later slice
+  as its **inter-slice delta** from the previous one. Adjacent CT/MR/FITS slices are
+  highly redundant, so this adds **+31%** over coding each slice independently.
 
 The MED/GAP paths use a native reconstruction (~2 s enc / ~3 s dec per 21-MP frame);
 CALIC's predict+bias+code loop is sequential (native, ~3 s dec). Exposed on the CLI as
