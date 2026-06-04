@@ -515,17 +515,26 @@ coder per set:
 | power Voltage (smooth) | 3.55× | 4.60× | **4.90×** | identity |
 | power G_active (jumpy) | 4.00× | 5.16× | **5.32×** | identity |
 | synthetic random-walk  | 1.11× | 1.28× | **1.30×** | xor8 + split8 |
+| synthetic 2-freq sine  | 1.05× | 1.15× | **1.30×** | split8 |
+| synthetic ramp + noise | 1.60× | 1.60× | **1.80×** | xor8 + split8 |
 
-We **beat xz and zstd on all three**. On the real columns our trained LZ + ctxcoder
-already wins on the raw bytes (identity selected — the full-precision mantissa is
-noisy, so XOR-delta doesn't help there); the XOR-delta transform is auto-selected and
-contributes on genuinely smooth data (the synthetic walk). Honest caveat: that walk is
-near the entropy floor (~1.3× for anyone — irrational-value mantissas are high-entropy),
-so the headline is that **float64 is now a handled type we win on**, not that smooth
-float is suddenly compressible. The tempting "detect fixed-precision → scaled int"
-shortcut still isn't lossless (`4.216` has no exact float64); a fuller **FCM/DFCM value
-predictor** (predict each value from context, XOR with the prediction) is the next
-lever if we want to push past general LZ further.
+We **beat xz and zstd on all of them**. Two float predictors are in the repertoire:
+the cheap **Gorilla XOR-delta** (`xor`) and a full **FCM/DFCM value predictor** (`fcm`)
+— FPC-style: an FCM table predicts the next value from a hash of recent values, a DFCM
+table predicts the next *difference*, and per value we XOR with whichever leaves more
+leading-zero bytes (a 1-byte selector + byte-plane-split residuals the LZ + ctxcoder
+then crush). The proxy-selection gate picks whichever wins, per type. FCM/DFCM is
+**auto-selected and dominant where value-structure is strong** — on a pure linear ramp
+it crushes the data ~75× over raw bytes (DFCM nails the constant difference), and it
+wins on a clean single-frequency sine. On the noisier/larger-magnitude real columns and
+the chunked benchmark above, the gate prefers the simpler transforms (per-file 4096-value
+chunks limit how much the predictor learns, and bit-level diff prediction weakens across
+varying float exponents) — and it never regresses, since the gate keeps the best. Honest
+caveat: smooth float64 is near the entropy floor (~1.3× for anyone — irrational-value
+mantissas are high-entropy), so the headline is **float64 is a handled type we win on**,
+with a real value predictor that shines on structured series (sensor ramps, periodic
+simulation output). The "detect fixed-precision → scaled int" shortcut still isn't
+lossless (`4.216` has no exact float64).
 
 ## Lossless video — the temporal-delta hypothesis
 
@@ -725,9 +734,10 @@ The honest open frontier (full list in `TODO.md`):
   it is the diffuse sum of zstd's mature, integrated parser+coder, won't-fix short of
   reimplementing its sequence coder wholesale. (A deeper hash-chain search recovers
   ~1 KB more on its own, to ~4% behind, at a real speed cost.)
-- **More transforms** — a 2D MED/Paeth intra predictor (shared image + video). Float
-  is now handled by a Gorilla XOR-delta transform (beats xz/zstd on real float64); an
-  **FCM/DFCM value predictor** is the next lever to push smooth float past general LZ.
+- **More transforms** — a 2D MED/Paeth intra predictor (shared image + video). Float is
+  now handled by Gorilla XOR-delta **and** an FCM/DFCM value predictor (both beat
+  xz/zstd on float64; FCM/DFCM dominates structured series). A native C port of the FCM
+  predictor would remove its pure-Python training-time cost.
 - **Distribution** — an optional Rust port (single crate, `rayon` block
   parallelism) once the goal shifts from research to shipping a library.
 

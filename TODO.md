@@ -224,8 +224,17 @@ Still high-value untested, in rough priority:
       On the real columns identity wins (full-precision mantissa is noisy); XOR-delta
       helps on genuinely smooth data. Honest: smooth float64 is ~1.3x near the entropy
       floor for anyone, so this is "we win on float now," not "smooth float compresses."
-      Next lever if wanted: an **FCM/DFCM value predictor** (predict each value from
-      context, XOR with the prediction) to push past general LZ further.
+- [x] **FCM/DFCM value predictor** — added the `fcm` transform op (FPC-style: FCM table
+      predicts the next value from a hash of recent values, DFCM predicts the next diff;
+      XOR with the better predictor, 1-byte selector + byte-plane-split residuals). Exact
+      round-trip incl. odd lengths; auto-selected by the gate where value-structure is
+      strong — pure linear ramp ~75x over raw (DFCM nails the constant diff), single-freq
+      sine wins. On noisier/larger-magnitude data the gate keeps the simpler transforms
+      (chunked 4096-value files limit learning; bit-diff prediction weakens across float
+      exponents), never regressing. select() ranks the O(n) pure-Python fcm against the
+      incumbent on a 256 KB sample so it doesn't tax non-float training (real json/logs/
+      html still pick identity). Open: a **native C port of fcm** to remove the
+      training-time cost; possibly a per-file predictor-state carry to help small chunks.
 - [x] **Seismic** (`scripts/seismic_benchmark.py`) — real broadband waveforms (int
       ADC counts from IRIS; 2010 Chile M8.8 at ANMO + a quiet window, round-trip
       verified). Prediction **crushes** xz: 6.60× / 7.36× vs xz 2.29× / 3.73× — beats

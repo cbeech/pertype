@@ -96,6 +96,97 @@ def _xor_invert(data, stride):
         return _xor_invert_py(data, stride)
 
 
+# FCM/DFCM value prediction for float64 (FPC, Burtscher & Ratanaworabhan). Two
+# context predictors run in lockstep on encode and decode:
+#   * FCM   predicts the next value from a table indexed by a hash of recent values
+#           (learns recurring values / sequences);
+#   * DFCM  predicts the next *difference* the same way (learns recurring deltas:
+#           linear ramps, periodic signals).
+# Per value we XOR the true bits with the better prediction (more leading-zero
+# bytes) and emit a 1-byte selector + the residual. A good prediction leaves the
+# high (sign/exponent) bytes zero; byte-plane-splitting the residuals clusters
+# those zeros into long runs the LZ + ctxcoder stages then crush. The predictors
+# are causal, so decode reconstructs each value then updates its tables identically.
+_U64 = 0xFFFFFFFFFFFFFFFF
+
+
+def _lead_zero_bytes(r):
+    """Number of zero high bytes of a 64-bit value (little-endian: bytes 7..0)."""
+    if r == 0:
+        return 8
+    c = 0
+    for p in range(7, -1, -1):
+        if (r >> (8 * p)) & 0xFF:
+            break
+        c += 1
+    return c
+
+
+def _fcm_apply(data, bits):
+    n = len(data)
+    nval = n // 8
+    rem = n % 8
+    mask = (1 << bits) - 1
+    fcm = [0] * (1 << bits)
+    dfcm = [0] * (1 << bits)
+    fh = dh = last = 0
+    mv = memoryview(data)
+    sel = bytearray(nval)
+    res = [0] * nval
+    for i in range(nval):
+        v = int.from_bytes(mv[i * 8:i * 8 + 8], "little")
+        pf = fcm[fh]
+        pd = (last + dfcm[dh]) & _U64
+        rf = v ^ pf
+        rd = v ^ pd
+        if _lead_zero_bytes(rd) > _lead_zero_bytes(rf):
+            sel[i] = 1
+            res[i] = rd
+        else:
+            res[i] = rf
+        fcm[fh] = v
+        diff = (v - last) & _U64
+        dfcm[dh] = diff
+        fh = ((fh << 6) ^ (v >> 48)) & mask
+        dh = ((dh << 2) ^ (diff >> 40)) & mask
+        last = v
+    # byte-plane layout: plane p holds byte p of every residual (high planes ~zero)
+    planes = bytearray(8 * nval)
+    for i in range(nval):
+        r = res[i]
+        for p in range(8):
+            planes[p * nval + i] = (r >> (8 * p)) & 0xFF
+    return bytes(sel) + bytes(planes) + bytes(mv[nval * 8:])
+
+
+def _fcm_invert(data, bits):
+    L = len(data)
+    nval = L // 9          # L = nval (selectors) + 8*nval (planes) + rem, rem < 8 < 9
+    mask = (1 << bits) - 1
+    fcm = [0] * (1 << bits)
+    dfcm = [0] * (1 << bits)
+    fh = dh = last = 0
+    sel = data[:nval]
+    planes = data[nval:nval + 8 * nval]
+    trailing = data[nval + 8 * nval:]
+    out = bytearray(8 * nval)
+    for i in range(nval):
+        r = 0
+        for p in range(8):
+            r |= planes[p * nval + i] << (8 * p)
+        pf = fcm[fh]
+        pd = (last + dfcm[dh]) & _U64
+        v = (r ^ (pd if sel[i] else pf)) & _U64
+        out[i * 8:i * 8 + 8] = v.to_bytes(8, "little")
+        fcm[fh] = v
+        diff = (v - last) & _U64
+        dfcm[dh] = diff
+        fh = ((fh << 6) ^ (v >> 48)) & mask
+        dh = ((dh << 2) ^ (diff >> 40)) & mask
+        last = v
+    return bytes(out) + bytes(trailing)
+
+
 def _split_apply(data, n):
     # Deinterleave into n byte-planes (positions 0,n,2n.. then 1,n+1.. etc.).
     return b"".join(bytes(data[i::n]) for i in range(n))
@@ -116,9 +207,10 @@ _OPS = {
     "delta": (_delta_apply, _delta_invert),
     "split": (_split_apply, _split_invert),
     "xor": (_xor_apply, _xor_invert),
+    "fcm": (_fcm_apply, _fcm_invert),
 }
-_CODE = {"delta": 0, "split": 1, "xor": 2}
-_NAME = {0: "delta", 1: "split", 2: "xor"}
+_CODE = {"delta": 0, "split": 1, "xor": 2, "fcm": 3}
+_NAME = {0: "delta", 1: "split", 2: "xor", 3: "fcm"}
 
 # Candidate pipelines the training gate tries (a spec is a tuple of (op, arg)).
 # Spans text (none), 8-bit and 16-bit numeric/image, channel layouts, and — via
@@ -137,6 +229,7 @@ TRANSFORM_SPECS = (
     (("xor", 8), ("split", 8)),
     (("split", 8),),
     (("xor", 4), ("split", 4)),
+    (("fcm", 16),),
 )
 
 
@@ -152,21 +245,49 @@ def invert(data, spec):
     return data
 
 
+# The FCM/DFCM predictor is O(n) pure-Python, so ranking it on the full proxy blob
+# would tax every type's training (even text/audio, where it never wins). Rank it on
+# a smaller sample instead and compare by bytes-out-per-byte-in, so the comparison
+# stays fair across the different sample sizes.
+_SLOW_OPS = {"fcm"}
+_SLOW_CAP = 1 << 18
+
+
 def select(samples, cap=1 << 21):
     """Pick the transform that most shrinks the data under a fast zlib proxy.
 
     zlib measures decorrelation cheaply; the spec that helps it helps our coder
-    too (less residual entropy). Returns the best spec (``()`` = identity)."""
+    too (less residual entropy). Returns the best spec (``()`` = identity).
+
+    Cheap specs are ranked on the full proxy blob by compressed size (unchanged).
+    The O(n) pure-Python FCM/DFCM specs are then judged against the incumbent on an
+    *identical* smaller sample — fair (same bytes) and fast (FCM never taxes the
+    training of types it can't win, like text/audio)."""
     blob = b"".join(samples)
     if len(blob) > cap:
         blob = blob[:cap]
     if not blob:
         return ()
+
+    def zsize(spec, b):
+        return len(zlib.compress(apply(b, spec), 6))
+
+    cheap = [s for s in TRANSFORM_SPECS if not any(op in _SLOW_OPS for op, _ in s)]
+    slow = [s for s in TRANSFORM_SPECS if any(op in _SLOW_OPS for op, _ in s)]
+
     best_spec, best_size = (), None
-    for spec in TRANSFORM_SPECS:
-        size = len(zlib.compress(apply(blob, spec), 6))
+    for spec in cheap:
+        size = zsize(spec, blob)
         if best_size is None or size < best_size:
             best_spec, best_size = spec, size
+
+    if slow:
+        sample = blob[:_SLOW_CAP]
+        incumbent = zsize(best_spec, sample)   # the current winner on the same sample
+        for spec in slow:
+            size = zsize(spec, sample)
+            if size < incumbent:
+                best_spec, incumbent = spec, size
     return best_spec
 
 

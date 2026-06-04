@@ -38,7 +38,14 @@ def columns(maxrows=600_000):
 
 def synth():
     rng = np.random.default_rng(0)
-    return {"synth random-walk": np.cumsum(rng.standard_normal(400_000)) * 0.01}
+    n = 400_000
+    t = np.arange(n)
+    return {
+        "synth random-walk": np.cumsum(rng.standard_normal(n)) * 0.01,
+        # structured float64 where a value predictor (FCM/DFCM) has real signal:
+        "synth sine": np.sin(t * 0.01) + 0.3 * np.sin(t * 0.071),
+        "synth ramp+noise": t * 1.5 + rng.standard_normal(n) * 0.01,
+    }
 
 
 def chunks(arr):
