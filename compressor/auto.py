@@ -9,23 +9,26 @@ worse than the original and never wrong.
 
 What routes to a specialist today (byte-exact, including the format's non-array
 metadata): **FITS** int16 images and **.npy** 2D/3D integer arrays -> the image codec
-(gray / RGB / inter-slice-delta volume). Everything else — text, already-compressed,
-and formats whose specialist split isn't wired yet (DICOM, WAV, y4m, CR2) — falls back
-to generic deflate or store. The text codec is model-based, so without a shipped model
-``auto`` can't get its trained-dictionary win on arbitrary text; that's the honest
-boundary, reported by ``identify``.
+(gray / RGB / inter-slice-delta volume); **text** -> the CSV/delimited-table columnar
+codec (:mod:`compressor.csvcolumnar`, which itself falls back to deflate when the data
+isn't a regular grid); **opaque binary** -> the fixed-width-record columnar codec
+(:mod:`compressor.columnar`, auto-detecting the record period — wins on LiDAR-style point
+data, stores otherwise). Everything else falls back to generic deflate or store. The
+trained text codec is model-based, so without a shipped model ``auto`` can't get its
+trained-dictionary win on arbitrary prose; that's the honest boundary, reported by
+``identify``.
 """
 import io
 import zlib
 
 import numpy as np
 
-from compressor import imagecodec
+from compressor import columnar, csvcolumnar, imagecodec
 from compressor.detect import identify
 
 AMAGIC = b"AZ"
 AVERSION = 1
-M_STORE, M_ZLIB, M_NPY, M_FITS = 0, 1, 2, 3
+M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL = 0, 1, 2, 3, 4, 5
 
 
 def _wrap(method, payload):
@@ -125,7 +128,8 @@ def _fits_decode(payload):
 
 
 _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
-             M_NPY: _npy_decode, M_FITS: _fits_decode}
+             M_NPY: _npy_decode, M_FITS: _fits_decode,
+             M_CSV: csvcolumnar.decode, M_COL: columnar.decode}
 
 
 def auto_compress(data, name=None):
@@ -139,6 +143,10 @@ def auto_compress(data, name=None):
             payload = builder(data)
             if payload is not None:
                 candidates.append((method, payload))
+    if det.kind.startswith("text"):                # CSV/TSV tables -> columnar transpose
+        candidates.append((M_CSV, csvcolumnar.encode(data)))
+    elif det.codec == "generic":                   # opaque binary -> try record columns
+        candidates.append((M_COL, columnar.encode(data)))
 
     best = None
     for method, payload in candidates:
@@ -162,4 +170,5 @@ def auto_decompress(blob):
 def method_name(blob):
     """Human label of the method used (for reporting)."""
     return {M_STORE: "store", M_ZLIB: "deflate", M_NPY: "npy->imagecodec",
-            M_FITS: "fits->imagecodec"}.get(blob[3], "?")
+            M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
+            M_COL: "binary->columnar"}.get(blob[3], "?")

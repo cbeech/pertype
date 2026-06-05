@@ -21,10 +21,36 @@ def test_store_on_incompressible():
 
 
 def test_deflate_on_text():
-    data = b'{"key": "value", "n": 1}\n' * 200
-    blob = _roundtrip(data, name="x.json")
-    assert auto.method_name(blob) == "deflate"
+    data = (b"The quick brown fox jumps over the lazy dog. " * 40
+            + b"Lorem ipsum dolor sit amet, consectetur. " * 40)   # prose, not a grid
+    blob = _roundtrip(data, name="x.txt")
+    assert auto.method_name(blob) in ("deflate", "csv->columnar")   # compressed, not stored
     assert len(blob) < len(data)
+
+
+def test_csv_routes_to_columnar():
+    rows = ["t;v;n"]
+    v = 1000
+    for i in range(2000):
+        v += (i * 7 % 11) - 5
+        rows.append(f"2024-01-01;{v/100:.2f};{i}")
+    data = ("\n".join(rows) + "\n").encode()
+    blob = _roundtrip(data, name="series.csv")
+    assert auto.method_name(blob) == "csv->columnar"
+    assert len(blob) < len(data) // 3                  # numeric columns crush
+
+
+def test_binary_records_route_to_columnar():
+    rng = np.random.RandomState(7)
+    n = 4000
+    X = np.cumsum(rng.randint(-3, 4, n)).astype("<i4")
+    Y = np.cumsum(rng.randint(-2, 3, n)).astype("<i4")
+    rec = np.empty((n, 8), np.uint8)
+    rec[:, 0:4] = X.view(np.uint8).reshape(n, 4)
+    rec[:, 4:8] = Y.view(np.uint8).reshape(n, 4)
+    blob = _roundtrip(rec.tobytes())                   # opaque binary records
+    assert auto.method_name(blob) == "binary->columnar"
+    assert len(blob) < len(rec.tobytes())
 
 
 def test_npy_2d_int16_routes_to_imagecodec():
