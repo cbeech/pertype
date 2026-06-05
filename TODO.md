@@ -407,6 +407,12 @@ Still high-value untested, in rough priority:
       monotonic or linear-trend columns (GPS time, sequential ids, timestamps): **LiDAR
       4.20× → 4.77× (+14%)** as its coordinate + GPS columns prefer Δ². CSV unchanged (its
       columns aren't ramps). A measured, safe ratio gain across the columnar family.
+- [x] **Value-dictionary path for low-cardinality CSV text columns** — same idea as the float
+      codec: distinct cells (deflated, first-seen order) + a delta-coded index per row, kept
+      only when it beats plain deflate. Wins on slowly-varying categoricals (a Date column:
+      6.1 KB → 1.2 KB), loses on cyclic ones (Time) — keep-smallest handles both. **UCI power
+      CSV 13.4× → 16.3× (+31% over xz).** ctxcoder already handles low-cardinality *integer*
+      columns, so the dictionary path is text-only (measured: it doesn't help int columns).
 - [x] **Wired into `auto`** — `auto_compress` now routes **text → csvcolumnar** (CSV/TSV
       transpose, deflate fallback) and **opaque binary → columnar** (auto record-period
       detection), verify-byte-exact + keep-smallest like the other routes. Measured: power CSV

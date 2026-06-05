@@ -92,32 +92,70 @@ def _parse_numeric(col):
     return ndec, vals
 
 
-def _encode_col(col, delim):
-    """Smallest of numeric (scaled-int delta) or text (deflate) coding for one column."""
-    text = zlib.compress(delim.join(col), 9)
-    text_blk = bytes([0]) + _u(len(text), 4) + text
-
-    parsed = _parse_numeric(col)
-    if parsed is None:
-        return text_blk
-    ndec, vals = parsed
-    d = vals.copy()
-    d[1:] = vals[1:] - vals[:-1]
+def _code_idx(idx):
+    """Smallest of raw / delta / Δ² of an int index field under ctxcoder; (sel, blob)."""
+    d = idx.copy()
+    d[1:] = idx[1:] - idx[:-1]
     dd = d.copy()
     dd[1:] = d[1:] - d[:-1]
-    sel, blob = min(((0, ctxcoder.encode(vals)), (1, ctxcoder.encode(d)),
-                     (2, ctxcoder.encode(dd))), key=lambda c: len(c[1]))
-    num_blk = bytes([1, ndec, sel]) + _u(len(blob), 4) + blob
-    return num_blk if len(num_blk) < len(text_blk) else text_blk
+    return min(((0, ctxcoder.encode(idx)), (1, ctxcoder.encode(d)),
+               (2, ctxcoder.encode(dd))), key=lambda c: len(c[1]))
+
+
+def _text_dict_block(col, delim):
+    """Dictionary path for a text column: distinct cells (deflated, first-seen order) +
+    a delta-coded index per row. Wins on low-cardinality, slowly-varying columns (dates,
+    labels) that deflate handles poorly. Returns the block, or None if not worthwhile."""
+    seen = {}
+    distinct = []
+    inv = np.empty(len(col), np.int64)
+    for i, c in enumerate(col):
+        j = seen.get(c)
+        if j is None:
+            j = len(distinct); seen[c] = j; distinct.append(c)
+        inv[i] = j
+    if len(distinct) >= len(col):                       # no repetition -> nothing to gain
+        return None
+    dz = zlib.compress(delim.join(distinct), 9)
+    sel, iblob = _code_idx(inv)
+    return (bytes([2]) + _u(len(distinct), 4) + _u(len(dz), 4) + dz
+            + bytes([sel]) + _u(len(iblob), 4) + iblob)
+
+
+def _encode_col(col, delim):
+    """Smallest of: text-deflate, text-dictionary, or numeric (scaled-int delta) coding."""
+    text = zlib.compress(delim.join(col), 9)
+    cands = [bytes([0]) + _u(len(text), 4) + text]
+
+    dict_blk = _text_dict_block(col, delim)
+    if dict_blk is not None:
+        cands.append(dict_blk)
+
+    parsed = _parse_numeric(col)
+    if parsed is not None:
+        ndec, vals = parsed
+        sel, blob = _code_idx(vals)
+        cands.append(bytes([1, ndec, sel]) + _u(len(blob), 4) + blob)
+
+    return min(cands, key=len)
 
 
 def _decode_col(blob, p, n, delim):
     kind = blob[p]; p += 1
-    if kind == 0:
+    if kind == 0:                                     # text: deflated cells
         ln, p = _ru(blob, p, 4)
-        cells = zlib.decompress(blob[p:p + ln]).split(delim)
-        return cells, p + ln
-    ndec = blob[p]; sel = blob[p + 1]; p += 2
+        return zlib.decompress(blob[p:p + ln]).split(delim), p + ln
+    if kind == 2:                                     # text: dictionary + index
+        nu, p = _ru(blob, p, 4)
+        dl, p = _ru(blob, p, 4)
+        distinct = zlib.decompress(blob[p:p + dl]).split(delim); p += dl
+        sel = blob[p]; p += 1
+        il, p = _ru(blob, p, 4)
+        idx = np.asarray(ctxcoder.decode(blob[p:p + il], n), np.int64)
+        for _ in range(sel):
+            idx = np.cumsum(idx)
+        return [distinct[int(i)] for i in idx], p + il
+    ndec = blob[p]; sel = blob[p + 1]; p += 2          # numeric: scaled-int delta
     ln, p = _ru(blob, p, 4)
     vals = np.asarray(ctxcoder.decode(blob[p:p + ln], n), np.int64)
     for _ in range(sel):                              # 0/1/2 cumulative sums undo raw/delta/Δ²
