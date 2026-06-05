@@ -398,11 +398,26 @@ Still high-value untested, in rough priority:
       it never expands. Caller passes an exact schema (LAS from its header) or a width to
       search uniform tilings, or neither to auto-detect the record period (byte
       autocorrelation). CLI `columnar-{encode,decode}`; 6 round-trip tests. The LiDAR
-      benchmark now runs through it (4.20×). Honest: **`sao` stays a boundary** — the codec
+      benchmark now runs through it. Honest: **`sao` stays a boundary** — the codec
       correctly detects its 28-byte records and aligns at offset 0, but the star catalog's
       float fields aren't sorted so columns don't delta-compress (1.26× vs xz 1.64×); not all
-      record data is columnar-friendly. Open follow-on: CSV/delimited text (a different
-      parser), and auto-wiring whole files (needs leading-offset detection for headered formats).
+      record data is columnar-friendly.
+- [x] **Second-difference (Δ²) per-column coding** — both columnar codecs now try raw /
+      delta / **double-delta** and keep the smallest (so it never regresses). Δ² wins on
+      monotonic or linear-trend columns (GPS time, sequential ids, timestamps): **LiDAR
+      4.20× → 4.77× (+14%)** as its coordinate + GPS columns prefer Δ². CSV unchanged (its
+      columns aren't ramps). A measured, safe ratio gain across the columnar family.
+- [x] **Wired into `auto`** — `auto_compress` now routes **text → csvcolumnar** (CSV/TSV
+      transpose, deflate fallback) and **opaque binary → columnar** (auto record-period
+      detection), verify-byte-exact + keep-smallest like the other routes. Measured: power CSV
+      → csv 11.9×, LiDAR point region → binary-columnar 4.0× (schema-free). New `.az` methods
+      M_CSV / M_COL. Open: leading-offset detection so whole headered files (e.g. a full .las)
+      auto-route too.
+- [x] **Climate / weather float grids (HDF5)** — `scripts/weather_benchmark.py` (also closes
+      the open HDF5-reading item via h5py). NCEP reanalysis float32 (366×73×144): **boundary**
+      — smooth float32 compresses for everyone (xz 3.20×), our float decorrelators don't beat
+      it (1.65×), and values don't map losslessly to scaled ints (float32 rounding). Like FITS
+      float32. Lossless float beyond xz needs a dedicated float predictor (open).
         * **Protein (FASTA AA, `scripts/protein_benchmark.py`)** — *boundary*, completing the
           alphabet story: a ~20-symbol near-i.i.d. source (~4.15 bits/residue, no order-1/2
           gain). Order-0 entropy coding *beats* the LZ tools (xz 4.60 bpr) since there's no

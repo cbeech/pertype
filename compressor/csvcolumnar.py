@@ -101,11 +101,12 @@ def _encode_col(col, delim):
     if parsed is None:
         return text_blk
     ndec, vals = parsed
-    raw = ctxcoder.encode(vals)
     d = vals.copy()
     d[1:] = vals[1:] - vals[:-1]
-    delta = ctxcoder.encode(d)
-    sel, blob = (1, delta) if len(delta) < len(raw) else (0, raw)
+    dd = d.copy()
+    dd[1:] = d[1:] - d[:-1]
+    sel, blob = min(((0, ctxcoder.encode(vals)), (1, ctxcoder.encode(d)),
+                     (2, ctxcoder.encode(dd))), key=lambda c: len(c[1]))
     num_blk = bytes([1, ndec, sel]) + _u(len(blob), 4) + blob
     return num_blk if len(num_blk) < len(text_blk) else text_blk
 
@@ -119,7 +120,7 @@ def _decode_col(blob, p, n, delim):
     ndec = blob[p]; sel = blob[p + 1]; p += 2
     ln, p = _ru(blob, p, 4)
     vals = np.asarray(ctxcoder.decode(blob[p:p + ln], n), np.int64)
-    if sel:
+    for _ in range(sel):                              # 0/1/2 cumulative sums undo raw/delta/Δ²
         vals = np.cumsum(vals)
     return [_fmt(int(v), ndec).encode("ascii") for v in vals], p + ln
 

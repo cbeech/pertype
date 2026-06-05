@@ -55,12 +55,15 @@ def _interleave(cols, n, schema):
 
 
 def _code_col(col):
-    """Smaller of raw vs first-difference under ctxcoder. Returns (selector, blob)."""
-    raw = ctxcoder.encode(col)
+    """Smallest of raw / first-difference / second-difference under ctxcoder. Second
+    difference wins on monotonic or linear-trend columns (GPS time, sequential ids).
+    Returns (selector 0/1/2, blob)."""
     d = col.copy()
     d[1:] = col[1:] - col[:-1]
-    delta = ctxcoder.encode(d)
-    return (1, delta) if len(delta) < len(raw) else (0, raw)
+    dd = d.copy()
+    dd[1:] = d[1:] - d[:-1]
+    cands = [(0, ctxcoder.encode(col)), (1, ctxcoder.encode(d)), (2, ctxcoder.encode(dd))]
+    return min(cands, key=lambda c: len(c[1]))
 
 
 # --- container framing --------------------------------------------------------
@@ -135,7 +138,9 @@ def decode(blob):
         sel = blob[p]; p += 1
         ln, p = _ru(blob, p, 4)
         vals = np.asarray(ctxcoder.decode(blob[p:p + ln], n), np.int64); p += ln
-        cols.append(np.cumsum(vals) if sel else vals)
+        for _ in range(sel):                          # 0/1/2 cumulative sums undo raw/delta/Δ²
+            vals = np.cumsum(vals)
+        cols.append(vals)
     return _interleave(cols, n, schema) + trailing
 
 
