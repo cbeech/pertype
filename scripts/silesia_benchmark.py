@@ -69,14 +69,22 @@ def run_special(d):
           f"{s['xz']/1e6:>7.1f}M{s['zstd']/1e6:>7.1f}M{len(blob)/1e6:>8.1f}M"
           f"{'WIN' if len(blob) < min(s.values()) else 'lose':>8}")
 
-    # sao / x-ray -> numeric context coder
-    for f, role in (("sao", "float records->numeric"), ("x-ray", "16-bit image->numeric")):
-        raw = open(os.path.join(d, f), "rb").read()
-        s = std_tools(raw)
-        ours, tag = numeric_ours(raw)
-        print(f"{f:<10}{role:<22}{len(raw)/1e6:>8.1f}M{s['gzip']/1e6:>7.1f}M"
-              f"{s['xz']/1e6:>7.1f}M{s['zstd']/1e6:>7.1f}M{ours/1e6:>8.1f}M"
-              f"{('WIN' if ours < min(s.values()) else 'lose')+'/'+tag:>8}")
+    # sao -> columnar record codec (28-byte records); x-ray -> numeric delta+ctx
+    from compressor import columnar
+    sao = open(os.path.join(d, "sao"), "rb").read()
+    s = std_tools(sao)
+    cb = columnar.encode(sao)                       # auto-detects the 28-byte period
+    assert columnar.decode(cb) == sao, "sao round-trip FAILED"
+    ours = len(cb)
+    print(f"{'sao':<10}{'records->columnar':<22}{len(sao)/1e6:>8.1f}M{s['gzip']/1e6:>7.1f}M"
+          f"{s['xz']/1e6:>7.1f}M{s['zstd']/1e6:>7.1f}M{ours/1e6:>8.1f}M"
+          f"{('WIN' if ours < min(s.values()) else 'lose'):>8}")
+    raw = open(os.path.join(d, "x-ray"), "rb").read()
+    s = std_tools(raw)
+    ours, tag = numeric_ours(raw)
+    print(f"{'x-ray':<10}{'16-bit image->numeric':<22}{len(raw)/1e6:>8.1f}M{s['gzip']/1e6:>7.1f}M"
+          f"{s['xz']/1e6:>7.1f}M{s['zstd']/1e6:>7.1f}M{ours/1e6:>8.1f}M"
+          f"{('WIN' if ours < min(s.values()) else 'lose')+'/'+tag:>8}")
 
     # binaries -> reference only (not our design)
     for f in BINARY:

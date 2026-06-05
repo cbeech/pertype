@@ -48,7 +48,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
 | **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.49× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.60× over the best) — smooth height fields are the predictor's domain |
 | **hyperspectral** | AVIRIS cube (200 bands) | **inter-band delta** (3D volume codec): **2.41× vs xz 1.83×, zstd 1.65×**, +14% over per-band |
-| **LiDAR point cloud** | LAS (airborne, 110K pts) | **column-split + delta** on the spatial fields: **4.20× vs xz 2.88×, zstd 2.54×** — beats general codecs (LAZ specialist ~5–15×) |
+| **LiDAR point cloud** | LAS (airborne, 110K pts) | **columnar codec** (`compressor/columnar.py` — de-interleave fields + per-column delta): **4.20× vs xz 2.88×, zstd 2.54×**, beats general codecs (LAZ specialist ~5–15×) |
 | **sparse / volumes** | masks, CT/MR/FITS stacks | an **RLE coder** wins on sparse/label data (auto-selected); **3D inter-slice delta** adds +31% on correlated volumes |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -124,9 +124,10 @@ every file.
 | `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
 | `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
 | `compressor/auto.py` | detect → route → **verify byte-exact** → keep smallest; self-describing `.az` blob |
+| `compressor/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` |
+| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` |
 
 ## Usage
 
@@ -156,6 +157,10 @@ python3 -m compressor.cli identify image.fits data.npy api.json
 # Auto: detect → route to the best codec → verify byte-exact → keep smallest (.az)
 python3 -m compressor.cli auto-compress image.fits -o image.az
 python3 -m compressor.cli auto-decompress image.az -o roundtrip.fits
+
+# Columnar: compress a fixed-width binary record stream (LiDAR point data, etc.)
+python3 -m compressor.cli columnar-encode points.bin --schema 4,4,4,2 -o points.col
+python3 -m compressor.cli columnar-decode points.col -o roundtrip.bin
 ```
 
 Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):

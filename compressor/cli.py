@@ -203,6 +203,28 @@ def cmd_identify(args):
         print(f"{path}: {d.kind}  ->  {d.codec}  ({d.detail})")
 
 
+def cmd_columnar_encode(args):
+    """Compress a fixed-width binary record stream (LiDAR LAS point data, etc.) by
+    de-interleaving records into columns. Pass --width W, or --schema 4,4,4,2 for an
+    exact field layout; with neither, the record period is auto-detected."""
+    from compressor import columnar
+    data = _read(args.input)
+    schema = [int(x) for x in args.schema.split(",")] if args.schema else None
+    blob = columnar.encode(data, width=args.width, schema=schema)
+    dest = args.output or args.input + ".col"
+    _write(dest, blob)
+    ratio = len(data) / len(blob) if blob else 0.0
+    print(f"{args.input}: {len(data):,} -> {len(blob):,} bytes ({ratio:.2f}x) -> {dest}")
+
+
+def cmd_columnar_decode(args):
+    from compressor import columnar
+    data = columnar.decode(_read(args.input))
+    dest = args.output or (args.input[:-4] if args.input.endswith(".col") else args.input + ".out")
+    _write(dest, data)
+    print(f"{args.input}: -> {len(data):,} bytes -> {dest}")
+
+
 def cmd_auto_compress(args):
     """Detect, route to the best codec, and write a self-describing .az blob."""
     from compressor import auto
@@ -290,6 +312,19 @@ def build_parser():
     ad.add_argument("input")
     ad.add_argument("-o", "--output", help="output (default: strips .az)")
     ad.set_defaults(func=cmd_auto_decompress)
+
+    ce = sub.add_parser("columnar-encode",
+                        help="compress a fixed-width binary record stream (col-split + delta)")
+    ce.add_argument("input")
+    ce.add_argument("-o", "--output", help="output .col (default: <input>.col)")
+    ce.add_argument("--width", type=int, help="record width in bytes (else auto-detected)")
+    ce.add_argument("--schema", help="comma-separated field byte-widths, e.g. 4,4,4,2")
+    ce.set_defaults(func=cmd_columnar_encode)
+
+    cd = sub.add_parser("columnar-decode", help="decompress a .col record stream")
+    cd.add_argument("input")
+    cd.add_argument("-o", "--output", help="output (default: strips .col)")
+    cd.set_defaults(func=cmd_columnar_decode)
     return p
 
 

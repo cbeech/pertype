@@ -387,6 +387,18 @@ Still high-value untested, in rough priority:
           per column. Beats general codecs; LAZ (LASzip) is the ~5–15× specialist (not run —
           no laszip). A genuinely new structure (irregular 3D geometry) and the clearest case
           yet for a columnar/transpose front-end (cf. the open CSV-transpose item).
+- [x] **Columnar front-end built (`compressor/columnar.py`).** A real codec module for
+      fixed-width binary record streams: a *schema* (list of field byte-widths in {1,2,4})
+      de-interleaves records into per-field integer columns, each coded as the smaller of
+      raw / first-difference under `ctxcoder`; self-describing container; *store* fallback so
+      it never expands. Caller passes an exact schema (LAS from its header) or a width to
+      search uniform tilings, or neither to auto-detect the record period (byte
+      autocorrelation). CLI `columnar-{encode,decode}`; 6 round-trip tests. The LiDAR
+      benchmark now runs through it (4.20×). Honest: **`sao` stays a boundary** — the codec
+      correctly detects its 28-byte records and aligns at offset 0, but the star catalog's
+      float fields aren't sorted so columns don't delta-compress (1.26× vs xz 1.64×); not all
+      record data is columnar-friendly. Open follow-on: CSV/delimited text (a different
+      parser), and auto-wiring whole files (needs leading-offset detection for headered formats).
         * **Protein (FASTA AA, `scripts/protein_benchmark.py`)** — *boundary*, completing the
           alphabet story: a ~20-symbol near-i.i.d. source (~4.15 bits/residue, no order-1/2
           gain). Order-0 entropy coding *beats* the LZ tools (xz 4.60 bpr) since there's no
