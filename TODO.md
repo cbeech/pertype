@@ -255,8 +255,21 @@ temporal redundancy, which is usually the dominant source of compressibility.
       FFV1/JXL via the real codec) is the one remaining, canonical video benchmark.
       The completed video items above name those now-retired scripts as the
       historical site of each ablation.
-- [ ] **NEXT for video**: SKIP against the best MC MV (not just MV 0); more clips
-      across the motion spectrum.
+- [x] **Real-movie sweep + stronger motion search** — ran the codec on decoded frames
+      from a real movie library (`scripts/movie_lossless_benchmark.py`, all local,
+      round-trip verified). Splits cleanly by content motion: **animation wins big**
+      (claymation +55%, anime +32%, CGI +16%), general live action +3–12%, **high-motion
+      loses** (The Gentlemen −18%, Sherlock −6%). Replaced the fixed ±8 integer search
+      with a **hierarchical coarse-to-fine** search (÷2 pyramid → ~±19 px range +
+      per-block full-res refine; encoder-only, no bitstream change). It moved high-motion
+      <1%. Added `videocodec.mode_stats` (shared `_choose_modes` helper, 2 tests) — the
+      block-mode mix proves the bottleneck: high-motion is **~89% intra**, only ~5% inter,
+      so motion search was never the limiter.
+- [ ] **NEXT for video (the high-motion lever): stronger intra.** High-motion frames are
+      ~89% intra-coded and our intra is plain MED vs FFV1's context-modelled intra. Upgrade
+      the intra path for intra blocks — e.g. the CALIC-class predictor + energy-conditioned
+      coding already in `predictors.py` (used by imagecodec). This is the change that would
+      convert the high-motion losses; the motion search is not the lever (proven above).
 
 ---
 

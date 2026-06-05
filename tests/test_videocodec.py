@@ -45,6 +45,21 @@ def test_roundtrip_random():
     assert np.array_equal(vc.decode(vc.encode(frames)), frames)
 
 
+def test_mode_stats_mix():
+    """mode_stats classifies every inter block exactly once into skip/inter/intra;
+    the panning clip yields both skip (static bg) and inter (the moving patch)."""
+    st = vc.mode_stats(_clip(T=6, H=48, W=64, seed=5))
+    assert st["skip"] + st["inter"] + st["intra"] == 5 * (48 // vc.B) * (64 // vc.B)
+    assert st["skip"] > 0 and st["inter"] > 0
+    assert abs(st["skip_pct"] + st["inter_pct"] + st["intra_pct"] - 100) < 1e-6
+
+
+def test_mode_stats_static_all_skip():
+    f = np.full((16, 16), 77, dtype=np.uint8)
+    st = vc.mode_stats(np.stack([f, f, f]))
+    assert st["inter"] == 0 and st["intra"] == 0 and st["skip"] == 2
+
+
 def test_roundtrip_larger():
     frames = _clip(T=6, H=48, W=64, seed=7)
     assert np.array_equal(vc.decode(vc.encode(frames)), frames)

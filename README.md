@@ -49,7 +49,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **seismic** | broadband waveforms (IRIS) | **beats xz 2–3×** (6.6–7.4× vs 2.3–3.7×) |
 | **sensor numeric** | UCI power (int columns) | 6.27× — beats gzip; xz wins (repetition-heavy) |
 | **float64** | UCI power / synth (held-out) | **beats xz/zstd on all** (4.90× / 5.32× / 1.30×) via Gorilla XOR-delta |
-| **video** | CIF clips (full YUV) | **beats FFV1 +8% to +53%** (motion compensation) |
+| **video** | CIF clips + real movies (full YUV) | **beats FFV1**: animation **+16–55%** (peak on stop-motion), live action +3–12%; loses on high-motion (intra-bound). Motion compensation is the lever |
 
 The unifying result, and the dividing line: **predict per type, then entropy-code.**
 Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
@@ -169,6 +169,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/float_benchmark.py` | floating-point (transform proxy) | gzip, zstd, xz | numpy |
 | `scripts/float_codec_benchmark.py` | floating-point (full codec) | zstd, xz | numpy |
 | `scripts/video_ffv1_benchmark.py` | video (full YUV) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
+| `scripts/movie_lossless_benchmark.py` | real movie frames (+ block-mode mix) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
 
 ## Dependencies
 
@@ -791,7 +792,45 @@ across the board:
 
 JXL-intra came out within ~3% of FFV1 throughout, confirming it was a fair
 stand-in. We beat the real specialist by exploiting the temporal redundancy it
-ignores. Remaining polish: SKIP against the best MV (not just MV 0).
+ignores.
+
+**On real movies — and where the line falls.** Beyond the CIF test clips, we ran
+the codec on decoded frames from a real movie library
+(`scripts/movie_lossless_benchmark.py` — decodes a clip to raw 4:2:0 *locally* with
+the bundled ffmpeg, then compares ours vs FFV1 / intra-JXL, round-trip verified).
+The honest framing first: these movies are *lossy* H.264/MPEG-2, already ~40–200×
+smaller than raw — a lossless codec can't "beat" the file itself; the fair question
+is lossless-vs-lossless on the decoded frames. There, the result splits cleanly by
+**content motion**, and the codec's own block-mode mix says exactly why:
+
+| clip (1080p unless noted) | content | ours | FFV1 | ours vs FFV1 | Y blocks (skip/inter/intra) |
+|--|--|--|--|--|--|
+| Early Man | claymation | **13.3×** | 6.0× | **+55%** | 39 / 52 / 9 |
+| Girl Who Leapt Through Time | anime | **7.4×** | 5.0× | **+32%** | — |
+| Shrek Forever After | CGI | **7.4×** | 6.2× | **+16%** | — |
+| Force Awakens | live action | **10.4×** | 9.6× | **+7%** | — |
+| Snatch (576p) | live action | **3.9×** | 3.4× | **+12%** | — |
+| Snow White (576p) | cel | **4.2×** | 4.1× | **+3%** | — |
+| The Gentlemen | high-motion | 6.5× | **7.7×** | **−18%** | 6 / 5 / 89 |
+| Sherlock Holmes (576p) | high-motion | 5.6× | **6.0×** | **−6%** | — |
+
+**Animation is the niche.** Held cels, static backgrounds and slow pans make
+**~90% of blocks skip-or-inter** (Early Man 39% skip + 52% inter) — exactly the
+temporal redundancy intra-only FFV1 throws away — so our edge *grows* with how
+static the content is, peaking at **+55% on stop-motion**. High-motion live action
+is the opposite: **89% of blocks fall back to intra** (The Gentlemen), where our
+plain-MED intra path is weaker than FFV1's context-modelled intra, so we lose.
+
+**Why a stronger motion search didn't change that.** The obvious fix for the
+high-motion losses was a wider motion search, so we replaced the fixed ±8 integer
+search with a **hierarchical coarse-to-fine search** (a ÷2 pyramid level extends the
+effective range to ~±19 px, then a per-block full-res refinement) — a genuinely
+stronger, more robust search, no round-trip change (the decoder reconstructs from
+whatever MVs the encoder picks). It moved high-motion by <1%. The block-mode mix
+explains it: only **5% of high-motion blocks even use inter prediction** — motion
+search was never the bottleneck. The real lever for high-motion is the *intra* path
+(the open roadmap item below); the hierarchical search is kept because it's strictly
+better and helps fast-but-coherent camera pans, which the CIF clips don't exercise.
 
 ## Status & roadmap
 
@@ -827,6 +866,15 @@ The honest open frontier (full list in `TODO.md`):
   it is the diffuse sum of zstd's mature, integrated parser+coder, won't-fix short of
   reimplementing its sequence coder wholesale. (A deeper hash-chain search recovers
   ~1 KB more on its own, to ~4% behind, at a real speed cost.)
+- **Stronger video intra (the high-motion lever)** — on real movies we beat FFV1 on
+  all animation (peak **+55%** on stop-motion) and general live action, but lose on
+  high-motion. The block-mode mix proves why: high-motion frames are **~85% intra**,
+  and our intra path is plain MED while FFV1's is context-modelled. A wider
+  (hierarchical) motion search — already shipped — moved it <1%, because only ~6% of
+  those blocks use inter. The real fix is upgrading the intra coder (e.g. the
+  CALIC-class predictor + energy-conditioned coding already in `predictors.py` for
+  images) for the intra blocks. `scripts/movie_lossless_benchmark.py` reports the
+  per-clip mode mix so this is measurable.
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video). Float is
   now handled by Gorilla XOR-delta **and** an FCM/DFCM value predictor (both beat
   xz/zstd on float64; FCM/DFCM dominates structured series). A native C port of the FCM

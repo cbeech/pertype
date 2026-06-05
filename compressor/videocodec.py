@@ -40,7 +40,8 @@ def _get_native():
 MAGIC = b"VID1"
 MAGIC_YUV = b"VYUV"
 B = 16          # block size
-S = 8           # integer motion search radius (pixels)
+S = 8           # integer motion search radius (pixels) at each pyramid level
+R = 4           # full-res integer refinement radius around the coarse vector
 
 
 # --- prediction / cost primitives -------------------------------------------
@@ -52,21 +53,63 @@ def _shift_clamp(a, dy, dx):
     return a[ys][:, xs]
 
 
-def _motion_estimate(prev, curr):
+def _full_search(prev, curr, radius, blk):
+    """Vectorized full integer search: per ``blk``x``blk`` block, the (dy, dx) in
+    [-radius, radius]^2 minimising SAD vs ``prev``. All blocks step in lockstep."""
     H, W = curr.shape
-    nby, nbx = H // B, W // B
+    nby, nbx = H // blk, W // blk
     p, c = prev.astype(np.int16), curr.astype(np.int16)
     best = np.full((nby, nbx), 1 << 30, dtype=np.int64)
     bdy = np.zeros((nby, nbx), dtype=np.int64)
     bdx = np.zeros((nby, nbx), dtype=np.int64)
-    for dy in range(-S, S + 1):
-        for dx in range(-S, S + 1):
-            sad = np.abs(c - _shift_clamp(p, dy, dx)).reshape(nby, B, nbx, B).sum((1, 3))
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            sad = np.abs(c - _shift_clamp(p, dy, dx)).reshape(nby, blk, nbx, blk).sum((1, 3))
             m = sad < best
             best = np.where(m, sad, best)
             bdy = np.where(m, dy, bdy)
             bdx = np.where(m, dx, bdx)
-    return bdy, bdx
+    return bdy, bdx, best
+
+
+def _sad_int(prev, curr, mvy, mvx, yy, xx):
+    """Per-block SAD for *per-block* integer MVs (pixels), via a clamped gather —
+    so each block can search around its own centre (unlike the lockstep full search)."""
+    H, W = prev.shape
+    nby, nbx = curr.shape[0] // B, curr.shape[1] // B
+    iym = np.repeat(np.repeat(mvy, B, 0), B, 1)
+    ixm = np.repeat(np.repeat(mvx, B, 0), B, 1)
+    Y = np.clip(yy + iym, 0, H - 1)
+    X = np.clip(xx + ixm, 0, W - 1)
+    return np.abs(curr - prev[Y, X]).reshape(nby, B, nbx, B).sum((1, 3))
+
+
+def _motion_estimate(prev, curr, yy, xx):
+    """Hierarchical motion search. A coarse full search on the ÷2 box-downsampled
+    frame extends the effective range to ~±2S px cheaply (high-motion content moves
+    well past ±S at HD); the coarse vector is upscaled and refined per block at full
+    resolution over ±R. A final guard prefers the zero vector where it ties or wins,
+    so coarse aliasing never makes a block *worse* than the plain co-located match."""
+    pc = (prev[0::2, 0::2] + prev[1::2, 0::2] + prev[0::2, 1::2] + prev[1::2, 1::2]) >> 2
+    cc = (curr[0::2, 0::2] + curr[1::2, 0::2] + curr[0::2, 1::2] + curr[1::2, 1::2]) >> 2
+    cby, cbx, _ = _full_search(pc, cc, S, B // 2)          # coarse: ±S coarse-px = ±2S full
+    base_y, base_x = cby * 2, cbx * 2                       # upscale to full-res pixels
+
+    nby, nbx = curr.shape[0] // B, curr.shape[1] // B
+    best = np.full((nby, nbx), 1 << 30, dtype=np.int64)
+    by = base_y.copy()
+    bx = base_x.copy()
+    for ddy in range(-R, R + 1):                            # full-res refine around the base
+        for ddx in range(-R, R + 1):
+            mvy, mvx = base_y + ddy, base_x + ddx
+            sad = _sad_int(prev, curr, mvy, mvx, yy, xx)
+            m = sad < best
+            best = np.where(m, sad, best)
+            by = np.where(m, mvy, by)
+            bx = np.where(m, mvx, bx)
+    sad0 = _sad_int(prev, curr, np.zeros_like(by), np.zeros_like(bx), yy, xx)
+    z = sad0 <= best                                        # prefer MV 0 on ties/aliasing
+    return np.where(z, 0, by), np.where(z, 0, bx)
 
 
 def _predict_qpel(P, mvy, mvx, yy, xx):
@@ -170,6 +213,50 @@ def _from_blocks(values, keep, H, W):
 
 # --- single-plane encode / decode -------------------------------------------
 
+def _choose_modes(prev, cur, yy, xx, nby, nbx):
+    """Per-block mode decision for one inter frame: returns (mode, mvy, mvx, sel,
+    skip_block, inter_block). ``mode`` is 0=inter / 1=intra / 2=skip; ``sel`` is the
+    chosen residual (inter MC residual or intra MED residual) at every pixel. Shared
+    by :func:`encode` and :func:`mode_stats` so the two never drift."""
+    bdy, bdx = _motion_estimate(prev, cur, yy, xx)
+    mvy, mvx = _refine(prev, cur, bdy, bdx, yy, xx)
+    mc = _predict_qpel(prev, mvy, mvx, yy, xx)
+    inter_res = cur - mc
+    intra_res = cur - _med_predict(cur)
+
+    use_intra = _block_cost(intra_res) < _block_cost(inter_res)
+    skip_block = ((cur - prev).reshape(nby, B, nbx, B) == 0).all((1, 3))
+    intra_block = use_intra & ~skip_block
+    inter_block = ~use_intra & ~skip_block
+
+    mode = np.zeros((nby, nbx), dtype=np.int64)
+    mode[intra_block] = 1; mode[skip_block] = 2
+    sel = np.where(np.repeat(np.repeat(intra_block, B, 0), B, 1), intra_res, inter_res)
+    return mode, mvy, mvx, sel, skip_block, inter_block
+
+
+def mode_stats(frames):
+    """Block-mode mix over the inter frames (frame 0 excluded): a dict of skip /
+    inter / intra counts + fractions. This is *why* a clip wins or loses — inter/skip
+    dominate where our temporal coding beats intra-only FFV1 (animation, static
+    scenes); intra dominates on high-motion live action (where the plain-MED intra
+    path is the limiter, not motion search)."""
+    F = np.asarray(frames).astype(np.int64)
+    T, H, W = F.shape
+    yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
+    nby, nbx = H // B, W // B
+    skip = inter = intra = 0
+    for t in range(1, T):
+        mode, *_ = _choose_modes(F[t - 1], F[t], yy, xx, nby, nbx)
+        skip += int((mode == 2).sum())
+        intra += int((mode == 1).sum())
+        inter += int((mode == 0).sum())
+    tot = max(1, skip + inter + intra)
+    return {"skip": skip, "inter": inter, "intra": intra,
+            "skip_pct": 100 * skip / tot, "inter_pct": 100 * inter / tot,
+            "intra_pct": 100 * intra / tot}
+
+
 def encode(frames):
     """frames: (T, H, W) uint8 (H, W multiples of 16). Returns a VID1 container."""
     frames = np.asarray(frames)
@@ -187,21 +274,8 @@ def encode(frames):
 
     prev = F[0]                                   # == reconstructed previous (lossless)
     for t in range(1, T):
-        bdy, bdx = _motion_estimate(prev, F[t])
-        mvy, mvx = _refine(prev, F[t], bdy, bdx, yy, xx)
-        mc = _predict_qpel(prev, mvy, mvx, yy, xx)
-        inter_res = F[t] - mc
-        intra_res = F[t] - _med_predict(F[t])
-
-        use_intra = _block_cost(intra_res) < _block_cost(inter_res)
-        skip_block = ((F[t] - prev).reshape(nby, B, nbx, B) == 0).all((1, 3))
-        intra_block = use_intra & ~skip_block
-        inter_block = ~use_intra & ~skip_block
-
-        mode = np.zeros((nby, nbx), dtype=np.int64)
-        mode[intra_block] = 1; mode[skip_block] = 2
-        sel = np.where(np.repeat(np.repeat(intra_block, B, 0), B, 1), intra_res, inter_res)
-
+        mode, mvy, mvx, sel, skip_block, inter_block = _choose_modes(
+            prev, F[t], yy, xx, nby, nbx)
         _put(out, ctxcoder.encode(mode.reshape(-1)))
         _put(out, ctxcoder.encode(np.concatenate([mvy[inter_block], mvx[inter_block]])))
         _put(out, ctxcoder.encode(_to_blocks(sel, ~skip_block)))

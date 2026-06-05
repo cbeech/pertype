@@ -81,6 +81,7 @@ def bench_clip(movie, seek_s, n_frames, work):
     assert (np.array_equal(dec[0], Y) and np.array_equal(dec[1], U)
             and np.array_equal(dec[2], V)), "round-trip FAILED"
 
+    st = vc.mode_stats(Y)          # Y-plane block mix explains the win/loss
     print(f"\n{name}  ({W}x{H}, {len(Y)} frames @ {seek_s}s)")
     print(f"  raw YUV    {raw/1e6:8.2f} MB   (1.00x)")
     print(f"  FFV1       {ffv1/1e6:8.2f} MB   ({raw/ffv1:5.2f}x)")
@@ -88,6 +89,9 @@ def bench_clip(movie, seek_s, n_frames, work):
     print(f"  ours       {ours/1e6:8.2f} MB   ({raw/ours:5.2f}x)   "
           f"[{'WIN vs FFV1' if ours < ffv1 else 'lose vs FFV1'} "
           f"{(ffv1-ours)/ffv1*100:+.0f}%, enc {enc_t:.0f}s]")
+    print(f"  Y blocks:  skip {st['skip_pct']:.0f}%  inter {st['inter_pct']:.0f}%  "
+          f"intra {st['intra_pct']:.0f}%   "
+          f"(inter+skip dominate -> our niche; intra-heavy -> FFV1's)")
     return raw, ffv1, jxl, ours
 
 
