@@ -43,6 +43,8 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
 | **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.79× vs PNG-16 3.33×, xz 2.78×** (+44% over PNG) — dense continuous-tone is the predictor's domain |
 | **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
+| **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.49× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.60× over the best) — smooth height fields are the predictor's domain |
+| **hyperspectral** | AVIRIS cube (200 bands) | **inter-band delta** (3D volume codec): **2.41× vs xz 1.83×, zstd 1.65×**, +14% over per-band |
 | **sparse / volumes** | masks, CT/MR/FITS stacks | an **RLE coder** wins on sparse/label data (auto-selected); **3D inter-slice delta** adds +31% on correlated volumes |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -50,6 +52,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **sensor numeric** | UCI power (int columns) | 6.27× — beats gzip; xz wins (repetition-heavy) |
 | **float64** | UCI power / synth (held-out) | **beats xz/zstd on all** (4.90× / 5.32× / 1.30×) via Gorilla XOR-delta |
 | **video** | CIF clips + real movies (full YUV) | **beats FFV1**: animation **+16–55%** (peak on stop-motion), live action +3–12%; loses on high-motion (intra-bound). Motion compensation is the lever |
+| **genome (DNA)** | E. coli FASTA | *boundary* — a near-uniform 4-symbol source (~1.95 bits/base); 2-bit packing (4.05×) is the floor and prediction adds nothing. xz 3.72×, ours no edge — honestly not our niche |
 
 The unifying result, and the dividing line: **predict per type, then entropy-code.**
 Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
@@ -159,6 +162,9 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/cr2_med_benchmark.py` | Bayer MED on raw photos | PNG-16, zstd, xz | rawpy, numpy |
 | `scripts/imagecodec_benchmark.py` | shipped image codec (Bayer+RGB+gray) | PNG, zstd, xz, Canon | rawpy, Pillow |
 | `scripts/scientific_image_benchmark.py` | real DICOM / FITS (medical+astronomy) | PNG-16, zstd, xz | pydicom, Pillow |
+| `scripts/dem_benchmark.py` | SRTM terrain elevation (int16) | PNG-16, zstd, xz | Pillow, numpy |
+| `scripts/hyperspectral_benchmark.py` | AVIRIS cube (inter-band delta) | zstd, xz | scipy, numpy |
+| `scripts/genome_benchmark.py` | DNA FASTA (boundary) | zstd, xz, bzip2, 2-bit | numpy |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |

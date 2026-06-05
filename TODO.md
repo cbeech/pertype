@@ -366,7 +366,20 @@ Still high-value untested, in rough priority:
           16-bit (+9% on FITS) and the small inter-slice deltas get tracked thresholds.
         * **3D volumes** — `encode_volume`/`decode_volume`: slice 0 direct, later slices
           as inter-slice deltas. **+31%** over per-slice on a correlated volume. 94 tests.
-      Open: HDF5, hyperspectral (de-interleave bands + delta); a CSV transpose front-end.
+      Open: HDF5; a CSV transpose front-end.
+- [x] **Terrain DEM + hyperspectral** — two new scientific niches, public data, round-trip
+      verified (`scripts/dem_benchmark.py`, `scripts/hyperspectral_benchmark.py`):
+        * **DEM (SRTM int16 elevation)** — smooth height fields are squarely the predictor's
+          domain: **4.49× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.60× over the best),
+          a clean win straight through the gray image codec.
+        * **Hyperspectral (AVIRIS Indian Pines, 200 bands)** — closes the open
+          "de-interleave bands + delta" item: feeding bands as volume slices, **inter-band
+          delta gives +14% over per-band** (2.41× vs 2.08×) and beats xz 1.83× / zstd 1.65×.
+- [x] **Genome DNA (FASTA) — honest boundary** (`scripts/genome_benchmark.py`). DNA is a
+      near-uniform 4-symbol source (~1.95 bits/base at order 2–4): **2-bit packing (4.05×)
+      is the floor and prediction/transforms add nothing**; xz gets 3.72×, our codec has no
+      edge. Like json vs `zstd --train`, this is where specialists (high-order DNA context
+      models) win — documented, not chased.
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive
@@ -374,7 +387,7 @@ Still high-value untested, in rough priority:
       beats `zstd --train` 7.80× (+6%)** and plain gzip/zstd by +140% (verbose,
       tag-repetitive markup is the blob's sweet spot, like html). Both reproducible via
       `cli benchmark {code,xml}`. Open: YAML, TOML, CSV (the local CSVs are text, not
-      numeric, so a columnar transform wouldn't help), FASTA/FASTQ/VCF.
+      numeric, so a columnar transform wouldn't help). FASTA done (boundary — see below).
 
 ---
 
