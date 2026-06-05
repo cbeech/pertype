@@ -41,6 +41,8 @@ audio codec, and a motion-compensated video codec — extends across domains.
 |--|--|--|
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **public text (enwik8)** | Wikipedia, held-out | **3.06× — beats gzip 2.60×, zstd 2.70×, xz 2.76×, bzip2 2.83×** (all standard tools); ~6% behind `zstd --train` 3.25× — the same trained-dict holdout, on a named benchmark |
+| **lossless image (Kodak)** | 24 standard photos | **beats PNG on 24/24 (+27%, 2.46× vs 1.79×)**; within a few % of the modern best (JPEG-XL −6%, WebP-LL −2%) — the named lossless-image benchmark |
+| **Silesia (routed)** | the modern general corpus | per-type routing: **`mr` MR-volume +21% / `x-ray` +18% vs xz**; held-out text **beats all standard tools on dickens/webster/reymont/`nci`** (`nci` beats `zstd --train` too); loses on `samba`/`xml` (repetitive — BWT/LZ niche) and `sao` floats; binaries not our design |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
 | **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.79× vs PNG-16 3.33×, xz 2.78×** (+44% over PNG) — dense continuous-tone is the predictor's domain |
 | **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
@@ -167,6 +169,8 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/hyperspectral_benchmark.py` | AVIRIS cube (inter-band delta) | zstd, xz | scipy, numpy |
 | `scripts/genome_benchmark.py` | DNA FASTA (boundary) | zstd, xz, bzip2, 2-bit | numpy |
 | `scripts/enwik_benchmark.py` | enwik8 Wikipedia (amortized held-out) | gzip, bzip2, xz, zstd, zstd --train | (stdlib + the codec) |
+| `scripts/kodak_benchmark.py` | Kodak 24 lossless image set | PNG, JPEG-XL, WebP-LL | Pillow, imagecodecs |
+| `scripts/silesia_benchmark.py` | Silesia corpus, routed per-type | gzip, bzip2, xz, zstd, zstd --train | pydicom, numpy |
 | `scripts/cr2_benchmark.py` | Canon raw crops | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/full_raw_benchmark.py` | full raw frame | gzip, zstd, PNG-16 | rawpy, numpy |
 | `scripts/cr2_multiframe.py` | raw, many frames | **JPEG XL** | rawpy, numpy, imagecodecs |

@@ -380,6 +380,21 @@ Still high-value untested, in rough priority:
       is the floor and prediction/transforms add nothing**; xz gets 3.72×, our codec has no
       edge. Like json vs `zstd --train`, this is where specialists (high-order DNA context
       models) win — documented, not chased.
+- [x] **Recognized public corpora** — ran the named compression benchmarks, all round-trip
+      verified, methodology matched to our amortized/specialist design:
+        * **enwik8** (LTCB Wikipedia, `scripts/enwik_benchmark.py`): held-out **3.06× beats
+          gzip/zstd/xz/bzip2**, ~6% behind `zstd --train`.
+        * **Kodak** (24-image lossless set, `scripts/kodak_benchmark.py`): **beats PNG on
+          24/24 (+27%)**, within a few % of the modern best (JPEG-XL −6%, WebP-LL −2%).
+        * **Silesia** (routed per-type, `scripts/silesia_benchmark.py`): `mr` MR-volume +21%
+          and `x-ray` +18% vs xz; held-out text beats all standard tools on dickens/webster/
+          reymont/`nci` (`nci` beats `zstd --train`); loses on `samba`/`xml` (repetitive,
+          BWT/LZ niche) and `sao` (float records — int16 view is wrong, needs column routing);
+          binaries (mozilla/ooffice/osdb) are not our design. Note: text held-out is capped at
+          a 512 KB train slice by the pure-Python pattern miner's memory (2 MB OOMs), so the
+          text ratios are a conservative floor. Calgary/Canterbury skipped: single arbitrary
+          files where our amortized model overhead misrepresents the design (self-contained
+          single-file expands; the dictionary *is* the model).
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive
