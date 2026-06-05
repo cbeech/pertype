@@ -403,6 +403,16 @@ Still high-value untested, in rough priority:
       it flips the result** — `samba` held-out 1.86→**1.67 bits/char**, from beating only gzip
       at 512 KB to **beating gzip/bzip2/xz/zstd** at 1 MB. `xml` does *not* benefit (it's
       LZ/BWT-favourable markup, an honest boundary). Most text improves with the fuller corpus.
+      Side benefit: the trained-type benchmarks (`cli benchmark json/html/...`, corpora 1.5–4 MB)
+      could OOM under the old all-CPU fan-out (8 workers × 1.5 GB > RAM); they now run safely.
+- [x] **Headroom check — the shipped text types are already saturated (measured, no change).**
+      The samba flip was a *one-off*: the Silesia held-out under-fed it at 512 KB. The real
+      per-type corpora (json/logs/html/xml/code) already train at ≥1 MB, so they sit at the
+      mining cap. Swept both levers on held-out: **more mining data (2–3 MB) is flat** (json
+      9.39→9.40×, html 7.55×, logs/xml unchanged), and **more patterns hurts** (json 9.39→9.15×,
+      html 7.55→7.45× at 16 384 — the larger token alphabet costs more than the extra patterns
+      save; only `code` gains a marginal +0.6% at 8 192). So **4096 patterns / 1 MB mining is the
+      tuned sweet spot** for these types — no headroom to harvest; don't re-chase it.
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive
