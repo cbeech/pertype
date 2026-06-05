@@ -387,14 +387,22 @@ Still high-value untested, in rough priority:
         * **Kodak** (24-image lossless set, `scripts/kodak_benchmark.py`): **beats PNG on
           24/24 (+27%)**, within a few % of the modern best (JPEG-XL −6%, WebP-LL −2%).
         * **Silesia** (routed per-type, `scripts/silesia_benchmark.py`): `mr` MR-volume +21%
-          and `x-ray` +18% vs xz; held-out text beats all standard tools on dickens/webster/
-          reymont/`nci` (`nci` beats `zstd --train`); loses on `samba`/`xml` (repetitive,
-          BWT/LZ niche) and `sao` (float records — int16 view is wrong, needs column routing);
-          binaries (mozilla/ooffice/osdb) are not our design. Note: text held-out is capped at
-          a 512 KB train slice by the pure-Python pattern miner's memory (2 MB OOMs), so the
-          text ratios are a conservative floor. Calgary/Canterbury skipped: single arbitrary
-          files where our amortized model overhead misrepresents the design (self-contained
-          single-file expands; the dictionary *is* the model).
+          and `x-ray` +18% vs xz; held-out text (1 MB train) beats every standard tool on
+          dickens/webster/reymont/`samba`/`nci` (trails only `zstd --train`); loses on `xml`
+          (repetitive markup — LZ/BWT/zstd win, confirmed across test regions, *not*
+          training-limited) and `sao` (float records — int16 view is wrong, needs column
+          routing); binaries (mozilla/ooffice/osdb) are not our design. Calgary/Canterbury
+          skipped: single arbitrary files where our amortized model overhead misrepresents
+          the design (self-contained single-file expands; the dictionary *is* the model).
+- [x] **Memory-bounded training (fixed an OOM that capped corpus size).** The parallel
+      blob-spec search (`model._search_costs`) fanned across *all* CPUs, each worker holding
+      a substring Counter (~1.5 KB per byte of fit, ≈1.5 GB at 1 MB), so training >512 KB
+      OOM'd (2 MB → >10 GB). Now `_worker_cap` sizes the pool by free RAM (`MemAvailable`,
+      ~1.5 KB/byte/worker, 60% margin) → serial when tight. This *unblocked* 1 MB training,
+      which is the dictionary miner's saturation point (`max_mining_bytes`): on **source code
+      it flips the result** — `samba` held-out 1.86→**1.67 bits/char**, from beating only gzip
+      at 512 KB to **beating gzip/bzip2/xz/zstd** at 1 MB. `xml` does *not* benefit (it's
+      LZ/BWT-favourable markup, an honest boundary). Most text improves with the fuller corpus.
 - [~] **More text formats** — added **source code** (Python) as a trained type
       (`scripts/collect_corpus.py`): held-out, **ours 5.82× beats plain gzip/zstd +55%**
       but trails `zstd --train` 6.26× by ~7% — like json, it's cross-file-repetitive

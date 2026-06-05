@@ -90,7 +90,10 @@ def run_text(d):
     from compressor.benchmark import _zstd_dict_size, _zstd_dicts
     from compressor.codec import compress, decompress
     from compressor.model import train
-    BLK, NTR, NTE = 32 * 1024, 16, 16
+    # Train on 1 MB — the dictionary miner's saturation point (max_mining_bytes), now
+    # reachable since the blob search is memory-bounded. On source code this is decisive
+    # (samba: beats only gzip at 512 KB -> beats every standard tool at 1 MB).
+    BLK, NTR, NTE = 32 * 1024, 32, 16
     print(f"{'file':<10}{'ours':>7}{'gzip':>7}{'bzip2':>7}{'xz':>7}{'zstd':>7}"
           f"{'z--tr':>7}   (bits/char, held-out)")
     print("-" * 64)

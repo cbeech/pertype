@@ -320,17 +320,41 @@ def _eval_spec(args):
     return _price(val, d, blob, mm, dm, mo, DECISION_CHAIN)
 
 
+def _available_bytes():
+    """Free RAM right now (Linux MemAvailable), or None if it can't be read."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        pass
+    return None
+
+
+def _worker_cap(fit_bytes):
+    """How many parallel workers fit in RAM. Each worker's pattern miner holds a
+    substring Counter whose peak is ~1.5 KB/byte of fit (≈ n × #lengths entries at
+    ~100 B each — measured ~1.5 GB at 1 MB), so a naive cpu-count fan-out OOMs on
+    larger corpora. Cap by free RAM with a safety margin; serial (1) if RAM is tight."""
+    avail = _available_bytes()
+    if avail is None:
+        return 2                                       # unknown RAM: stay conservative
+    per_worker = max(1 << 29, int(fit_bytes * 1500))   # >=512 MB floor
+    return max(1, int(avail * 0.6 // per_worker))
+
+
 def _search_costs(specs, fit, val, max_patterns, min_len, max_len):
     """Price every blob spec on the validation slice. The specs are independent, so
     fan them out across processes (the dominant training cost is this search); falls
-    back to serial for small corpora or if a pool can't start. Order is preserved, so
-    the cheapest-wins tie-break is identical to the serial loop."""
+    back to serial for small corpora, tight RAM, or if a pool can't start. Order is
+    preserved, so the cheapest-wins tie-break is identical to the serial loop."""
     args = [(s, fit, val, max_patterns, min_len, max_len) for s in specs]
-    if sum(len(s) for s in fit) >= (1 << 19):          # only worth a pool for real work
-                                                       # (per-spec compute >> fork cost)
-        try:
+    fit_bytes = sum(len(s) for s in fit)
+    if fit_bytes >= (1 << 19):                         # only worth a pool for real work
+        try:                                           # (per-spec compute >> fork cost)
             import concurrent.futures as cf
-            workers = min(len(specs), os.cpu_count() or 1)
+            workers = min(len(specs), os.cpu_count() or 1, _worker_cap(fit_bytes))
             if workers > 1:
                 with cf.ProcessPoolExecutor(max_workers=workers) as ex:
                     return list(ex.map(_eval_spec, args))
