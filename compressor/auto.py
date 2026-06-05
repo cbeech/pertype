@@ -9,7 +9,9 @@ worse than the original and never wrong.
 
 What routes to a specialist today (byte-exact, including the format's non-array
 metadata): **FITS** int16 images and **.npy** 2D/3D integer arrays -> the image codec
-(gray / RGB / inter-slice-delta volume); **text** -> the CSV/delimited-table columnar
+(gray / RGB / inter-slice-delta volume); **.npy float** arrays -> the low-cardinality
+float codec (:mod:`compressor.floatcodec`, a value dictionary + delta-coded indices);
+**text** -> the CSV/delimited-table columnar
 codec (:mod:`compressor.csvcolumnar`, which itself falls back to deflate when the data
 isn't a regular grid); **opaque binary** -> the fixed-width-record columnar codec
 (:mod:`compressor.columnar`, auto-detecting the record period — wins on LiDAR-style point
@@ -23,12 +25,12 @@ import zlib
 
 import numpy as np
 
-from compressor import columnar, csvcolumnar, imagecodec
+from compressor import columnar, csvcolumnar, floatcodec, imagecodec
 from compressor.detect import identify
 
 AMAGIC = b"AZ"
 AVERSION = 1
-M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL = 0, 1, 2, 3, 4, 5
+M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF = 0, 1, 2, 3, 4, 5, 6
 
 
 def _wrap(method, payload):
@@ -74,6 +76,25 @@ def _npy_decode(payload):
     header = payload[4:4 + hlen]
     dec = _img_decode(payload[4 + hlen:])
     return header + np.ascontiguousarray(dec).tobytes()
+
+
+# --- .npy float arrays -> floatcodec (low-cardinality dictionary + delta) ----------
+def _try_npy_float(data):
+    try:
+        arr = np.load(io.BytesIO(data), allow_pickle=False)
+    except Exception:
+        return None
+    if arr.dtype.kind != "f" or arr.dtype.itemsize not in (4, 8):
+        return None
+    body = data[len(data) - arr.nbytes:]
+    header = data[:len(data) - arr.nbytes]
+    blob = floatcodec.encode(np.ascontiguousarray(arr).tobytes(), arr.dtype.itemsize)
+    return len(header).to_bytes(4, "big") + header + blob
+
+
+def _npyf_decode(payload):
+    hlen = int.from_bytes(payload[:4], "big")
+    return payload[4:4 + hlen] + floatcodec.decode(payload[4 + hlen:])
 
 
 # --- FITS int16 image -> imagecodec (header blocks preserved verbatim) ------------
@@ -129,7 +150,8 @@ def _fits_decode(payload):
 
 _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
              M_NPY: _npy_decode, M_FITS: _fits_decode,
-             M_CSV: csvcolumnar.decode, M_COL: columnar.decode}
+             M_CSV: csvcolumnar.decode, M_COL: columnar.decode,
+             M_NPYF: _npyf_decode}
 
 
 def auto_compress(data, name=None):
@@ -139,7 +161,8 @@ def auto_compress(data, name=None):
     if det.codec != "store":                       # already-compressed: don't bother
         candidates.append((M_ZLIB, zlib.compress(data, 9)))
     if det.codec == "imagecodec":
-        for method, builder in ((M_NPY, _try_npy), (M_FITS, _try_fits)):
+        for method, builder in ((M_NPY, _try_npy), (M_NPYF, _try_npy_float),
+                                (M_FITS, _try_fits)):
             payload = builder(data)
             if payload is not None:
                 candidates.append((method, payload))
@@ -171,4 +194,4 @@ def method_name(blob):
     """Human label of the method used (for reporting)."""
     return {M_STORE: "store", M_ZLIB: "deflate", M_NPY: "npy->imagecodec",
             M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
-            M_COL: "binary->columnar"}.get(blob[3], "?")
+            M_COL: "binary->columnar", M_NPYF: "npy->floatcodec"}.get(blob[3], "?")

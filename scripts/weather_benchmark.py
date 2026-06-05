@@ -1,11 +1,11 @@
-"""Climate / weather gridded data (HDF5 / NetCDF4): an honest boundary on lossless float.
+"""Climate / weather gridded data (HDF5 / NetCDF4): our float codec vs gzip / xz / zstd.
 
-NCEP/NCAR reanalysis surface fields are float32 grids (time x lat x lon) that are smooth
-in space and time, so general codecs already do well (xz ~3.2x). Our float decorrelators
-(Gorilla XOR-delta, FCM) don't beat xz here, and the values don't map losslessly to scaled
-integers (float32 rounding), so the big int-delta win doesn't apply. Like FITS float32, this
-is near the lossless-float boundary — reported honestly rather than chased. (Reading the file
-also exercises HDF5.)
+NCEP/NCAR reanalysis surface fields are float32 grids (time x lat x lon). They look noisy
+byte-wise (the mantissa defeats prediction and XOR-delta — those lose to xz), but at fixed
+precision the array holds **few distinct values**, which `compressor.floatcodec` exploits
+losslessly: map each value's bit pattern to a dictionary index, then delta-code the smooth
+index field. This beats xz on exactly this smooth-fixed-precision case (the standing
+boundary). (Reading the file also exercises HDF5.)
 
 Public no-auth source (NetCDF4/HDF5):
   https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis/Dailies/surface/air.sig995.2012.nc
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from compressor import ctxcoder, transform
+from compressor import floatcodec
 
 
 def sh(cmd, data):
@@ -38,23 +38,24 @@ def main():
     a = np.ascontiguousarray(f[var][...])
     raw = a.tobytes()
     N = len(raw)
-    print(f"{os.path.basename(sys.argv[1])}:{var}  {a.shape} {a.dtype}  {N/1e6:.2f} MB")
+    distinct = len(np.unique(a))
+    print(f"{os.path.basename(sys.argv[1])}:{var}  {a.shape} {a.dtype}  {N/1e6:.2f} MB  "
+          f"({distinct:,} distinct values = {100*distinct/a.size:.2f}%)")
 
     gz = sh(["gzip", "-9"], raw)
     xz = sh(["xz", "-9", "-c"], raw)
     zs = sh(["zstd", "-19", "-c"], raw)
-    # our best float decorrelator: Gorilla XOR-delta + byte-plane split, then ctxcoder
-    if a.dtype == np.float32:
-        xb = transform.apply(raw, (("xor", 4), ("split", 4)))
-    else:
-        xb = transform.apply(raw, (("xor", 8), ("split", 8)))
-    ours = len(ctxcoder.encode(np.frombuffer(xb, np.uint8).astype(np.int64)))
+    blob = floatcodec.encode(raw, a.dtype.itemsize)
+    assert floatcodec.decode(blob) == raw, "round-trip FAILED"
+    ours = len(blob)
+    method = "store" if blob[4] == floatcodec.M_STORE else "dict+delta"
 
     for name, sz in [("gzip -9", gz), ("zstd -19", zs), ("xz -9", xz),
-                     ("ours (xor+ctx)", ours)]:
+                     (f"ours ({method})", ours)]:
         print(f"  {name:<18}{sz/1e6:>8.2f} MB   {N/sz:6.2f}x")
-    print(f"  -> {'WIN' if ours < min(gz, xz, zs) else 'BOUNDARY'}: smooth float32 is "
-          f"compressible by everyone; our float tools don't beat xz (cf. FITS float32).")
+    best = min(gz, xz, zs)
+    print(f"  -> ours is {'WIN' if ours < best else 'lose'} vs general "
+          f"({(best-ours)/best*100:+.0f}% vs best general)")
 
 
 if __name__ == "__main__":

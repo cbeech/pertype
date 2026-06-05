@@ -40,6 +40,16 @@ def test_csv_routes_to_columnar():
     assert len(blob) < len(data) // 3                  # numeric columns crush
 
 
+def test_float_npy_routes_to_floatcodec():
+    rng = np.random.RandomState(8)
+    # low-cardinality smooth float grid -> floatcodec wins over deflate/store
+    grid = (np.cumsum(rng.randint(-3, 4, (128, 200)), axis=1) / 100.0).astype(np.float32)
+    buf = io.BytesIO(); np.save(buf, np.ascontiguousarray(grid))
+    blob = _roundtrip(buf.getvalue(), name="grid.npy")
+    assert auto.method_name(blob) == "npy->floatcodec"
+    assert len(blob) < len(buf.getvalue()) // 2
+
+
 def test_binary_records_route_to_columnar():
     rng = np.random.RandomState(7)
     n = 4000

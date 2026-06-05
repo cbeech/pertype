@@ -59,7 +59,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **video** | CIF clips + real movies (full YUV) | **beats FFV1**: animation **+16–55%** (peak on stop-motion), live action +3–12%; loses on high-motion (intra-bound). Motion compensation is the lever |
 | **genome (DNA)** | E. coli FASTA | *boundary* — a near-uniform 4-symbol source (~1.95 bits/base); 2-bit packing (4.05×) is the floor and prediction adds nothing. xz 3.72×, ours no edge — honestly not our niche |
 | **protein (AA)** | E. coli FASTA | *boundary* — a ~20-symbol near-i.i.d. source (~4.15 bits/residue); order-0 entropy coding *beats* the LZ tools (no repetition) but prediction adds nothing. Completes the DNA→protein→text alphabet story |
-| **climate grid (HDF5)** | NCEP reanalysis float32 | *boundary* — smooth float32 grids compress for everyone (xz 3.20×); our float decorrelators (Gorilla/FCM) don't beat xz, and the values don't map losslessly to scaled ints. Like FITS float32 |
+| **climate grid (HDF5)** | NCEP reanalysis float32 | **beats all: 4.48× vs xz 3.20×, zstd 2.70×** (+29%) — `compressor/floatcodec.py` maps the few distinct values (0.18%) to a dictionary and delta-codes the smooth index field. Closes the lossless-float boundary where prediction/XOR fail |
 
 The unifying result, and the dividing line: **predict per type, then entropy-code.**
 Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
@@ -128,6 +128,7 @@ every file.
 | `compressor/auto.py` | detect → route → **verify byte-exact** → keep smallest; self-describing `.az` blob |
 | `compressor/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
 | `compressor/csvcolumnar.py` | columnar codec for delimited-text tables (transpose + per-column numeric/text coding) |
+| `compressor/floatcodec.py` | lossless low-cardinality float codec (value dictionary + delta-coded indices) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` / `csv-{encode,decode}` |
@@ -185,7 +186,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/protein_benchmark.py` | protein FASTA (boundary) | zstd, xz, bzip2, order-k | numpy |
 | `scripts/lidar_benchmark.py` | LiDAR LAS point cloud (col+delta) | zstd, xz (LAZ ref) | numpy |
 | `scripts/csv_benchmark.py` | delimited-text tables (columnar transpose) | gzip, xz, zstd | numpy |
-| `scripts/weather_benchmark.py` | climate float32 grids (HDF5, boundary) | gzip, xz, zstd | h5py, numpy |
+| `scripts/weather_benchmark.py` | climate float32 grids (HDF5) → floatcodec | gzip, xz, zstd | h5py, numpy |
 | `scripts/enwik_benchmark.py` | enwik8 Wikipedia (amortized held-out) | gzip, bzip2, xz, zstd, zstd --train | (stdlib + the codec) |
 | `scripts/kodak_benchmark.py` | Kodak 24 lossless image set | PNG, JPEG-XL, WebP-LL | Pillow, imagecodecs |
 | `scripts/silesia_benchmark.py` | Silesia corpus, routed per-type | gzip, bzip2, xz, zstd, zstd --train | pydicom, numpy |

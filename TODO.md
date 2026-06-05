@@ -413,11 +413,17 @@ Still high-value untested, in rough priority:
       → csv 11.9×, LiDAR point region → binary-columnar 4.0× (schema-free). New `.az` methods
       M_CSV / M_COL. Open: leading-offset detection so whole headered files (e.g. a full .las)
       auto-route too.
-- [x] **Climate / weather float grids (HDF5)** — `scripts/weather_benchmark.py` (also closes
-      the open HDF5-reading item via h5py). NCEP reanalysis float32 (366×73×144): **boundary**
-      — smooth float32 compresses for everyone (xz 3.20×), our float decorrelators don't beat
-      it (1.65×), and values don't map losslessly to scaled ints (float32 rounding). Like FITS
-      float32. Lossless float beyond xz needs a dedicated float predictor (open).
+- [x] **Lossless float codec — closes the lossless-float boundary (`compressor/floatcodec.py`).**
+      Diagnosis on the NCEP reanalysis grid showed the win isn't in prediction (every
+      predictor/XOR variant *lost* to xz, which finds repeated values via LZ) — it's that
+      fixed-precision float32 holds **few distinct values** (weather: 6.8 K = 0.18%). So:
+      map each value's exact bit pattern to a dictionary index (byte-exact, NaN/-0.0 survive),
+      delta-code the spatially-smooth index field (raw/delta/Δ², keep smallest), deflate the
+      tiny dictionary; *store* fallback when cardinality is high (noisy floats). **Weather
+      4.48× vs xz 3.20× (+29%)**, round-trip verified (also exercises HDF5 via h5py). Wired
+      into `auto` (float `.npy` → `npy->floatcodec`, method M_NPYF). 5 codec tests + 1 auto
+      test. Generalises to any low-cardinality numeric array; next: try it on FITS float32 and
+      simulation output.
         * **Protein (FASTA AA, `scripts/protein_benchmark.py`)** — *boundary*, completing the
           alphabet story: a ~20-symbol near-i.i.d. source (~4.15 bits/residue, no order-1/2
           gain). Order-0 entropy coding *beats* the LZ tools (xz 4.60 bpr) since there's no
