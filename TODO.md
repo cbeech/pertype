@@ -339,14 +339,18 @@ Still high-value untested, in rough priority:
       codec's fixed-2 + 16/256-tap LMS cascade + `ctxcoder` (generalises directly —
       seismic is a smooth waveform like music). Confirms the prediction niche
       decisively.
-- [~] **Columnar / numeric CSV** — probed a real numeric CSV (768×9): **column-major
-      reorder helps** (zstd 5.77× vs row-major 5.17×, +12% — grouping a column's values
-      raises repetition), but **per-column delta *hurts*** (4.35×) because the rows are
-      unordered tabular, not a time-series (delta only pays when rows are sorted/
-      sequential). So the lever is a **transpose transform**, gated on column
-      numericness + row ordering — not blanket delta. Open: add it as a transform
-      (needs row/col structure, which the byte-stream transform layer doesn't carry —
-      likely a small CSV-aware front-end). Parquet/ORC, RLE, dictionary next.
+- [x] **Columnar / numeric CSV — built (`compressor/csvcolumnar.py`).** The "CSV-aware
+      front-end" the earlier probe asked for. Detects a regular delimited grid (delimiter /
+      line-ending / constant field count), peels the header row, transposes to column-major,
+      and codes each column by type: **fixed-decimal / integer columns → scale to ints →
+      delta + ctxcoder** (the real lever — not blanket delta, only where it pays), text
+      columns → deflate (homogeneous values grouped). Self-describing container, grid path
+      **verified byte-exact at encode**, deflate/store fallback for non-grids → always
+      lossless, never larger. On the UCI power CSV (2M rows): **13.4× vs xz 11.3×, zstd 10.1×,
+      gzip 7.0×** (+16% over best general). CLI `csv-{encode,decode}`, `scripts/csv_benchmark.py`,
+      8 tests (decimals/CRLF/delimiters/ragged/quoted-fallback). Open: quoted-CSV grids that
+      keep a constant field count (handled today only when quoting doesn't change the count);
+      Parquet/ORC comparison.
 - [x] **Scientific / medical images** — tested on **real** public data
       (`scripts/scientific_image_benchmark.py`; pydicom test CT/MR + NASA FITS), both
       **wins** once the codec handles them right (signed int16 + data-driven scale):
@@ -366,7 +370,7 @@ Still high-value untested, in rough priority:
           16-bit (+9% on FITS) and the small inter-slice deltas get tracked thresholds.
         * **3D volumes** — `encode_volume`/`decode_volume`: slice 0 direct, later slices
           as inter-slice deltas. **+31%** over per-slice on a correlated volume. 94 tests.
-      Open: HDF5; a CSV transpose front-end.
+      Open: HDF5. (CSV transpose front-end now built — `compressor/csvcolumnar.py`.)
 - [x] **Terrain DEM + hyperspectral** — two new scientific niches, public data, round-trip
       verified (`scripts/dem_benchmark.py`, `scripts/hyperspectral_benchmark.py`):
         * **DEM (SRTM int16 elevation)** — smooth height fields are squarely the predictor's

@@ -225,6 +225,28 @@ def cmd_columnar_decode(args):
     print(f"{args.input}: -> {len(data):,} bytes -> {dest}")
 
 
+def cmd_csv_encode(args):
+    """Compress a delimited-text table (CSV/TSV) by transposing to column-major and
+    coding each column by type. Auto-detects delimiter / line-ending / grid regularity;
+    falls back to deflate or store for non-grids. Always lossless."""
+    from compressor import csvcolumnar
+    data = _read(args.input)
+    blob = csvcolumnar.encode(data)
+    dest = args.output or args.input + ".csvc"
+    _write(dest, blob)
+    ratio = len(data) / len(blob) if blob else 0.0
+    method = {0: "store", 1: "deflate", 2: "columnar"}.get(blob[4], "?")
+    print(f"{args.input}: {len(data):,} -> {len(blob):,} bytes ({ratio:.2f}x) [{method}] -> {dest}")
+
+
+def cmd_csv_decode(args):
+    from compressor import csvcolumnar
+    data = csvcolumnar.decode(_read(args.input))
+    dest = args.output or (args.input[:-5] if args.input.endswith(".csvc") else args.input + ".out")
+    _write(dest, data)
+    print(f"{args.input}: -> {len(data):,} bytes -> {dest}")
+
+
 def cmd_auto_compress(args):
     """Detect, route to the best codec, and write a self-describing .az blob."""
     from compressor import auto
@@ -325,6 +347,17 @@ def build_parser():
     cd.add_argument("input")
     cd.add_argument("-o", "--output", help="output (default: strips .col)")
     cd.set_defaults(func=cmd_columnar_decode)
+
+    cve = sub.add_parser("csv-encode",
+                         help="compress a delimited-text table (CSV/TSV) column-major")
+    cve.add_argument("input")
+    cve.add_argument("-o", "--output", help="output .csvc (default: <input>.csvc)")
+    cve.set_defaults(func=cmd_csv_encode)
+
+    cvd = sub.add_parser("csv-decode", help="decompress a .csvc table")
+    cvd.add_argument("input")
+    cvd.add_argument("-o", "--output", help="output (default: strips .csvc)")
+    cvd.set_defaults(func=cmd_csv_decode)
     return p
 
 

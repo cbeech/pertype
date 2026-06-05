@@ -49,6 +49,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.49× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.60× over the best) — smooth height fields are the predictor's domain |
 | **hyperspectral** | AVIRIS cube (200 bands) | **inter-band delta** (3D volume codec): **2.41× vs xz 1.83×, zstd 1.65×**, +14% over per-band |
 | **LiDAR point cloud** | LAS (airborne, 110K pts) | **columnar codec** (`compressor/columnar.py` — de-interleave fields + per-column delta): **4.20× vs xz 2.88×, zstd 2.54×**, beats general codecs (LAZ specialist ~5–15×) |
+| **tabular CSV** | UCI power (2M-row numeric) | **columnar transpose** (`compressor/csvcolumnar.py` — fixed-decimal columns → scaled-int delta): **13.4× vs xz 11.3×, zstd 10.1×, gzip 7.0×** (+16% over the best general tool) |
 | **sparse / volumes** | masks, CT/MR/FITS stacks | an **RLE coder** wins on sparse/label data (auto-selected); **3D inter-slice delta** adds +31% on correlated volumes |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -125,9 +126,10 @@ every file.
 | `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
 | `compressor/auto.py` | detect → route → **verify byte-exact** → keep smallest; self-describing `.az` blob |
 | `compressor/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
+| `compressor/csvcolumnar.py` | columnar codec for delimited-text tables (transpose + per-column numeric/text coding) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` |
+| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` / `csv-{encode,decode}` |
 
 ## Usage
 
@@ -161,6 +163,10 @@ python3 -m compressor.cli auto-decompress image.az -o roundtrip.fits
 # Columnar: compress a fixed-width binary record stream (LiDAR point data, etc.)
 python3 -m compressor.cli columnar-encode points.bin --schema 4,4,4,2 -o points.col
 python3 -m compressor.cli columnar-decode points.col -o roundtrip.bin
+
+# CSV: compress a delimited-text table column-major (auto delimiter / line-ending)
+python3 -m compressor.cli csv-encode data.csv -o data.csvc
+python3 -m compressor.cli csv-decode data.csvc -o roundtrip.csv
 ```
 
 Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):
@@ -177,6 +183,7 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/genome_benchmark.py` | DNA FASTA (boundary) | zstd, xz, bzip2, 2-bit | numpy |
 | `scripts/protein_benchmark.py` | protein FASTA (boundary) | zstd, xz, bzip2, order-k | numpy |
 | `scripts/lidar_benchmark.py` | LiDAR LAS point cloud (col+delta) | zstd, xz (LAZ ref) | numpy |
+| `scripts/csv_benchmark.py` | delimited-text tables (columnar transpose) | gzip, xz, zstd | numpy |
 | `scripts/enwik_benchmark.py` | enwik8 Wikipedia (amortized held-out) | gzip, bzip2, xz, zstd, zstd --train | (stdlib + the codec) |
 | `scripts/kodak_benchmark.py` | Kodak 24 lossless image set | PNG, JPEG-XL, WebP-LL | Pillow, imagecodecs |
 | `scripts/silesia_benchmark.py` | Silesia corpus, routed per-type | gzip, bzip2, xz, zstd, zstd --train | pydicom, numpy |
