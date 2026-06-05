@@ -380,6 +380,18 @@ Still high-value untested, in rough priority:
       is the floor and prediction/transforms add nothing**; xz gets 3.72×, our codec has no
       edge. Like json vs `zstd --train`, this is where specialists (high-order DNA context
       models) win — documented, not chased.
+- [x] **LiDAR point cloud + protein** — a new structural domain and the alphabet-boundary midpoint:
+        * **LiDAR (LAS, `scripts/lidar_benchmark.py`)** — de-interleave the interleaved point
+          records into typed columns and first-difference the spatial fields (X/Y/Z/intensity/
+          GPS/RGB): **4.20× vs xz 2.88×, zstd 2.54×** on airborne LiDAR (110K pts), round-trip
+          per column. Beats general codecs; LAZ (LASzip) is the ~5–15× specialist (not run —
+          no laszip). A genuinely new structure (irregular 3D geometry) and the clearest case
+          yet for a columnar/transpose front-end (cf. the open CSV-transpose item).
+        * **Protein (FASTA AA, `scripts/protein_benchmark.py`)** — *boundary*, completing the
+          alphabet story: a ~20-symbol near-i.i.d. source (~4.15 bits/residue, no order-1/2
+          gain). Order-0 entropy coding *beats* the LZ tools (xz 4.60 bpr) since there's no
+          repetition, but prediction/transforms add nothing structural — same lesson as DNA
+          at 4 symbols. So small symbolic alphabets (4 → 20) are entropy-bound boundaries.
 - [x] **Recognized public corpora** — ran the named compression benchmarks, all round-trip
       verified, methodology matched to our amortized/specialist design:
         * **enwik8** (LTCB Wikipedia, `scripts/enwik_benchmark.py`): held-out **3.06× beats
