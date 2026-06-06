@@ -20,6 +20,19 @@ All four are verified byte-identical and cross-compatible (both directions) in
 other front-ends (CSV/float), the MED/transform loops, the detect/auto router, and `rayon`
 block parallelism.
 
+## Standalone CLI (`colz`)
+
+A no-Python command-line tool for the columnar record codec (output interchangeable with
+the Python codec):
+
+```bash
+cargo build --release
+target/release/colz enc points.bin points.col   # auto-detects the record period
+target/release/colz dec points.col points.out   # byte-exact round-trip
+```
+
+(End-to-end on real LiDAR point data: 4.38×, and the Python codec decodes the result.)
+
 ## Build & verify
 
 ```bash

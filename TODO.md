@@ -140,9 +140,11 @@ fast rather than hindered):
       container). All verified **byte-identical and cross-compatible both directions** on real
       data (LiDAR 4.38×, Kodak, sao) — `tests/test_rust_port.py` (skips if the cdylib isn't
       built) + Rust round-trip unit tests. Speed: ctxcoder ~3.9 M residuals/s (≈ C native,
-      **~32× over pure Python**), memory-safe. Build/verify in `rust/README.md`. Remaining
-      toward a fully standalone library: the CSV/float front-ends, the MED/transform loops,
-      the detect/auto router, then `rayon` block parallelism.
+      **~32× over pure Python**), memory-safe. Build/verify in `rust/README.md`. Also a
+      standalone **`colz` CLI** (no Python) that compresses/decompresses files with the
+      columnar codec end-to-end (LiDAR 4.38×, output interchangeable with the Python codec).
+      Remaining toward a fully standalone library: the CSV/float front-ends, the MED/transform
+      loops, the detect/auto router, then `rayon` block parallelism.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to
