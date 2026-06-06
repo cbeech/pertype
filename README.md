@@ -125,10 +125,11 @@ every file.
 | `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
 | `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
 | `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
-| `compressor/auto.py` | detect → route → **verify byte-exact** → keep smallest; self-describing `.az` blob |
+| `compressor/auto.py` | detect → route to any specialist (image/float/csv/columnar/**video/audio**) → **verify byte-exact** → keep smallest; self-describing `.az` blob |
 | `compressor/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
 | `compressor/csvcolumnar.py` | columnar codec for delimited-text tables (transpose + per-column numeric/text coding) |
 | `compressor/floatcodec.py` | lossless low-cardinality float codec (value dictionary + delta-coded indices) |
+| `compressor/y4m.py` | byte-exact YUV4MPEG2 (.y4m) container parse/serialize (shared by CLI + auto) |
 | `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
 | `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
 | `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` / `csv-{encode,decode}` |

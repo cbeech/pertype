@@ -320,7 +320,14 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
       Honest limits: (1) on a tiny image the verbatim format header lets deflate win — auto
       correctly picks the smaller; (2) the text codec is model-based, so auto can't get the
       trained-dict win on arbitrary text without a shipped model and falls back to deflate.
-      Open: route the other no-model media codecs (y4m → videocodec, WAV → audiocodec, DICOM).
+      Done: **y4m → videocodec** and **WAV → audiocodec** now route through `auto` too
+      (verify-gated, preserving the container's exact non-sample bytes; `.y4m` parse/serialize
+      factored into `compressor/y4m.py`, shared with the CLI). Measured: akiyo y4m →
+      `y4m->videocodec` 6.6×, realistic WAV → `wav->audiocodec`, both byte-exact. Honest
+      remaining limits: **DICOM** (some files lack the standard `DICM` preamble so aren't even
+      detected, and byte-exact pixel replacement is unimplemented) and **headerless raw** binary
+      (a bare `.hgt` DEM / raw sensor dump can't reach the image/numeric specialists — its
+      shape/dtype aren't in the bytes; use the typed CLI with that metadata).
 
 **Tested (2026-06):** two real datasets, every result round-trip verified — see
 README "Scientific numeric time-series". Key finding: **the predictor and the

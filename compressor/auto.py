@@ -15,10 +15,16 @@ float codec (:mod:`compressor.floatcodec`, a value dictionary + delta-coded indi
 codec (:mod:`compressor.csvcolumnar`, which itself falls back to deflate when the data
 isn't a regular grid); **opaque binary** -> the fixed-width-record columnar codec
 (:mod:`compressor.columnar`, auto-detecting the record period — wins on LiDAR-style point
-data, stores otherwise). Everything else falls back to generic deflate or store. The
-trained text codec is model-based, so without a shipped model ``auto`` can't get its
-trained-dictionary win on arbitrary prose; that's the honest boundary, reported by
-``identify``.
+data, stores otherwise); **.y4m video** -> the motion-compensated video codec and **.wav
+PCM** -> the predictive audio codec (both preserving the container's exact non-sample
+bytes). Everything else falls back to generic deflate or store.
+
+Honest limits: the trained text codec is model-based, so without a shipped model ``auto``
+can't get its trained-dictionary win on arbitrary prose. **Headerless raw** binary (a bare
+``.hgt`` DEM, a raw sensor dump) can't be routed to the image/numeric specialists because
+its shape/dtype aren't in the bytes — use the typed CLI (``image-encode`` etc.) with that
+metadata. DICOM isn't routed yet (no standard preamble in some files; byte-exact pixel
+replacement is unimplemented). All of this is reported by ``identify``.
 """
 import io
 import zlib
@@ -30,7 +36,7 @@ from compressor.detect import identify
 
 AMAGIC = b"AZ"
 AVERSION = 1
-M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF = 0, 1, 2, 3, 4, 5, 6
+M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF, M_Y4M, M_WAV = range(9)
 
 
 def _wrap(method, payload):
@@ -148,10 +154,81 @@ def _fits_decode(payload):
     return header + body + trailing
 
 
+# --- .y4m video -> videocodec (headers preserved verbatim) ------------------------
+def _try_y4m(data):
+    try:
+        from compressor import videocodec, y4m
+        header, fheaders, planes = y4m.parse(data)
+        vblob = videocodec.encode_yuv(*planes)
+    except Exception:
+        return None
+    fhblob = b"".join(fheaders)
+    return (bytes([len(planes)]) + len(header).to_bytes(4, "big") + header
+            + len(fhblob).to_bytes(4, "big") + fhblob + vblob)
+
+
+def _y4m_decode(payload):
+    from compressor import videocodec, y4m
+    n = payload[0]; p = 1
+    hl = int.from_bytes(payload[p:p + 4], "big"); p += 4
+    header = payload[p:p + hl]; p += hl
+    fl = int.from_bytes(payload[p:p + 4], "big"); p += 4
+    fhblob = payload[p:p + fl]; p += fl
+    fheaders = [line + b"\n" for line in fhblob.split(b"\n")[:-1]]
+    return y4m.serialize(header, fheaders, videocodec.decode_yuv(payload[p:]))
+
+
+# --- .wav PCM -> audiocodec (RIFF structure preserved verbatim) --------------------
+def _parse_wav(data):
+    """(prefix, pcm_bytes, suffix, channels, samplerate) for 16-bit PCM WAV, else None."""
+    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    pos, fmt, doff, dlen = 12, None, None, None
+    while pos + 8 <= len(data):
+        cid = data[pos:pos + 4]
+        sz = int.from_bytes(data[pos + 4:pos + 8], "little")
+        body = pos + 8
+        if cid == b"fmt ":
+            fmt = data[body:body + sz]
+        elif cid == b"data":
+            doff, dlen = body, sz
+            break                                    # PCM found; rest is suffix
+        pos = body + sz + (sz & 1)                   # chunks are word-aligned
+    if fmt is None or doff is None or int.from_bytes(fmt[14:16], "little") != 16:
+        return None
+    return (data[:doff], data[doff:doff + dlen], data[doff + dlen:],
+            int.from_bytes(fmt[2:4], "little"), int.from_bytes(fmt[4:8], "little"))
+
+
+def _try_wav(data):
+    parsed = _parse_wav(data)
+    if parsed is None:
+        return None
+    prefix, pcm, suffix, ch, sr = parsed
+    from compressor import audiocodec
+    fr = len(pcm) // (2 * ch)                         # whole multi-channel frames
+    samples = np.frombuffer(pcm[:fr * 2 * ch], "<i2").reshape(fr, ch)
+    tail = pcm[fr * 2 * ch:]                          # leftover bytes (rare)
+    ablob = audiocodec.encode(samples, sr)
+    return (len(prefix).to_bytes(4, "big") + prefix + len(suffix).to_bytes(4, "big") + suffix
+            + len(tail).to_bytes(4, "big") + tail + ablob)
+
+
+def _wav_decode(payload):
+    from compressor import audiocodec
+    p = 0
+    pl = int.from_bytes(payload[p:p + 4], "big"); p += 4; prefix = payload[p:p + pl]; p += pl
+    sl = int.from_bytes(payload[p:p + 4], "big"); p += 4; suffix = payload[p:p + sl]; p += sl
+    tl = int.from_bytes(payload[p:p + 4], "big"); p += 4; tail = payload[p:p + tl]; p += tl
+    pcm, _sr = audiocodec.decode(payload[p:])
+    body = np.ascontiguousarray(pcm.astype("<i2")).tobytes()
+    return prefix + body + tail + suffix
+
+
 _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
              M_NPY: _npy_decode, M_FITS: _fits_decode,
              M_CSV: csvcolumnar.decode, M_COL: columnar.decode,
-             M_NPYF: _npyf_decode}
+             M_NPYF: _npyf_decode, M_Y4M: _y4m_decode, M_WAV: _wav_decode}
 
 
 def auto_compress(data, name=None):
@@ -168,6 +245,14 @@ def auto_compress(data, name=None):
                 candidates.append((method, payload))
     if det.kind.startswith("text"):                # CSV/TSV tables -> columnar transpose
         candidates.append((M_CSV, csvcolumnar.encode(data)))
+    elif det.codec == "videocodec":                # .y4m -> motion-compensated video codec
+        payload = _try_y4m(data)
+        if payload is not None:
+            candidates.append((M_Y4M, payload))
+    elif det.codec == "audiocodec":                # .wav PCM -> predictive audio codec
+        payload = _try_wav(data)
+        if payload is not None:
+            candidates.append((M_WAV, payload))
     elif det.codec == "generic":                   # opaque binary -> try record columns
         candidates.append((M_COL, columnar.encode(data)))
 
@@ -194,4 +279,5 @@ def method_name(blob):
     """Human label of the method used (for reporting)."""
     return {M_STORE: "store", M_ZLIB: "deflate", M_NPY: "npy->imagecodec",
             M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
-            M_COL: "binary->columnar", M_NPYF: "npy->floatcodec"}.get(blob[3], "?")
+            M_COL: "binary->columnar", M_NPYF: "npy->floatcodec",
+            M_Y4M: "y4m->videocodec", M_WAV: "wav->audiocodec"}.get(blob[3], "?")
