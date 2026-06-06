@@ -130,11 +130,21 @@ fast rather than hindered):
   predictors in Python, validate the ratio on a proxy, and only push to the fast
   kernel once proven. This preserves the proxy-then-build workflow.
 
-### Future: a full Rust port (not needed now)
+### Rust port — STARTED (the entropy-coder hot path is ported)
 
-The C-via-ctypes primitives already deliver the speed, so this is a longer-term,
-optional step — pursue it only when the goal shifts from *research* to *shipping a
-real library/CLI*. What a Rust port would buy:
+- [x] **`rust/` crate: the context-adaptive arithmetic coder, byte-identical to Python/C.**
+      The shared entropy back-end (every numeric/image/columnar/float codec runs through it)
+      is ported to safe Rust as a `cdylib` behind the same C ABI (`ctx_encode`/`ctx_decode`),
+      so it drops into the ctypes seam. Verified **byte-identical and cross-compatible** with
+      the Python/C reference (a blob from one decodes in the others) — `tests/test_rust_port.py`
+      (skips if the cdylib isn't built) + a Rust round-trip unit test. Speed: ~3.9 M residuals/s
+      (same order as the C native, **~32× over pure Python**), memory-safe. This is the base for
+      a standalone crate; build/verify in `rust/README.md`. Next pieces would be the predictors
+      and the columnar/CSV/float front-ends, then `rayon` block parallelism.
+
+The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
+longer-term, optional step — pursue it only when the goal shifts from *research* to
+*shipping a real library/CLI*. What the rest of a Rust port would buy:
 
 - **Distribution as a single self-contained binary / crate** — no gcc-at-import,
   no Python/numpy runtime needed; usable from other languages.

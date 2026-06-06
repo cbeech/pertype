@@ -911,8 +911,11 @@ The honest open frontier (full list in `TODO.md`):
   now handled by Gorilla XOR-delta **and** an FCM/DFCM value predictor (both beat
   xz/zstd on float64; FCM/DFCM dominates structured series). A native C port of the FCM
   predictor would remove its pure-Python training-time cost.
-- **Distribution** — an optional Rust port (single crate, `rayon` block
-  parallelism) once the goal shifts from research to shipping a library.
+- **Distribution** — a Rust port toward a single self-contained crate (`rayon` block
+  parallelism) for shipping a library. **Started:** `rust/` ports the context-adaptive
+  arithmetic coder (the shared entropy hot path) to safe Rust, **byte-identical** to the
+  Python/C reference and cross-compatible (verified in `tests/test_rust_port.py`), ~32×
+  over pure Python. See `rust/README.md`.
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats
