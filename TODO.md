@@ -335,11 +335,13 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
       Done: **y4m → videocodec** and **WAV → audiocodec** now route through `auto` too
       (verify-gated, preserving the container's exact non-sample bytes; `.y4m` parse/serialize
       factored into `compressor/y4m.py`, shared with the CLI). Measured: akiyo y4m →
-      `y4m->videocodec` 6.6×, realistic WAV → `wav->audiocodec`, both byte-exact. Honest
-      remaining limits: **DICOM** (some files lack the standard `DICM` preamble so aren't even
-      detected, and byte-exact pixel replacement is unimplemented) and **headerless raw** binary
-      (a bare `.hgt` DEM / raw sensor dump can't reach the image/numeric specialists — its
-      shape/dtype aren't in the bytes; use the typed CLI with that metadata).
+      `y4m->videocodec` 6.6×, realistic WAV → `wav->audiocodec`, both byte-exact. **DICOM**
+      now routes too: standard (DICM-preamble) 16-bit images/volumes → imagecodec, splicing the
+      compressed pixel data back into the file's exact DICOM structure (byte-exact, verify-gated,
+      2D + multi-frame — medical 4.79× through the front door). Honest remaining limits: stripped
+      DICOM streams lacking the `DICM` preamble aren't *detected* (fall back), and **headerless
+      raw** binary (a bare `.hgt` DEM / raw sensor dump can't reach the image/numeric specialists
+      — its shape/dtype aren't in the bytes; use the typed CLI with that metadata).
 
 **Tested (2026-06):** two real datasets, every result round-trip verified — see
 README "Scientific numeric time-series". Key finding: **the predictor and the

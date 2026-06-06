@@ -145,6 +145,30 @@ def test_wav_routes_to_audiocodec():
     assert auto.method_name(blob) == "wav->audiocodec"
 
 
+def test_dicom_routes_to_imagecodec():
+    import io
+
+    import numpy as np
+    pydicom = __import__("pytest").importorskip("pydicom")
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    yy, xx = np.mgrid[0:128, 0:128]
+    img = ((yy * 3 + xx * 2) % 4000 + 100).astype(np.uint16)   # smooth -> imagecodec wins
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.is_little_endian = True; ds.is_implicit_VR = False
+    ds.Rows, ds.Columns = 128, 128; ds.BitsAllocated = 16; ds.BitsStored = 16
+    ds.SamplesPerPixel = 1; ds.PixelRepresentation = 0
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.PixelData = img.tobytes()
+    buf = io.BytesIO(); ds.save_as(buf, enforce_file_format=True)
+    blob = _roundtrip(buf.getvalue())
+    assert auto.method_name(blob) == "dicom->imagecodec"
+
+
 def test_decompress_rejects_foreign_blob():
     import pytest
     with pytest.raises(ValueError):

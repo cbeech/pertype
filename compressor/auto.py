@@ -19,12 +19,16 @@ data, stores otherwise); **.y4m video** -> the motion-compensated video codec an
 PCM** -> the predictive audio codec (both preserving the container's exact non-sample
 bytes). Everything else falls back to generic deflate or store.
 
+**DICOM** 16-bit images/volumes -> the image codec, splicing the compressed pixel data
+back into the file's exact DICOM structure. Everything else falls back to generic deflate
+or store.
+
 Honest limits: the trained text codec is model-based, so without a shipped model ``auto``
 can't get its trained-dictionary win on arbitrary prose. **Headerless raw** binary (a bare
 ``.hgt`` DEM, a raw sensor dump) can't be routed to the image/numeric specialists because
 its shape/dtype aren't in the bytes — use the typed CLI (``image-encode`` etc.) with that
-metadata. DICOM isn't routed yet (no standard preamble in some files; byte-exact pixel
-replacement is unimplemented). All of this is reported by ``identify``.
+metadata. DICOM is routed only when it has the standard ``DICM`` preamble (so ``identify``
+detects it); some stripped DICOM streams lack it and fall back. All reported by ``identify``.
 """
 import io
 import zlib
@@ -36,7 +40,8 @@ from compressor.detect import identify
 
 AMAGIC = b"AZ"
 AVERSION = 1
-M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF, M_Y4M, M_WAV = range(9)
+(M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF, M_Y4M, M_WAV,
+ M_DICOM) = range(10)
 
 
 def _wrap(method, payload):
@@ -154,6 +159,38 @@ def _fits_decode(payload):
     return header + body + trailing
 
 
+# --- DICOM 16-bit image / volume -> imagecodec (DICOM structure preserved verbatim) ---
+def _try_dicom(data):
+    try:
+        import pydicom
+        ds = pydicom.dcmread(io.BytesIO(data))
+        pd = bytes(ds.PixelData)
+        if ds.BitsAllocated // 8 != 2 or data.count(pd) != 1:   # 16-bit, uniquely locatable
+            return None
+        off = data.find(pd)
+        frames = int(getattr(ds, "NumberOfFrames", 1) or 1)
+        R, C = int(ds.Rows), int(ds.Columns)
+        arr = np.frombuffer(pd, "<i2")
+        if frames > 1:
+            blob = imagecodec.encode_volume(np.ascontiguousarray(arr.reshape(frames, R, C)))
+        else:
+            blob = imagecodec.encode(np.ascontiguousarray(arr.reshape(R, C)), bayer=False)
+    except Exception:
+        return None
+    prefix, suffix = data[:off], data[off + len(pd):]
+    return (len(prefix).to_bytes(4, "big") + prefix
+            + len(suffix).to_bytes(4, "big") + suffix + blob)
+
+
+def _dicom_decode(payload):
+    p = 0
+    pl = int.from_bytes(payload[p:p + 4], "big"); p += 4; prefix = payload[p:p + pl]; p += pl
+    sl = int.from_bytes(payload[p:p + 4], "big"); p += 4; suffix = payload[p:p + sl]; p += sl
+    arr = _img_decode(payload[p:])
+    body = np.ascontiguousarray(arr).astype("<i2").tobytes()
+    return prefix + body + suffix
+
+
 # --- .y4m video -> videocodec (headers preserved verbatim) ------------------------
 def _try_y4m(data):
     try:
@@ -228,7 +265,8 @@ def _wav_decode(payload):
 _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
              M_NPY: _npy_decode, M_FITS: _fits_decode,
              M_CSV: csvcolumnar.decode, M_COL: columnar.decode,
-             M_NPYF: _npyf_decode, M_Y4M: _y4m_decode, M_WAV: _wav_decode}
+             M_NPYF: _npyf_decode, M_Y4M: _y4m_decode, M_WAV: _wav_decode,
+             M_DICOM: _dicom_decode}
 
 
 def auto_compress(data, name=None):
@@ -239,7 +277,7 @@ def auto_compress(data, name=None):
         candidates.append((M_ZLIB, zlib.compress(data, 9)))
     if det.codec == "imagecodec":
         for method, builder in ((M_NPY, _try_npy), (M_NPYF, _try_npy_float),
-                                (M_FITS, _try_fits)):
+                                (M_FITS, _try_fits), (M_DICOM, _try_dicom)):
             payload = builder(data)
             if payload is not None:
                 candidates.append((method, payload))
@@ -280,4 +318,5 @@ def method_name(blob):
     return {M_STORE: "store", M_ZLIB: "deflate", M_NPY: "npy->imagecodec",
             M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
             M_COL: "binary->columnar", M_NPYF: "npy->floatcodec",
-            M_Y4M: "y4m->videocodec", M_WAV: "wav->audiocodec"}.get(blob[3], "?")
+            M_Y4M: "y4m->videocodec", M_WAV: "wav->audiocodec",
+            M_DICOM: "dicom->imagecodec"}.get(blob[3], "?")
