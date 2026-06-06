@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pytest
 
-from compressor import columnar, ctxcoder, predictors
+from compressor import columnar, csvcolumnar, ctxcoder, floatcodec, predictors
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -23,7 +23,8 @@ pytestmark = pytest.mark.skipif(not _SO, reason="Rust cdylib not built (cargo bu
 @pytest.fixture(scope="module")
 def lib():
     lb = ctypes.CDLL(_SO[0])
-    for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode"):
+    for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
+                 "float_encode", "float_decode", "csv_encode", "csv_decode"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -46,7 +47,7 @@ def _calic_encode(lib, img, scale):
 
 
 def _col(lib, fn, data, *extra):
-    out = (ctypes.c_uint8 * (len(data) * 64 + 1024))()
+    out = (ctypes.c_uint8 * (len(data) * 256 + (1 << 20)))()   # generous: decode can expand a lot
     buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
     m = fn(buf, len(data), *extra, out, len(out))
     assert m >= 0
@@ -86,3 +87,27 @@ def test_columnar_byte_identical(lib):
     assert columnar.decode(rb) == data                                    # rust -> py
     pb = columnar.encode(data, width=12)
     assert _col(lib, lib.columnar_decode, pb) == data                     # py -> rust
+
+
+def test_floatcodec_cross_compatible(lib):
+    # low-cardinality f32 grid: same ratio + cross-decodable (deflate dict not byte-identical)
+    rng = np.random.default_rng(3)
+    grid = (np.cumsum(rng.integers(-3, 4, 20000)) / 100.0).astype("<f4")
+    data = np.ascontiguousarray(grid).tobytes()
+    rb = _col(lib, lib.float_encode, data, 4)
+    assert _col(lib, lib.float_decode, rb) == data                        # rust round-trip
+    assert floatcodec.decode(rb) == data                                  # py decodes rust
+    assert _col(lib, lib.float_decode, floatcodec.encode(data, 4)) == data  # rust decodes py
+
+
+def test_csvcolumnar_cross_compatible(lib):
+    rows = ["t;v;n"]
+    v = 1000
+    for i in range(2000):
+        v += (i * 7 % 11) - 5
+        rows.append(f"2024-01-01;{v/100:.2f};{i}")
+    data = ("\n".join(rows) + "\n").encode()
+    rb = _col(lib, lib.csv_encode, data)
+    assert _col(lib, lib.csv_decode, rb) == data                          # rust round-trip
+    assert csvcolumnar.decode(rb) == data                                 # py decodes rust
+    assert _col(lib, lib.csv_decode, csvcolumnar.encode(data)) == data    # rust decodes py

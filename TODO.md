@@ -143,8 +143,12 @@ fast rather than hindered):
       **~32× over pure Python**), memory-safe. Build/verify in `rust/README.md`. Also a
       standalone **`colz` CLI** (no Python) that compresses/decompresses files with the
       columnar codec end-to-end (LiDAR 4.38×, output interchangeable with the Python codec).
-      Remaining toward a fully standalone library: the CSV/float front-ends, the MED/transform
-      loops, the detect/auto router, then `rayon` block parallelism.
+      Now also **`floatcodec`** (low-cardinality float dictionary — weather 4.51×) and
+      **`csvcolumnar`** (delimited-table transpose — power CSV 15.84×): both round-trip and
+      **cross-compatible both directions** with Python at the same ratio (their zlib sub-blobs
+      aren't byte-identical to CPython's — different deflate impl — but are valid + cross-
+      decodable; the pure-arithmetic codecs stay byte-identical). Remaining toward a fully
+      standalone library: the MED/transform loops, the detect/auto router, then `rayon`.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to

@@ -16,4 +16,7 @@
 pub mod arith;
 pub mod calic;
 pub mod columnar;
+pub mod csvcolumnar;
 pub mod ctxcoder;
+pub mod floatcodec;
+pub mod zlibw;

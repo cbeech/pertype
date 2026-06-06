@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust port of the context-adaptive arithmetic residual coder (byte-identical to the Python/C reference)"
 
+[dependencies]
+flate2 = "1"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

@@ -125,6 +125,26 @@ pub fn decode(inp: &[u8], n: usize) -> Vec<i64> {
     out
 }
 
+/// Smallest of raw / delta / second-difference of an int column under this coder; ties
+/// keep the earlier (matches Python's `min`). Shared by the columnar / float / CSV codecs.
+pub fn code_idx(col: &[i64]) -> (u8, Vec<u8>) {
+    let mut d = col.to_vec();
+    for i in 1..d.len() {
+        d[i] = col[i] - col[i - 1];
+    }
+    let mut dd = d.clone();
+    for i in 1..dd.len() {
+        dd[i] = d[i] - d[i - 1];
+    }
+    let mut best = (0u8, encode(col));
+    for (sel, blob) in [(1u8, encode(&d)), (2u8, encode(&dd))] {
+        if blob.len() < best.1.len() {
+            best = (sel, blob);
+        }
+    }
+    best
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ctx_encode(res: *const i64, n: i64, out: *mut u8, cap: i64) -> i64 {
     let res = std::slice::from_raw_parts(res, n as usize);

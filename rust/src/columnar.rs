@@ -60,25 +60,6 @@ fn interleave(cols: &[Vec<i64>], n: usize, schema: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Smallest of raw / delta / second-difference under ctxcoder (ties keep the earlier).
-fn code_col(col: &[i64]) -> (u8, Vec<u8>) {
-    let mut d = col.to_vec();
-    for i in 1..d.len() {
-        d[i] = col[i] - col[i - 1];
-    }
-    let mut dd = d.clone();
-    for i in 1..dd.len() {
-        dd[i] = d[i] - d[i - 1];
-    }
-    let mut best = (0u8, ctxcoder::encode(col));
-    for (sel, blob) in [(1u8, ctxcoder::encode(&d)), (2u8, ctxcoder::encode(&dd))] {
-        if blob.len() < best.1.len() {
-            best = (sel, blob);
-        }
-    }
-    best
-}
-
 fn try_schema(data: &[u8], schema: &[u8]) -> Option<Vec<u8>> {
     let w: usize = schema.iter().map(|&x| x as usize).sum();
     if w < 1 || schema.iter().any(|&x| x < 1 || x > 4) {
@@ -99,7 +80,7 @@ fn try_schema(data: &[u8], schema: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&u16be(trailing.len()));
     out.extend_from_slice(trailing);
     for col in deinterleave(body, n, schema) {
-        let (sel, blob) = code_col(&col);
+        let (sel, blob) = ctxcoder::code_idx(&col);
         out.push(sel);
         out.extend_from_slice(&u32be(blob.len()));
         out.extend_from_slice(&blob);

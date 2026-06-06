@@ -914,10 +914,11 @@ The honest open frontier (full list in `TODO.md`):
 - **Distribution** — a Rust port toward a single self-contained crate (`rayon` block
   parallelism) for shipping a library. **In progress:** `rust/` ports the core to safe Rust —
   the arithmetic coder, the context-adaptive residual coder, the full **CALIC image codec**,
-  and a complete standalone **columnar record codec** — all **byte-identical** to the
-  Python/C reference and cross-compatible both directions (verified in
-  `tests/test_rust_port.py` on LiDAR/Kodak/sao). See `rust/README.md`. Remaining: the
-  CSV/float front-ends, MED/transform loops, the detect/auto router, and `rayon`.
+  a standalone **columnar record codec**, the **float codec** and the **CSV table codec** —
+  cross-compatible both directions with Python (the pure-arithmetic ones byte-identical; the
+  zlib-using float/CSV codecs cross-decodable at the same ratio). Verified in
+  `tests/test_rust_port.py` on LiDAR/Kodak/weather/power-CSV; plus a `colz` CLI. See
+  `rust/README.md`. Remaining: MED/transform loops, the detect/auto router, and `rayon`.
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats

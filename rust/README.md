@@ -14,11 +14,20 @@ a drop-in for the ctypes loader. Modules:
 - **`columnar`** — a *complete standalone codec* for fixed-width binary record streams
   (de-interleave → per-column raw/delta/Δ² → `COL1` container with store fallback). Wins on
   LiDAR-style point data; produces the same container bytes as the Python version.
+- **`floatcodec`** — low-cardinality float codec (value-dictionary + delta-coded indices →
+  `FLT1`). Wins on fixed-precision scientific floats (weather/climate grids).
+- **`csvcolumnar`** — delimited-text table codec (grid detect → transpose → per-column
+  numeric / text-dictionary / deflate → `CSV1`). Wins on numeric CSV.
 
-All four are verified byte-identical and cross-compatible (both directions) in
-`tests/test_rust_port.py`. The remaining pieces toward a fully standalone library are the
-other front-ends (CSV/float), the MED/transform loops, the detect/auto router, and `rayon`
-block parallelism.
+**Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
+**byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
+(dictionary / text columns); since Rust's deflate differs from CPython's, those sub-blobs
+are *not* byte-identical, but the streams are valid and **cross-decodable both directions**
+(Python decodes Rust's output and vice versa) at the same ratio — so the codecs are fully
+interoperable and lossless. All verified in `tests/test_rust_port.py`.
+
+Remaining toward a fully standalone library: the MED/transform loops, the detect/auto
+router, and `rayon` block parallelism.
 
 ## Standalone CLI (`colz`)
 
@@ -54,7 +63,8 @@ python3 -m pytest tests/test_rust_port.py   # byte-identical + cross-compatible 
 - **Speed:** ctxcoder ~3.9 M residuals/s encode (≈ the C native's order; **~32× faster than
   pure Python**), memory-safe.
 - **C ABI:** `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
-  `columnar_encode`/`columnar_decode` — drop-ins for the ctypes loader.
+  `columnar_encode`/`columnar_decode`, `float_encode`/`float_decode`,
+  `csv_encode`/`csv_decode` — drop-ins for the ctypes loader.
 
 ## Why Rust here
 
