@@ -7,6 +7,20 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
 
 ---
 
+## 0b. Entropy coder: top-mantissa-bit modelling (shipped)
+
+- [x] **ctxcoder now models the top mantissa bit per (context, k).** The coder emitted the
+      `k-1` mantissa bits below the magnitude bucket *raw* (uniform); for prediction residuals
+      the top one isn't uniform. Modelling it with an adaptive binary model keyed on
+      (order-2 context, k) — rest still raw — was validated measure-first (real coded bytes,
+      no overfitting): **+0.4% to +4%** across numeric/columnar/float streams (LiDAR coord Δ
+      +4%). Shipped in both the pure-Python coder and the **byte-identical C native** (verified
+      identical + round-trip). End-to-end: **LiDAR 4.77→4.88×, CSV 16.3→16.5×, weather
+      4.48→4.51×**; image/CALIC codecs unchanged (they use their own energy-conditioned coder,
+      not plain ctxcoder). A broad gain since ctxcoder backs every numeric/columnar/float codec.
+      (The earlier "~13% headroom" estimate was order-2 overfitting; ~+2% avg is the real,
+      achievable number. Modelling a 2nd mantissa bit added only ~+0.3% — not worth it.)
+
 ## 0. Measured dead-ends (ruled out — don't re-chase)
 
 - [x] **CALIC intra for high-motion video — measured 0% gain, NOT worth it.** The earlier

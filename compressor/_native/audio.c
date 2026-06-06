@@ -135,6 +135,8 @@ void delta_inv(const uint8_t *data, uint8_t *out, long n, int stride) {
 #define CTX_NCTX ((CTX_CLAMP + 1) * (CTX_CLAMP + 1))   /* order-2: (prev, prev-prev) */
 #define CTX_INCR 32
 #define CTX_RESCALE (1 << 14)
+#define CTX_MINCR 24            /* adaptation of the modelled top-mantissa bit */
+#define CTX_MRESCALE (1 << 13)
 #define AC_HALF      0x80000000ULL
 #define AC_QUARTER   0x40000000ULL
 #define AC_3QUARTER  0xC0000000ULL
@@ -195,9 +197,17 @@ static void ctx_bump(int *f, long *tot, int k) {
 }
 
 /* Returns bytes written, or -1 if the output buffer is too small. */
+/* adaptive binary model for the top mantissa bit, indexed by (ctx, k) */
+static void ctx_mant_init(int mf[CTX_NCTX][CTX_NB][2], long mt[CTX_NCTX][CTX_NB]) {
+    for (int c = 0; c < CTX_NCTX; c++)
+        for (int s = 0; s < CTX_NB; s++) { mf[c][s][0] = 1; mf[c][s][1] = 1; mt[c][s] = 2; }
+}
+
 long ctx_encode(const int64_t *res, long n, uint8_t *out, long cap) {
-    int freq[CTX_NCTX][CTX_NB]; long tot[CTX_NCTX];
+    static int freq[CTX_NCTX][CTX_NB]; static long tot[CTX_NCTX];
+    static int mf[CTX_NCTX][CTX_NB][2]; static long mt[CTX_NCTX][CTX_NB];
     ctx_init(freq, tot);
+    ctx_mant_init(mf, mt);
     bitw w = { out, cap, 0, 0, 0, 0 };
     aenc e = { 0, AC_MAX, 0, &w };
     int pk = 0, pk2 = 0;
@@ -212,7 +222,14 @@ long ctx_encode(const int64_t *res, long n, uint8_t *out, long cap) {
         ae_encode(&e, cum, (uint64_t)f[k], (uint64_t)tot[ctx]);
         if (k >= 2) {
             uint64_t mant = u & ((1ULL << (k - 1)) - 1);
-            for (int shift = k - 2; shift >= 0; shift--)
+            int b1 = (mant >> (k - 2)) & 1;            /* top mantissa bit: modelled */
+            int *m = mf[ctx][k];
+            ae_encode(&e, b1 == 0 ? 0 : (uint64_t)m[0], (uint64_t)m[b1], (uint64_t)mt[ctx][k]);
+            m[b1] += CTX_MINCR; mt[ctx][k] += CTX_MINCR;
+            if (mt[ctx][k] >= CTX_MRESCALE) {
+                m[0] = (m[0] + 1) >> 1; m[1] = (m[1] + 1) >> 1; mt[ctx][k] = m[0] + m[1];
+            }
+            for (int shift = k - 3; shift >= 0; shift--)   /* remaining low bits raw */
                 ae_encode(&e, (mant >> shift) & 1, 1, 2);
         }
         if (w.overflow) return -1;
@@ -258,8 +275,10 @@ static void ad_update(adec *d, uint64_t cum, uint64_t freq, uint64_t total) {
 }
 
 void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
-    int freq[CTX_NCTX][CTX_NB]; long tot[CTX_NCTX];
+    static int freq[CTX_NCTX][CTX_NB]; static long tot[CTX_NCTX];
+    static int mf[CTX_NCTX][CTX_NB][2]; static long mt[CTX_NCTX][CTX_NB];
     ctx_init(freq, tot);
+    ctx_mant_init(mf, mt);
     adec d = { 0, AC_MAX, 0, in, len, 0 };
     for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
     int pk = 0, pk2 = 0;
@@ -275,13 +294,20 @@ void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
         if (k == 0) u = 0;
         else if (k == 1) u = 1;
         else {
-            uint64_t mant = 0;
-            for (int j = 0; j < k - 1; j++) {
+            int *m = mf[ctx][k]; long mtv = mt[ctx][k];
+            int b1 = (ad_target(&d, (uint64_t)mtv) >= (uint64_t)m[0]) ? 1 : 0;
+            ad_update(&d, b1 == 0 ? 0 : (uint64_t)m[0], (uint64_t)m[b1], (uint64_t)mtv);
+            m[b1] += CTX_MINCR; mt[ctx][k] += CTX_MINCR;
+            if (mt[ctx][k] >= CTX_MRESCALE) {
+                m[0] = (m[0] + 1) >> 1; m[1] = (m[1] + 1) >> 1; mt[ctx][k] = m[0] + m[1];
+            }
+            uint64_t low = 0;
+            for (int j = 0; j < k - 2; j++) {              /* remaining low bits raw */
                 int bit = (ad_target(&d, 2) >= 1) ? 1 : 0;
                 ad_update(&d, (uint64_t)bit, 1, 2);
-                mant = (mant << 1) | (uint64_t)bit;
+                low = (low << 1) | (uint64_t)bit;
             }
-            u = (1ULL << (k - 1)) | mant;
+            u = (1ULL << (k - 1)) | ((uint64_t)b1 << (k - 2)) | low;
         }
         out[i] = (int64_t)(u >> 1) ^ -(int64_t)(u & 1);    /* unzigzag */
         ctx_bump(f, &tot[ctx], k);
