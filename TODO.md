@@ -7,6 +7,21 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
 
 ---
 
+## 0. Measured dead-ends (ruled out — don't re-chase)
+
+- [x] **CALIC intra for high-motion video — measured 0% gain, NOT worth it.** The earlier
+      hypothesis ("high-motion is ~89% intra, so a stronger intra predictor flips the loss")
+      is *wrong*: on a high-motion frame, the full CALIC image codec equals MED+ctxcoder
+      (56.7 KB vs 56.6 KB, +0%). High-motion residuals are near-noise where no spatial
+      predictor has an edge. FFV1's edge on real-movie high-motion is its entropy coder /
+      mode handling, not intra prediction — so the risky CALIC-in-video refactor is off the
+      table.
+- [x] **YCoCg-R reversible colour transform for RGB images — measured −0.4%, no win.** Our
+      per-plane CALIC already decorrelates colour as well as YCoCg-R on Kodak (RGB 2885 KB vs
+      YCoCg-R 2898 KB). The ~6% gap to JPEG-XL is its context-adaptive ANS entropy coder, not
+      a colour transform — closing it would need a major entropy-coder upgrade (high risk,
+      uncertain reward), not a transform.
+
 ## 1. Optimised port — IN PROGRESS
 
 The algorithms are validated; pure Python is the only blocker. Approach
