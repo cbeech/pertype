@@ -912,10 +912,12 @@ The honest open frontier (full list in `TODO.md`):
   xz/zstd on float64; FCM/DFCM dominates structured series). A native C port of the FCM
   predictor would remove its pure-Python training-time cost.
 - **Distribution** — a Rust port toward a single self-contained crate (`rayon` block
-  parallelism) for shipping a library. **Started:** `rust/` ports the context-adaptive
-  arithmetic coder (the shared entropy hot path) to safe Rust, **byte-identical** to the
-  Python/C reference and cross-compatible (verified in `tests/test_rust_port.py`), ~32×
-  over pure Python. See `rust/README.md`.
+  parallelism) for shipping a library. **In progress:** `rust/` ports the core to safe Rust —
+  the arithmetic coder, the context-adaptive residual coder, the full **CALIC image codec**,
+  and a complete standalone **columnar record codec** — all **byte-identical** to the
+  Python/C reference and cross-compatible both directions (verified in
+  `tests/test_rust_port.py` on LiDAR/Kodak/sao). See `rust/README.md`. Remaining: the
+  CSV/float front-ends, MED/transform loops, the detect/auto router, and `rayon`.
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats

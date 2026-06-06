@@ -1,17 +1,24 @@
-# compressor_rs — Rust port (hot path)
+# compressor_rs — Rust port
 
-A Rust port of the project's **context-adaptive arithmetic residual coder** — the entropy
-back-end every numeric / image / columnar / float codec runs through. It is a faithful,
-**byte-identical** twin of `compressor/ctxcoder.py` and its C version in
-`compressor/_native/audio.c`: same Witten–Neal–Cleary 32-bit arithmetic coder, same
-per-context magnitude-bucket model with the top mantissa bit modelled per `(context, k)`
-and the rest raw, MSB-first with a zero-padded final byte. A blob encoded by Python or C
-decodes here and vice versa — verified in `tests/test_rust_port.py`.
+A Rust port of the project's compression core — **byte-identical** to the Python reference
+(`compressor/`) and its C twin (`compressor/_native/audio.c`), so a blob produced by any of
+the three decodes in the others. Built as a `cdylib` behind the same C ABI as the C native,
+a drop-in for the ctypes loader. Modules:
 
-This is the **first piece** of an eventual standalone crate. The C native already covers
-the hot loops via ctypes; this proves the same path in safe Rust and is the natural base
-for a no-Python library/CLI (the predictors, columnar/CSV/float front-ends, and `rayon`
-block parallelism would follow).
+- **`arith`** — the Witten–Neal–Cleary 32-bit arithmetic coder + MSB-first bit I/O (shared).
+- **`ctxcoder`** — the context-adaptive residual coder every numeric/image/columnar/float
+  codec runs through (order-2 magnitude bucket + top-mantissa-bit model per `(ctx, k)`).
+- **`calic`** — the full CALIC image codec (GAP prediction + 704-context bias correction +
+  energy-conditional coding) — the continuous-tone workhorse (photos, raw, DEM, medical,
+  FITS, hyperspectral).
+- **`columnar`** — a *complete standalone codec* for fixed-width binary record streams
+  (de-interleave → per-column raw/delta/Δ² → `COL1` container with store fallback). Wins on
+  LiDAR-style point data; produces the same container bytes as the Python version.
+
+All four are verified byte-identical and cross-compatible (both directions) in
+`tests/test_rust_port.py`. The remaining pieces toward a fully standalone library are the
+other front-ends (CSV/float), the MED/transform loops, the detect/auto router, and `rayon`
+block parallelism.
 
 ## Build & verify
 
@@ -29,11 +36,12 @@ python3 -m pytest tests/test_rust_port.py   # byte-identical + cross-compatible 
 
 ## Status
 
-- **Correctness:** byte-identical to Python/C, cross-compatible both directions.
-- **Speed:** ~3.9 M residuals/s encode (≈ the C native's order; **~32× faster than pure
-  Python**), memory-safe.
-- **API:** C ABI `ctx_encode(res, n, out, cap) -> bytes` / `ctx_decode(in, len, n, out)`,
-  a drop-in for the ctypes loader.
+- **Correctness:** all four modules byte-identical to Python/C, cross-compatible both
+  directions, on real data (LiDAR, Kodak, sao).
+- **Speed:** ctxcoder ~3.9 M residuals/s encode (≈ the C native's order; **~32× faster than
+  pure Python**), memory-safe.
+- **C ABI:** `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
+  `columnar_encode`/`columnar_decode` — drop-ins for the ctypes loader.
 
 ## Why Rust here
 

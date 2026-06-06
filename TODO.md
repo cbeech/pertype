@@ -132,15 +132,17 @@ fast rather than hindered):
 
 ### Rust port — STARTED (the entropy-coder hot path is ported)
 
-- [x] **`rust/` crate: the context-adaptive arithmetic coder, byte-identical to Python/C.**
-      The shared entropy back-end (every numeric/image/columnar/float codec runs through it)
-      is ported to safe Rust as a `cdylib` behind the same C ABI (`ctx_encode`/`ctx_decode`),
-      so it drops into the ctypes seam. Verified **byte-identical and cross-compatible** with
-      the Python/C reference (a blob from one decodes in the others) — `tests/test_rust_port.py`
-      (skips if the cdylib isn't built) + a Rust round-trip unit test. Speed: ~3.9 M residuals/s
-      (same order as the C native, **~32× over pure Python**), memory-safe. This is the base for
-      a standalone crate; build/verify in `rust/README.md`. Next pieces would be the predictors
-      and the columnar/CSV/float front-ends, then `rayon` block parallelism.
+- [~] **`rust/` crate: core codecs ported to safe Rust, byte-identical to Python/C.** A
+      `cdylib` behind the same C ABI as the C native (drop-in for the ctypes seam), four
+      modules: `arith` (WNC arithmetic coder), `ctxcoder` (context-adaptive residual coder —
+      the shared entropy back-end), `calic` (full CALIC image codec — GAP + bias + energy
+      coding), and `columnar` (a *complete standalone* fixed-width-record codec → `COL1`
+      container). All verified **byte-identical and cross-compatible both directions** on real
+      data (LiDAR 4.38×, Kodak, sao) — `tests/test_rust_port.py` (skips if the cdylib isn't
+      built) + Rust round-trip unit tests. Speed: ctxcoder ~3.9 M residuals/s (≈ C native,
+      **~32× over pure Python**), memory-safe. Build/verify in `rust/README.md`. Remaining
+      toward a fully standalone library: the CSV/float front-ends, the MED/transform loops,
+      the detect/auto router, then `rayon` block parallelism.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to
