@@ -41,12 +41,12 @@ audio codec, and a motion-compensated video codec — extends across domains.
 |--|--|--|
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **public text (enwik8)** | Wikipedia, held-out | **3.06× — beats gzip 2.60×, zstd 2.70×, xz 2.76×, bzip2 2.83×** (all standard tools); ~6% behind `zstd --train` 3.25× — the same trained-dict holdout, on a named benchmark |
-| **lossless image (Kodak)** | 24 standard photos | **beats PNG on 24/24 (+27%, 2.46× vs 1.79×)**; within a few % of the modern best (JPEG-XL −6%, WebP-LL −2%) — the named lossless-image benchmark |
+| **lossless image (Kodak)** | 24 standard photos | **beats PNG on 24/24 (+29%, 2.51× vs 1.79×)**, **matches WebP-LL** (2.51×) and within −4% of JPEG-XL — the named lossless-image benchmark |
 | **Silesia (routed)** | the modern general corpus | per-type routing: **`mr` MR-volume +21% / `x-ray` +18% vs xz**; held-out text (1 MB train) **beats every standard tool on dickens/webster/reymont/`samba`/`nci`** (trails only `zstd --train`); loses on `xml` (repetitive markup — LZ/BWT niche) and `sao` floats; binaries not our design |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
 | **medical image** | real DICOM CT/MR (16-bit) | **beats all: 4.79× vs PNG-16 3.33×, xz 2.78×** (+44% over PNG) — dense continuous-tone is the predictor's domain |
 | **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
-| **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.49× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.60× over the best) — smooth height fields are the predictor's domain |
+| **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.56× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.62× over the best) — smooth height fields are the predictor's domain |
 | **hyperspectral** | AVIRIS cube (200 bands) | **inter-band delta** (3D volume codec): **2.41× vs xz 1.83×, zstd 1.65×**, +14% over per-band |
 | **LiDAR point cloud** | LAS (airborne, 110K pts) | **columnar codec** (`compressor/columnar.py` — de-interleave fields + per-column raw/delta/Δ²): **4.88× vs xz 2.88×, zstd 2.54×**, beats general codecs (LAZ specialist ~5–15×) |
 | **tabular CSV** | UCI power (2M-row numeric) | **columnar transpose** (`compressor/csvcolumnar.py` — per column: fixed-decimal→scaled-int Δ, low-cardinality text→value dictionary, else deflate): **16.5× vs xz 11.3×, zstd 10.1×, gzip 7.0×** (+32% over the best general tool) |

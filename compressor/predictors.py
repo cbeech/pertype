@@ -169,6 +169,7 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
     from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
     from compressor.bitio import BitReader
     NB, INCR, RESCALE, NEBIN = 65, 32, 1 << 14, 12
+    MINCR, MRESCALE = 24, 1 << 13           # adaptation of the modelled top-mantissa bit
     tbias = [t * scale for t in (1, 3, 6, 11, 18, 30, 50, 90, 160, 300)]
     tent = [t * scale for t in (1, 3, 6, 11, 18, 30, 50, 90, 160, 300, 600)]
     t1, t2, t3 = 80 * scale, 32 * scale, 8 * scale
@@ -176,6 +177,8 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
     Cc = [0] * 704
     freq = [[1] * NB for _ in range(NEBIN)]
     tot = [NB] * NEBIN
+    mfreq = [[[1, 1] for _ in range(NB)] for _ in range(NEBIN)]   # top mantissa bit | (ebin, k)
+    mtot = [[2] * NB for _ in range(NEBIN)]
     if encode:
         img = np.ascontiguousarray(data, dtype=np.int64)
         H, W = img.shape
@@ -223,6 +226,7 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
             while ebin < 11 and en >= tent[ebin]:
                 ebin += 1
             f = freq[ebin]
+            mm = mfreq[ebin]
             if encode:
                 e = int(img[y, x]) - pred
                 u = _cx._zigzag(e - corr)
@@ -230,7 +234,16 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
                 cum = sum(f[:k])
                 ac.encode(cum, f[k], tot[ebin])
                 if k >= 2:
-                    ac.encode_bits(u & ((1 << (k - 1)) - 1), k - 1)
+                    mant = u & ((1 << (k - 1)) - 1)
+                    b1 = (mant >> (k - 2)) & 1           # top mantissa bit: modelled per (ebin, k)
+                    g = mm[k]
+                    ac.encode(0 if b1 == 0 else g[0], g[b1], mtot[ebin][k])
+                    g[b1] += MINCR
+                    mtot[ebin][k] += MINCR
+                    if mtot[ebin][k] >= MRESCALE:
+                        g[0] = (g[0] + 1) >> 1; g[1] = (g[1] + 1) >> 1; mtot[ebin][k] = g[0] + g[1]
+                    if k >= 3:
+                        ac.encode_bits(mant & ((1 << (k - 2)) - 1), k - 2)
             else:
                 target = ac.decode_target(tot[ebin])
                 cum = 0
@@ -239,9 +252,20 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
                     cum += f[k]
                     k += 1
                 ac.update(cum, f[k], tot[ebin])
-                if k == 0: u = 0
-                elif k == 1: u = 1
-                else: u = (1 << (k - 1)) | ac.decode_bits(k - 1)
+                if k == 0:
+                    u = 0
+                elif k == 1:
+                    u = 1
+                else:
+                    g = mm[k]
+                    b1 = 1 if ac.decode_target(mtot[ebin][k]) >= g[0] else 0
+                    ac.update(0 if b1 == 0 else g[0], g[b1], mtot[ebin][k])
+                    g[b1] += MINCR
+                    mtot[ebin][k] += MINCR
+                    if mtot[ebin][k] >= MRESCALE:
+                        g[0] = (g[0] + 1) >> 1; g[1] = (g[1] + 1) >> 1; mtot[ebin][k] = g[0] + g[1]
+                    low = ac.decode_bits(k - 2) if k >= 3 else 0
+                    u = (1 << (k - 1)) | (b1 << (k - 2)) | low
                 e = _cx._unzigzag(u) + corr
                 img[y, x] = e + pred
             f[k] += INCR

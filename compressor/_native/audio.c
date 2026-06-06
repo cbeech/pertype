@@ -625,8 +625,11 @@ long calic_codec_encode(const int64_t *img, long H, long W, long scale,
     int64_t *C = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
     if (!B || !C) { free(B); free(C); return -1; }
     int freq[CALIC_NEBIN][CTX_NB]; long tot[CALIC_NEBIN];
+    int mf[CALIC_NEBIN][CTX_NB][2]; long mt[CALIC_NEBIN][CTX_NB];   /* top mantissa bit | (ebin,k) */
     for (int c = 0; c < CALIC_NEBIN; c++) {
-        for (int s = 0; s < CTX_NB; s++) freq[c][s] = 1;
+        for (int s = 0; s < CTX_NB; s++) {
+            freq[c][s] = 1; mf[c][s][0] = 1; mf[c][s][1] = 1; mt[c][s] = 2;
+        }
         tot[c] = CTX_NB;
     }
     bitw w = { out, cap, 0, 0, 0, 0 };
@@ -672,7 +675,14 @@ long calic_codec_encode(const int64_t *img, long H, long W, long scale,
             ae_encode(&enc, cum, (uint64_t)f[k], (uint64_t)tot[ebin]);
             if (k >= 2) {
                 uint64_t mant = u & ((1ULL << (k - 1)) - 1);
-                for (int sh = k - 2; sh >= 0; sh--) ae_encode(&enc, (mant >> sh) & 1, 1, 2);
+                int b1 = (mant >> (k - 2)) & 1;            /* top mantissa bit: modelled */
+                int *g = mf[ebin][k];
+                ae_encode(&enc, b1 == 0 ? 0 : (uint64_t)g[0], (uint64_t)g[b1], (uint64_t)mt[ebin][k]);
+                g[b1] += CTX_MINCR; mt[ebin][k] += CTX_MINCR;
+                if (mt[ebin][k] >= CTX_MRESCALE) {
+                    g[0] = (g[0] + 1) >> 1; g[1] = (g[1] + 1) >> 1; mt[ebin][k] = g[0] + g[1];
+                }
+                for (int sh = k - 3; sh >= 0; sh--) ae_encode(&enc, (mant >> sh) & 1, 1, 2);
             }
             if (w.overflow) { free(B); free(C); return -1; }
             ctx_bump(f, &tot[ebin], k);
@@ -701,8 +711,11 @@ void calic_codec_decode(const uint8_t *in, long len, int64_t *img,
     int64_t *C = (int64_t *)calloc(CALIC_NCTX, sizeof(int64_t));
     if (!B || !C) { free(B); free(C); return; }
     int freq[CALIC_NEBIN][CTX_NB]; long tot[CALIC_NEBIN];
+    int mf[CALIC_NEBIN][CTX_NB][2]; long mt[CALIC_NEBIN][CTX_NB];   /* top mantissa bit | (ebin,k) */
     for (int c = 0; c < CALIC_NEBIN; c++) {
-        for (int s = 0; s < CTX_NB; s++) freq[c][s] = 1;
+        for (int s = 0; s < CTX_NB; s++) {
+            freq[c][s] = 1; mf[c][s][0] = 1; mf[c][s][1] = 1; mt[c][s] = 2;
+        }
         tot[c] = CTX_NB;
     }
     adec d = { 0, AC_MAX, 0, in, len, 0 };
@@ -749,13 +762,20 @@ void calic_codec_decode(const uint8_t *in, long len, int64_t *img,
             if (k == 0) u = 0;
             else if (k == 1) u = 1;
             else {
-                uint64_t mant = 0;
-                for (int j = 0; j < k - 1; j++) {
+                int *g = mf[ebin][k]; long mtv = mt[ebin][k];
+                int b1 = (ad_target(&d, (uint64_t)mtv) >= (uint64_t)g[0]) ? 1 : 0;
+                ad_update(&d, b1 == 0 ? 0 : (uint64_t)g[0], (uint64_t)g[b1], (uint64_t)mtv);
+                g[b1] += CTX_MINCR; mt[ebin][k] += CTX_MINCR;
+                if (mt[ebin][k] >= CTX_MRESCALE) {
+                    g[0] = (g[0] + 1) >> 1; g[1] = (g[1] + 1) >> 1; mt[ebin][k] = g[0] + g[1];
+                }
+                uint64_t low = 0;
+                for (int j = 0; j < k - 2; j++) {
                     int bit = (ad_target(&d, 2) >= 1) ? 1 : 0;
                     ad_update(&d, (uint64_t)bit, 1, 2);
-                    mant = (mant << 1) | (uint64_t)bit;
+                    low = (low << 1) | (uint64_t)bit;
                 }
-                u = (1ULL << (k - 1)) | mant;
+                u = (1ULL << (k - 1)) | ((uint64_t)b1 << (k - 2)) | low;
             }
             int64_t r = (int64_t)(u >> 1) ^ -(int64_t)(u & 1);
             int64_t e = r + corr;

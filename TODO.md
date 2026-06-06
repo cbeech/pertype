@@ -7,6 +7,18 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
 
 ---
 
+## 0a. Image frontier: CALIC top-mantissa-bit modelling (shipped)
+
+- [x] **CALIC now models the top mantissa bit per (energy-bin, k)** — the same lever as the
+      ctxcoder change, applied to the image/raw/medical/scientific-image coder, which emitted
+      its mantissa bits raw. Measured first (+0.8–1.9% on Kodak luma, no overfitting), shipped
+      in both the pure-Python `_calic_codec_py` and the **byte-identical C native**
+      `calic_codec_{encode,decode}` (verified identical + round-trip). End-to-end on continuous-
+      tone images: **Kodak 2.46→2.51× (the JPEG-XL gap −6%→−4%, now *matches* WebP-lossless),
+      DEM 4.49→4.56×**, medical/hyperspectral small gains. Broad — CALIC backs every photo / raw /
+      DEM / medical / FITS / hyperspectral plane. The remaining ~4% to JPEG-XL is its
+      ANS-coded rich-context model (a from-scratch entropy coder — the genuinely large frontier).
+
 ## 0b. Entropy coder: top-mantissa-bit modelling (shipped)
 
 - [x] **ctxcoder now models the top mantissa bit per (context, k).** The coder emitted the
