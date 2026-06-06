@@ -41,8 +41,14 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
       adaptive model (~5.55), and the mantissa lever is fully captured (2nd bit only +0.3%).
       The real gaps are the **models** — JXL's self-correcting predictor + context tree
       (images, −4%) and zstd's optimal LZ + FSE parser (text, −6%) — each a large, single-domain,
-      high-risk rewrite for a few percent. Full write-up + the predictor-prototype path if ever
-      wanted: `docs/ans-coder-scoping.md`.
+      high-risk rewrite for a few percent. Full write-up: `docs/ans-coder-scoping.md`.
+- [x] **Image self-correcting predictor — prototyped, measured below bar (don't build).** The
+      measure-first follow-up: a JXL-style weighted predictor (6 sub-predictors blended by
+      inverse recent error) beats bare GAP by only **+1.9%** (< the +3% bar) and *loses* to full
+      CALIC by 3.4% — because CALIC's bias-correction term is already self-correcting, so the
+      gains overlap. Dropping it into the codec would yield <2% for a large native rewrite. The
+      −4% to JPEG-XL is the diffuse sum of predictor + MA-tree context, not one closable lever.
+      Details in `docs/ans-coder-scoping.md` §6.
 
 ## 0. Measured dead-ends (ruled out — don't re-chase)
 

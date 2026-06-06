@@ -74,5 +74,23 @@ compression frontier for this architecture is a defended plateau:
 If a future goal specifically wants the image crown, the right target is the **predictor +
 context tree** (not ANS), scoped as its own measure-first project: prototype a weighted
 self-correcting predictor in Python, measure the residual-entropy drop on Kodak vs CALIC,
-and only commit to the native port if the prototype clears, say, +3%. Until then this is
-the wrong place to spend effort.
+and only commit to the native port if the prototype clears, say, +3%.
+
+## 6. Predictor prototype — measured, also a no-go (don't build)
+
+Built the measure-first prototype: a JXL-style **self-correcting weighted predictor** (blend
+of 6 causal sub-predictors — W, N, W+N−NW, N+NE−NW, 2W−WW, 2N−NN — weighted by inverse
+decaying per-predictor error). Measured the residual on Kodak luma crops, coded with the
+same `ctxcoder`:
+
+| | vs GAP (same coder) | vs full CALIC |
+|---|---|---|
+| self-correcting predictor | **+1.9%** | **−3.4%** |
+
+It beats the bare GAP predictor by only **+1.9% — below the +3% bar — and *loses* to full
+CALIC by 3.4%**. The reason: CALIC's **bias-correction term (B/C per context) is already a
+self-correcting mechanism**, so it overlaps with what the weighted predictor recovers;
+dropping the predictor into the full codec would yield *less* than the +1.9% measured against
+bare GAP. Not worth the large, image-only, high-risk native rewrite. **Decision: don't build
+the predictor either.** The image codec is at its practical plateau; the −4% to JPEG-XL is
+the diffuse sum of its predictor *and* MA-tree context model, not a single closable lever.
