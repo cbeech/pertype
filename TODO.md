@@ -33,6 +33,17 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
       (The earlier "~13% headroom" estimate was order-2 overfitting; ~+2% avg is the real,
       achievable number. Modelling a 2nd mantissa bit added only ~+0.3% — not worth it.)
 
+## 0c. ANS coder — scoped, NOT recommended (see docs/ans-coder-scoping.md)
+
+- [x] **Scoped the ANS entropy coder; conclusion: don't build it for ratio.** ANS ≈ arithmetic
+      in compression (it's a *speed* win); we already code at the model's entropy. Evidence:
+      our CALIC coding (~5.27 b/px on Kodak luma) already beats a naive full-distribution
+      adaptive model (~5.55), and the mantissa lever is fully captured (2nd bit only +0.3%).
+      The real gaps are the **models** — JXL's self-correcting predictor + context tree
+      (images, −4%) and zstd's optimal LZ + FSE parser (text, −6%) — each a large, single-domain,
+      high-risk rewrite for a few percent. Full write-up + the predictor-prototype path if ever
+      wanted: `docs/ans-coder-scoping.md`.
+
 ## 0. Measured dead-ends (ruled out — don't re-chase)
 
 - [x] **CALIC intra for high-motion video — measured 0% gain, NOT worth it.** The earlier
