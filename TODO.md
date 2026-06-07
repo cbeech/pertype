@@ -154,10 +154,12 @@ fast rather than hindered):
       Python's `auto_decompress` (CSV 14.8×, records 4.38×). Added the reversible **`transform`**
       ops (`delta`/`split`), byte-identical to Python. Added the full **`imagecodec`** (MED +
       `predictors`, per-plane MED/CALIC/RLE selection, gray/Bayer/RGB, inter-slice-delta
-      volumes — RIMG/RVOL) and the full **`audiocodec`** (mid/side → fixed-2 → 3-stage
-      sign-sign LMS cascade → adaptive Rice or ctxcoder — AUD1), both byte-identical to
-      Python/C (wrapping integer arithmetic to match the C `-fwrapv`; f64 Rice run). Remaining
-      toward a *fully* standalone library: the video codec and the trained text/model codec.
+      volumes — RIMG/RVOL), the full **`audiocodec`** (mid/side → fixed-2 → 3-stage
+      sign-sign LMS cascade → adaptive Rice or ctxcoder — AUD1; byte-identical via wrapping
+      integer arithmetic + f64 Rice run), and the full **`videocodec`** (per-16×16-block
+      SKIP/INTER-qpel/INTRA-MED selection, hierarchical motion search, ctxcoder mode/MV/
+      residual streams, YUV — VID1/VYUV; byte-identical, every numpy motion-search tie-break
+      reproduced). Remaining toward a *fully* standalone library: the trained text/model codec.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to

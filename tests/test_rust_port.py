@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from compressor import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
-                        imagecodec, predictors, transform)
+                        imagecodec, predictors, transform, videocodec)
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -27,7 +27,8 @@ def lib():
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
-                 "volume_encode", "volume_decode", "audio_encode", "audio_decode"):
+                 "volume_encode", "volume_decode", "audio_encode", "audio_decode",
+                 "video_encode", "video_decode"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -194,6 +195,40 @@ def test_audiocodec_byte_identical(lib):
         pb = audiocodec.encode(pcm, 44100, coder=coder)
         assert np.array_equal(audiocodec.decode(rb)[0], pcm)             # py decodes rust
         assert np.array_equal(rdec(pb), pcm)                             # rust decodes py
+
+
+def test_videocodec_byte_identical(lib):
+    # synth video: a panning textured gradient (+ noise) so skip/inter/intra all fire,
+    # H,W multiples of 16. Motion search, qpel, mode decision must all match numpy exactly.
+    rng = np.random.default_rng(6)
+    T, H, W = 5, 48, 64
+    base = (np.add.outer(np.arange(H), np.arange(W)) % 256).astype(np.int64)
+    frames = np.empty((T, H, W), np.uint8)
+    for t in range(T):
+        shifted = np.roll(base, shift=(t, 2 * t), axis=(0, 1))
+        noisy = (shifted + rng.integers(-4, 5, (H, W))) % 256
+        frames[t] = noisy.astype(np.uint8)
+
+    data = np.ascontiguousarray(frames).tobytes()
+    out = (ctypes.c_uint8 * (len(data) + (1 << 20)))()
+    buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+    m = lib.video_encode(buf, T, H, W, out, len(out))
+    assert m >= 0
+    rb = bytes(out[:m])
+    assert rb == videocodec.encode(frames)                                # byte-identical
+
+    # rust round-trip
+    dout = (ctypes.c_uint8 * (T * H * W))()
+    dbuf = (ctypes.c_uint8 * len(rb)).from_buffer_copy(rb)
+    dm = lib.video_decode(dbuf, len(rb), dout, len(dout))
+    assert dm == T * H * W
+    assert np.array_equal(np.array(dout[:dm], np.uint8).reshape(T, H, W), frames)
+    # py decodes rust, rust decodes py
+    assert np.array_equal(videocodec.decode(rb), frames)
+    pb = videocodec.encode(frames)
+    pbuf = (ctypes.c_uint8 * len(pb)).from_buffer_copy(pb)
+    dm2 = lib.video_decode(pbuf, len(pb), dout, len(dout))
+    assert np.array_equal(np.array(dout[:dm2], np.uint8).reshape(T, H, W), frames)
 
 
 def test_auto_cross_compatible(lib):

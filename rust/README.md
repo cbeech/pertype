@@ -30,6 +30,10 @@ a drop-in for the ctypes loader. Modules:
   LMS cascade → adaptive Rice or `ctxcoder` (`AUD1`). Byte-identical to Python/C for both
   back-ends (integer cascade uses wrapping arithmetic to match the C `-fwrapv`; the Rice
   run-magnitude uses `f64` exactly as the reference).
+- **`videocodec`** — the lossless video codec: per-16×16-block SKIP / INTER (quarter-pel
+  motion-compensated) / INTRA (MED) selection, hierarchical motion search, `ctxcoder`-coded
+  mode/MV/residual streams, independent-plane YUV (`VID1` / `VYUV`). Byte-identical to Python
+  (every numpy motion-search tie-break reproduced — strict `<`, zero-MV preference on ties).
 
 **Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
 **byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
@@ -42,7 +46,7 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-Remaining toward a fully standalone library: the video and trained-text codecs.
+Remaining toward a fully standalone library: the trained-text/model codec.
 
 ## Standalone CLIs (no Python)
 
