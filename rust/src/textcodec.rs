@@ -6,8 +6,30 @@
 //! uses `f64` log2 prices exactly as the reference, so the encode is byte-identical too.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::transform;
+
+/// Fast hasher for the integer keys used by the LZ/dict match-finders. The default
+/// `SipHash` dominates the parse on small keys; a single multiply (Fibonacci hashing)
+/// distributes 24-/16-bit keys well and is ~an order of magnitude cheaper. Keys stay
+/// exact (the map still resolves true collisions), so the produced tokens are unchanged.
+#[derive(Default)]
+struct IntHasher(u64);
+impl Hasher for IntHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    fn write_u32(&mut self, i: u32) {
+        self.0 = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
 // --- bit I/O (MSB-first) -----------------------------------------------------
 
@@ -221,7 +243,7 @@ impl FreqModel {
 
 struct Dictionary {
     patterns: Vec<Vec<u8>>,
-    index: HashMap<[u8; 2], Vec<usize>>, // 2-byte prefix -> pattern ids, longest-first
+    index: IntMap<u16, Vec<usize>>, // 2-byte prefix -> pattern ids, longest-first
 }
 impl Dictionary {
     fn deserialize(blob: &[u8]) -> Self {
@@ -234,10 +256,10 @@ impl Dictionary {
             patterns.push(blob[pos..pos + len].to_vec());
             pos += len;
         }
-        let mut index: HashMap<[u8; 2], Vec<usize>> = HashMap::new();
+        let mut index: IntMap<u16, Vec<usize>> = Default::default();
         for (pid, p) in patterns.iter().enumerate() {
             if p.len() >= 2 {
-                index.entry([p[0], p[1]]).or_default().push(pid);
+                index.entry((p[0] as u16) << 8 | p[1] as u16).or_default().push(pid);
             }
         }
         for bucket in index.values_mut() {
@@ -250,7 +272,7 @@ impl Dictionary {
         if pos + 2 > data.len() {
             return None;
         }
-        let bucket = self.index.get(&[data[pos], data[pos + 1]])?;
+        let bucket = self.index.get(&((data[pos] as u16) << 8 | data[pos + 1] as u16))?;
         for &pid in bucket {
             let pat = &self.patterns[pid];
             let len = pat.len();
@@ -353,12 +375,28 @@ enum Tok {
 
 // --- LZ forward match-finder (CSR over data positions) ----------------------
 
+/// Common-prefix length of `buf[i..]` and `buf[j..]`, capped at `limit`. Compares 8
+/// bytes at a time (little-endian word + first-mismatch via the XOR's low set bit), so
+/// long matches cost O(L/8); the result is identical to the byte-by-byte loop.
 fn match_len(buf: &[u8], i: usize, j: usize, limit: usize) -> usize {
     let mut n = 0;
+    while n + 8 <= limit {
+        let a = u64::from_le_bytes(buf[i + n..i + n + 8].try_into().unwrap());
+        let b = u64::from_le_bytes(buf[j + n..j + n + 8].try_into().unwrap());
+        if a != b {
+            return n + (a ^ b).trailing_zeros() as usize / 8;
+        }
+        n += 8;
+    }
     while n < limit && buf[i + n] == buf[j + n] {
         n += 1;
     }
     n
+}
+
+#[inline]
+fn key3(buf: &[u8], i: usize) -> u32 {
+    (buf[i] as u32) << 16 | (buf[i + 1] as u32) << 8 | buf[i + 2] as u32
 }
 
 struct Forward {
@@ -369,11 +407,12 @@ struct Forward {
 
 fn lz_forward(combined: &[u8], base: usize) -> Forward {
     let nn = combined.len();
-    let mut head: HashMap<[u8; 3], usize> = HashMap::new();
+    let mut head: IntMap<u32, usize> = Default::default();
+    head.reserve(nn);
     let mut prev = vec![usize::MAX; nn];
-    let insert = |head: &mut HashMap<[u8; 3], usize>, prev: &mut Vec<usize>, i: usize| {
+    let insert = |head: &mut IntMap<u32, usize>, prev: &mut [usize], i: usize| {
         if i + MIN_MATCH <= nn {
-            let key = [combined[i], combined[i + 1], combined[i + 2]];
+            let key = key3(combined, i);
             prev[i] = *head.get(&key).unwrap_or(&usize::MAX);
             head.insert(key, i);
         }
@@ -384,39 +423,28 @@ fn lz_forward(combined: &[u8], base: usize) -> Forward {
     let mut off = vec![0usize; nn - base + 1];
     let mut cand_len = Vec::new();
     let mut cand_dist = Vec::new();
-    // ordered map length -> (vec index, dist)
+    // Per distinct match length keep the first-seen (smallest, since the chain runs
+    // newest-first so distance increases monotonically) candidate, in first-appearance
+    // order. A generation-stamped array does the dedup with no per-position allocation.
+    let mut seen = vec![0u32; MAX_MATCH + 1];
+    let mut gen = 0u32;
     for p in base..nn {
         off[p - base] = cand_len.len();
-        let mut found_idx: HashMap<usize, usize> = HashMap::new();
-        let mut order: Vec<(usize, usize)> = Vec::new(); // (length, dist) insertion order
         if p + MIN_MATCH <= nn {
-            let key = [combined[p], combined[p + 1], combined[p + 2]];
-            let mut cand = *head.get(&key).unwrap_or(&usize::MAX);
+            gen += 1;
+            let mut cand = *head.get(&key3(combined, p)).unwrap_or(&usize::MAX);
             let mut chain = MAX_CHAIN;
             let limit = MAX_MATCH.min(nn - p);
             while cand != usize::MAX && p - cand <= WINDOW && chain > 0 {
                 let length = match_len(combined, cand, p, limit);
-                if length >= MIN_MATCH {
-                    let dist = p - cand;
-                    match found_idx.get(&length) {
-                        Some(&oi) => {
-                            if dist < order[oi].1 {
-                                order[oi].1 = dist;
-                            }
-                        }
-                        None => {
-                            found_idx.insert(length, order.len());
-                            order.push((length, dist));
-                        }
-                    }
+                if length >= MIN_MATCH && seen[length] != gen {
+                    seen[length] = gen;
+                    cand_len.push(length);
+                    cand_dist.push(p - cand);
                 }
                 cand = prev[cand];
                 chain -= 1;
             }
-        }
-        for (length, dist) in &order {
-            cand_len.push(*length);
-            cand_dist.push(*dist);
         }
         insert(&mut head, &mut prev, p);
     }
