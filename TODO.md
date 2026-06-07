@@ -358,17 +358,24 @@ temporal redundancy, which is usually the dominant source of compressibility.
       block-mode mix proves the bottleneck: high-motion is **~89% intra**, only ~5% inter,
       so motion search was never the limiter.
 - [x] **CALIC intra for video — measured below bar, NOT worth it.** The "stronger intra"
-      lever (high-motion frames are ~89% intra; our intra is plain MED vs FFV1's context-
-      modelled intra) was measured before building (`scripts/video_intra_benchmark.py`):
-      coding each real CIF Y frame with CALIC vs MED+ctxcoder. CALIC wins **+4.6% (akiyo,
-      low-motion) / +4.2% (foreman, medium)** but only **+0.36% on stefan (high-motion — the
-      target)**. The lever helps exactly where it isn't needed: CALIC's edge-following GAP
-      predictor shines on smooth content, but those frames are already inter/skip-coded (their
-      intra blocks are a minority), while on high-motion content — where intra dominates — the
-      residual is near-random so CALIC gains ~nothing. Net realized gain is below the +3% bar
-      and ≈0 where it was meant to help. The high-motion gap to FFV1 is not closable via a
-      smarter intra *predictor*; it would need a richer context-modelled *entropy* path
-      (FFV1/JXL-class), the same large single-domain rewrite already ruled out in §0c.
+      lever (swap the intra path's plain MED for the CALIC-class predictor + energy-conditioned
+      coding in `predictors.py`) was measured before building, two ways
+      (`scripts/video_intra_benchmark.py`, real CIF clips):
+      * **Whole-frame proxy** — CALIC vs MED+ctxcoder per Y frame: CALIC wins +4.6% (akiyo,
+        low-motion) / +4.1% (foreman, medium) but only **+0.40% on stefan (high-motion)**.
+      * **Mode-weighted realized gain** (decisive) — the real codec only intra-codes *some*
+        blocks (`videocodec.mode_stats`), and the realized intra-path gain is bounded by
+        `intra_pct × frame_gain` (an *upper* bound: the actually-intra blocks are the hard,
+        non-smooth regions where CALIC helps least). Measured: **akiyo 0.4%×4.56% = 0.02%,
+        foreman 27.4%×4.12% = 1.13%, stefan 37.0%×0.40% = 0.15%** — all far below the +3% bar.
+
+      Dead from both ends: where intra is common (high-motion) CALIC's predictor barely beats
+      MED (near-random residuals); where CALIC shines (smooth low-motion) almost nothing is
+      intra (akiyo is 56% skip / 44% inter, 0.4% intra). **The earlier "~89% intra on high-
+      motion" premise also fails on these clips — stefan is 37% intra.** The high-motion gap to
+      FFV1 is not closable via a smarter intra *predictor*; it would need a richer context-
+      modelled *entropy* path (FFV1/JXL-class), the same large single-domain rewrite ruled out
+      in §0c.
 
 ---
 

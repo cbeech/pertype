@@ -5,17 +5,23 @@ intra-coded and our intra is plain MED, while FFV1 uses context-modelled intra. 
 hypothesis: swapping the intra path for the CALIC predictor + energy-conditioned coding
 (already in predictors.py) would convert the high-motion losses.
 
-Frame 0 is all-intra and high-motion frames are ~89% intra, so coding a *whole* Y frame
-with each method is a sound (slightly optimistic) proxy for the intra-path gain. We compare,
-per real CIF frame, the coded bytes of:
-  * current intra : ctxcoder.encode(frame - MED(frame))
-  * CALIC         : predictors.calic_full_encode(frame)
+Two measurements, the second decisive:
 
-Result (akiyo=low-motion, foreman=medium, stefan=high-motion — the target):
-CALIC wins +4.6% / +4.2% on low/medium motion but only +0.36% on high-motion stefan.
-The smooth content where CALIC shines is already inter/skip-coded in the real codec; on
-high-motion (where intra dominates) the residual is near-random, so CALIC gains nothing.
-Net realized gain is below the +3% bar and ~zero where it was supposed to help. NOT built.
+1. Whole-frame proxy — code each Y frame with both methods (current intra =
+   ctxcoder.encode(frame - MED(frame)); CALIC = predictors.calic_full_encode(frame)).
+   CALIC wins +4.6%/+4.2% on low/medium motion but only ~0.4% on high-motion stefan.
+
+2. Mode-weighted realized gain — the real codec only intra-codes *some* blocks
+   (videocodec.mode_stats gives the mix). The realized intra-path gain is bounded by
+   intra_pct × (whole-frame CALIC gain), and it's an *upper* bound because the actually-intra
+   blocks are the hard-to-predict regions (that's why they weren't inter-coded), where CALIC's
+   smooth-content edge helps least. Measured:
+     akiyo   intra  0.4%  × 4.56%  = 0.02%   (almost nothing is intra — it's 56% skip / 44% inter)
+     foreman intra 27.4%  × 4.12%  = 1.13%
+     stefan  intra 37.0%  × 0.40%  = 0.15%   (high-motion: CALIC barely beats MED here)
+   All far below the +3% bar. The roadmap's "high-motion is ~89% intra" premise also fails on
+   these clips (stefan is 37%). The lever is dead from both ends: where intra is common CALIC
+   barely helps; where CALIC helps almost nothing is intra. NOT built.
 
 Usage: PYTHONPATH=. python3 scripts/video_intra_benchmark.py [n_frames]
 """
@@ -27,9 +33,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from compressor import cli, ctxcoder, predictors
+from compressor import cli, ctxcoder, predictors, videocodec
 
-NF = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+NF = int(sys.argv[1]) if len(sys.argv) > 1 else 16
 
 
 def main():
@@ -37,26 +43,27 @@ def main():
     if not clips:
         print("no .y4m clips at ~/sci_data/video/ (local-only test pool)")
         return
-    print(f"{'clip':<14}{'MED+ctx B':>12}{'CALIC B':>12}{'CALIC gain':>12}")
-    print("-" * 50)
-    tot_med = tot_cal = 0
+    print(f"{'clip':<13}{'intra%':>8}{'inter%':>8}{'skip%':>8}"
+          f"{'CALIC frame':>13}{'realized(UB)':>14}")
+    print("-" * 64)
     for path in clips:
         name = os.path.basename(path).replace(".y4m", "")
         _, _, planes = cli._read_y4m(path)
         Y = planes[0][:NF]  # (frames, H, W) uint8
+        st = videocodec.mode_stats(Y)                       # real per-block mode mix
         med = cal = 0
         for f in Y:
             res = f.astype(np.int64) - predictors.med_predict(f.astype(np.int32)).astype(np.int64)
             med += len(ctxcoder.encode(np.ascontiguousarray(res.reshape(-1), np.int64)))
             cal += len(predictors.calic_full_encode(np.ascontiguousarray(f.astype(np.int32)), 1))
-        print(f"{name:<14}{med:>12d}{cal:>12d}{100 * (med - cal) / med:>11.2f}%")
-        tot_med += med
-        tot_cal += cal
-    print("-" * 50)
-    print(f"{'TOTAL':<14}{tot_med:>12d}{tot_cal:>12d}{100 * (tot_med - tot_cal) / tot_med:>11.2f}%")
-    print("\n(+3% bar. The TOTAL over-counts — it treats every frame as all-intra; in the real "
-          "codec the low/medium-motion frames are mostly inter-coded, so their CALIC gain is "
-          "unrealized. The decisive cell is high-motion stefan: +0.36%.)")
+        g = 100 * (med - cal) / med                         # whole-frame CALIC gain
+        realized = st["intra_pct"] / 100.0 * g              # upper bound on the real gain
+        print(f"{name:<13}{st['intra_pct']:>7.1f}%{st['inter_pct']:>7.1f}%{st['skip_pct']:>7.1f}%"
+              f"{g:>12.2f}%{realized:>13.2f}%")
+    print("-" * 64)
+    print("\n+3% bar. realized(UB) = intra_pct x whole-frame CALIC gain — an UPPER bound (the "
+          "actually-intra blocks are the hard regions where CALIC helps least, and only the "
+          "residual sub-stream changes). All clips land far below the bar. Not built.")
 
 
 if __name__ == "__main__":
