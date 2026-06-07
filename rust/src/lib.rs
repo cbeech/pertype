@@ -20,5 +20,7 @@ pub mod columnar;
 pub mod csvcolumnar;
 pub mod ctxcoder;
 pub mod floatcodec;
+pub mod imagecodec;
+pub mod predictors;
 pub mod transform;
 pub mod zlibw;

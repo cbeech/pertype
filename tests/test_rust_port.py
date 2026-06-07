@@ -11,7 +11,8 @@ import os
 import numpy as np
 import pytest
 
-from compressor import auto, columnar, csvcolumnar, ctxcoder, floatcodec, predictors, transform
+from compressor import (auto, columnar, csvcolumnar, ctxcoder, floatcodec, imagecodec,
+                        predictors, transform)
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -25,7 +26,8 @@ def lib():
     lb = ctypes.CDLL(_SO[0])
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
-                 "auto_encode", "auto_decode"):
+                 "auto_encode", "auto_decode", "image_encode", "image_decode",
+                 "volume_encode", "volume_decode"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -127,6 +129,38 @@ def test_transform_byte_identical(lib):
         assert rust_op(lib.transform_delta_fwd, s) == transform.apply(data, (("delta", s),))
     for n in (2, 3, 8):
         assert rust_op(lib.transform_split_fwd, n) == transform.apply(data, (("split", n),))
+
+
+def test_imagecodec_byte_identical(lib):
+    rng = np.random.default_rng(4)
+
+    def renc(arr, mode, signed):
+        data = np.ascontiguousarray(arr).tobytes()
+        h, w = arr.shape[:2]
+        out = (ctypes.c_uint8 * (len(data) + (1 << 16)))()
+        buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+        m = lib.image_encode(buf, len(data), h, w, arr.dtype.itemsize, mode,
+                             1 if signed else 0, out, len(out))
+        assert m >= 0
+        return bytes(out[:m])
+
+    gray = (np.cumsum(rng.integers(-4, 5, (100, 128)), axis=1) % 256).astype(np.uint8)
+    assert renc(gray, 0, False) == imagecodec.encode(gray, bayer=False)        # GRAY u8
+    rgb = rng.integers(0, 256, (64, 80, 3), dtype=np.uint8)
+    assert renc(rgb, 2, False) == imagecodec.encode(rgb)                        # RGB
+    dem = (np.cumsum(rng.integers(-3, 4, (120, 120)), axis=1) - 50).astype(np.int16)
+    assert renc(dem, 0, True) == imagecodec.encode(dem, bayer=False)            # int16 (signed)
+    bay = (np.cumsum(rng.integers(-4, 5, (96, 96)), axis=1) % 256).astype(np.uint8)
+    assert renc(bay, 1, False) == imagecodec.encode(bay, bayer=True)            # Bayer
+
+    # volume
+    vol = (np.cumsum(rng.integers(-2, 3, (6, 48, 48)), axis=0) % 3000).astype(np.uint16)
+    vdata = np.ascontiguousarray(vol).tobytes()
+    n, h, w = vol.shape
+    out = (ctypes.c_uint8 * (len(vdata) + (1 << 16)))()
+    buf = (ctypes.c_uint8 * len(vdata)).from_buffer_copy(vdata)
+    m = lib.volume_encode(buf, len(vdata), n, h, w, 2, 0, out, len(out))
+    assert m >= 0 and bytes(out[:m]) == imagecodec.encode_volume(vol)
 
 
 def test_auto_cross_compatible(lib):

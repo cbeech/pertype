@@ -23,6 +23,9 @@ a drop-in for the ctypes loader. Modules:
   / csv / columnar) — so a Rust `.az` is decoded by Python's `auto_decompress` and vice versa.
 - **`transform`** — the reversible byte transforms (`delta`, `split`), byte-identical to
   Python; the building blocks the per-type model selects.
+- **`imagecodec`** + **`predictors`** — the full image codec: per-plane MED / CALIC / RLE
+  selection, gray / Bayer / RGB modes, and inter-slice-delta volumes (`RIMG` / `RVOL`),
+  byte-identical to Python (gray/RGB/int16/Bayer/uint16-volume all verified).
 
 **Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
 **byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
@@ -35,9 +38,7 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-Remaining toward a fully standalone library: the MED predictor + the `imagecodec`
-orchestration around it (RIMG container, per-plane MED/CALIC/RLE selection — the CALIC
-engine itself is already here), and the larger text/audio/video codecs.
+Remaining toward a fully standalone library: the audio, video, and trained-text codecs.
 
 ## Standalone CLIs (no Python)
 
