@@ -6,6 +6,7 @@ description = "Rust port of the context-adaptive arithmetic residual coder (byte
 
 [dependencies]
 flate2 = "1"
+rayon = "1"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

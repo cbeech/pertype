@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use rayon::prelude::*;
+
 use crate::ctxcoder;
 use crate::zlibw;
 
@@ -246,9 +248,16 @@ fn encode_grid(data: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&u16be(k));
     out.extend_from_slice(&u32be(g.header.len()));
     out.extend_from_slice(g.header);
-    for c in 0..k {
-        let col: Vec<&[u8]> = split.iter().map(|row| row[c]).collect();
-        out.extend_from_slice(&encode_col(&col, g.delim));
+    // independent columns -> encode in parallel; order preserved, so bytes are identical.
+    let coded: Vec<Vec<u8>> = (0..k)
+        .into_par_iter()
+        .map(|c| {
+            let col: Vec<&[u8]> = split.iter().map(|row| row[c]).collect();
+            encode_col(&col, g.delim)
+        })
+        .collect();
+    for blk in coded {
+        out.extend_from_slice(&blk);
     }
     Some(out)
 }

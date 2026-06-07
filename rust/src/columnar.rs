@@ -4,6 +4,8 @@
 //! self-describing `COL1` container with a store fallback. A complete standalone codec:
 //! a blob it produces decodes in the Python version and vice versa.
 
+use rayon::prelude::*;
+
 use crate::ctxcoder;
 
 const CMAGIC: &[u8] = b"COL1";
@@ -79,8 +81,13 @@ fn try_schema(data: &[u8], schema: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&u32be(n));
     out.extend_from_slice(&u16be(trailing.len()));
     out.extend_from_slice(trailing);
-    for col in deinterleave(body, n, schema) {
-        let (sel, blob) = ctxcoder::code_idx(&col);
+    // columns are independent -> code them in parallel; collect preserves order, so the
+    // container (and thus the bytes) are identical to the serial version.
+    let coded: Vec<(u8, Vec<u8>)> = deinterleave(body, n, schema)
+        .par_iter()
+        .map(|col| ctxcoder::code_idx(col))
+        .collect();
+    for (sel, blob) in coded {
         out.push(sel);
         out.extend_from_slice(&u32be(blob.len()));
         out.extend_from_slice(&blob);

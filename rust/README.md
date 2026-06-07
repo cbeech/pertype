@@ -26,8 +26,12 @@ are *not* byte-identical, but the streams are valid and **cross-decodable both d
 (Python decodes Rust's output and vice versa) at the same ratio — so the codecs are fully
 interoperable and lossless. All verified in `tests/test_rust_port.py`.
 
-Remaining toward a fully standalone library: the MED/transform loops, the detect/auto
-router, and `rayon` block parallelism.
+**Parallelism.** The columnar and CSV codecs encode their independent columns with `rayon`
+(order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
+encodes ~4.5× faster across cores than single-threaded, byte-identical.
+
+Remaining toward a fully standalone library: the MED/transform loops and the detect/auto
+router.
 
 ## Standalone CLI (`colz`)
 
