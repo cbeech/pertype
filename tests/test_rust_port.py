@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pytest
 
-from compressor import auto, columnar, csvcolumnar, ctxcoder, floatcodec, predictors
+from compressor import auto, columnar, csvcolumnar, ctxcoder, floatcodec, predictors, transform
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -112,6 +112,21 @@ def test_csvcolumnar_cross_compatible(lib):
     assert _col(lib, lib.csv_decode, rb) == data                          # rust round-trip
     assert csvcolumnar.decode(rb) == data                                 # py decodes rust
     assert _col(lib, lib.csv_decode, csvcolumnar.encode(data)) == data    # rust decodes py
+
+
+def test_transform_byte_identical(lib):
+    data = bytes((i * 37 >> 3) & 0xFF for i in range(1000))
+
+    def rust_op(fn, arg):
+        out = (ctypes.c_uint8 * len(data))()
+        buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+        fn(buf, len(data), arg, out)
+        return bytes(out)
+
+    for s in (1, 2, 4):
+        assert rust_op(lib.transform_delta_fwd, s) == transform.apply(data, (("delta", s),))
+    for n in (2, 3, 8):
+        assert rust_op(lib.transform_split_fwd, n) == transform.apply(data, (("split", n),))
 
 
 def test_auto_cross_compatible(lib):
