@@ -18,6 +18,9 @@ a drop-in for the ctypes loader. Modules:
   `FLT1`). Wins on fixed-precision scientific floats (weather/climate grids).
 - **`csvcolumnar`** — delimited-text table codec (grid detect → transpose → per-column
   numeric / text-dictionary / deflate → `CSV1`). Wins on numeric CSV.
+- **`auto`** — front door: tries the codecs above + deflate + store, verifies, keeps the
+  smallest, and emits the same **`AZ` container as Python's `auto`** (methods store / deflate
+  / csv / columnar) — so a Rust `.az` is decoded by Python's `auto_decompress` and vice versa.
 
 **Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
 **byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
@@ -33,18 +36,21 @@ encodes ~4.5× faster across cores than single-threaded, byte-identical.
 Remaining toward a fully standalone library: the MED/transform loops and the detect/auto
 router.
 
-## Standalone CLI (`colz`)
-
-A no-Python command-line tool for the columnar record codec (output interchangeable with
-the Python codec):
+## Standalone CLIs (no Python)
 
 ```bash
 cargo build --release
-target/release/colz enc points.bin points.col   # auto-detects the record period
-target/release/colz dec points.col points.out   # byte-exact round-trip
+# auto: detect/route to the best Rust codec, output decodable by Python's auto too
+target/release/azc enc data.csv data.az          # e.g. power CSV -> 14.8x [csv->columnar]
+target/release/azc dec data.az  roundtrip.csv
+
+# colz: the columnar record codec directly
+target/release/colz enc points.bin points.col    # auto-detects the record period (LiDAR 4.38x)
+target/release/colz dec points.col points.out
 ```
 
-(End-to-end on real LiDAR point data: 4.38×, and the Python codec decodes the result.)
+(`azc`'s `.az` output is interchangeable with the Python `auto`; `colz`'s `.col` with the
+Python `columnar` — verified end-to-end on real LiDAR / power-CSV data.)
 
 ## Build & verify
 

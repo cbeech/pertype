@@ -147,8 +147,13 @@ fast rather than hindered):
       **`csvcolumnar`** (delimited-table transpose — power CSV 15.84×): both round-trip and
       **cross-compatible both directions** with Python at the same ratio (their zlib sub-blobs
       aren't byte-identical to CPython's — different deflate impl — but are valid + cross-
-      decodable; the pure-arithmetic codecs stay byte-identical). Remaining toward a fully
-      standalone library: the MED/transform loops, the detect/auto router, then `rayon`.
+      decodable; the pure-arithmetic codecs stay byte-identical). Added **`rayon` block
+      parallelism** over independent columns (columnar/CSV) — ~4.5× on the 34-field LiDAR
+      record, byte-identical. Added a Rust **`auto` router + `azc` CLI** that emits the same
+      `AZ` container as Python's `auto` (store/deflate/csv/columnar), cross-decodable by
+      Python's `auto_decompress` (CSV 14.8×, records 4.38×). Remaining toward a *fully*
+      standalone library: the MED/transform loops, the detect heuristics, and the larger
+      text/audio/video codecs.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to

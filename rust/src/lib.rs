@@ -14,6 +14,7 @@
 //! `columnar_encode`/`columnar_decode`.
 
 pub mod arith;
+pub mod auto;
 pub mod calic;
 pub mod columnar;
 pub mod csvcolumnar;

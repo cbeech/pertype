@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pytest
 
-from compressor import columnar, csvcolumnar, ctxcoder, floatcodec, predictors
+from compressor import auto, columnar, csvcolumnar, ctxcoder, floatcodec, predictors
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -24,7 +24,8 @@ pytestmark = pytest.mark.skipif(not _SO, reason="Rust cdylib not built (cargo bu
 def lib():
     lb = ctypes.CDLL(_SO[0])
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
-                 "float_encode", "float_decode", "csv_encode", "csv_decode"):
+                 "float_encode", "float_decode", "csv_encode", "csv_decode",
+                 "auto_encode", "auto_decode"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -111,3 +112,12 @@ def test_csvcolumnar_cross_compatible(lib):
     assert _col(lib, lib.csv_decode, rb) == data                          # rust round-trip
     assert csvcolumnar.decode(rb) == data                                 # py decodes rust
     assert _col(lib, lib.csv_decode, csvcolumnar.encode(data)) == data    # rust decodes py
+
+
+def test_auto_cross_compatible(lib):
+    # the Rust auto produces the same AZ container Python's auto_decompress reads
+    rows = ["a;b;n"] + [f"2024-01-01;{i/100:.2f};{i}" for i in range(1500)]
+    data = ("\n".join(rows) + "\n").encode()
+    rb = _col(lib, lib.auto_encode, data)
+    assert auto.auto_decompress(rb) == data                               # py decodes rust .az
+    assert _col(lib, lib.auto_decode, auto.auto_compress(data)) == data   # rust decodes py .az
