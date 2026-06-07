@@ -12,10 +12,12 @@
 //! * `imagecodec`/`audiocodec`/`videocodec` — the full image, audio and video codecs
 //!   (MED/CALIC/RLE; mid/side + LMS + Rice; motion-compensated inter), byte-identical to
 //!   Python/C.
+//! * `textcodec` — the trained per-type text/byte codec (transform → cost-optimal LZ+dict
+//!   parse → WNC arithmetic coding), byte-identical including the `f64`-priced parse.
 //!
-//! C ABI exported: `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
-//! `columnar_encode`/`columnar_decode`, `image_encode`/`image_decode`,
-//! `audio_encode`/`audio_decode`, `video_encode`/`video_decode`, …
+//! This is the feature-complete port: every `compressor/` codec has a Rust twin behind the
+//! same C ABI (`ctx_encode`/`ctx_decode`, `calic_codec_encode`/…, `image_encode`/…,
+//! `audio_encode`/…, `video_encode`/…, `text_compress`/`text_decompress`, etc.).
 
 pub mod arith;
 pub mod audiocodec;
@@ -27,6 +29,7 @@ pub mod ctxcoder;
 pub mod floatcodec;
 pub mod imagecodec;
 pub mod predictors;
+pub mod textcodec;
 pub mod transform;
 pub mod videocodec;
 pub mod zlibw;

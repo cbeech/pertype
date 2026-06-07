@@ -13,6 +13,9 @@ import pytest
 
 from compressor import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
                         imagecodec, predictors, transform, videocodec)
+from compressor import model as textmodel
+from compressor.codec import compress as text_compress
+from compressor.codec import decompress as text_decompress
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -28,7 +31,7 @@ def lib():
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
                  "volume_encode", "volume_decode", "audio_encode", "audio_decode",
-                 "video_encode", "video_decode"):
+                 "video_encode", "video_decode", "text_compress", "text_decompress"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -229,6 +232,55 @@ def test_videocodec_byte_identical(lib):
     pbuf = (ctypes.c_uint8 * len(pb)).from_buffer_copy(pb)
     dm2 = lib.video_decode(pbuf, len(pb), dout, len(dout))
     assert np.array_equal(np.array(dout[:dm2], np.uint8).reshape(T, H, W), frames)
+
+
+def _text_codec(lib, fn, model_bytes, data):
+    out = (ctypes.c_uint8 * (len(data) * 4 + (1 << 21)))()
+    mbuf = (ctypes.c_uint8 * len(model_bytes)).from_buffer_copy(model_bytes)
+    dbuf = (ctypes.c_uint8 * max(1, len(data))).from_buffer_copy(data or b"\x00")
+    m = fn(mbuf, len(model_bytes), dbuf, len(data), out, len(out))
+    assert m >= 0
+    return bytes(out[:m])
+
+
+def test_textcodec_byte_identical(lib):
+    # The full trained text/byte codec: transform -> cost-optimal LZ+dict parse ->
+    # arithmetic-coded tokens. Byte-identical including the f64-priced optimal parse.
+    def check(model, payloads):
+        mb = model.save()
+        for t in payloads:
+            pc = text_compress(t, model)
+            rc = _text_codec(lib, lib.text_compress, mb, t)
+            assert rc == pc                                            # byte-identical
+            assert _text_codec(lib, lib.text_decompress, mb, rc) == t  # rust round-trip
+            assert text_decompress(rc, model) == t                     # py decodes rust
+            assert _text_codec(lib, lib.text_decompress, mb, pc) == t  # rust decodes py
+
+    # 1) dict-only model (JSON-like)
+    js = [b'{"name":"item%d","value":%d,"ok":true}' % (i, i * 7) for i in range(80)]
+    mj = textmodel.train(js, type_id="json", max_patterns=256)
+    check(mj, [js[3], b'{"name":"X","value":1,"ok":false}' * 5, b"", bytes(range(256)) * 2])
+
+    # 2) LZ cost-optimal model (forced blob): the float-priced parse path
+    html = [b"<html><head><title>Page %d</title></head><body><p>lorem %d ipsum</p></body></html>"
+            % (i, i * 3) for i in range(120)]
+    blob = textmodel._build_blob(html, cap=1 << 15)
+    d, mm, dm, mo = textmodel._artifacts(html, blob, 512, 3, 256, textmodel.MAX_CHAIN)
+    ml = textmodel.Model(type_id="html", dictionary=d, blob=blob, main_model=mm,
+                         dist_model=dm, mode_model=mo, transform=(), use_lz=True)
+    check(ml, [html[7], b"<html>" * 30, b"novel \x00\x01 binary" * 4, b""])
+
+    # 3) each transform (delta/split/xor/fcm) round-trips byte-identically
+    import math
+    import struct
+    fs = [b"".join(struct.pack("<d", math.sin((i + k) * 0.01) * 1000.0 + k)
+                    for i in range(300)) for k in range(30)]
+    for tspec in [(("delta", 4), ("split", 2)), (("xor", 8), ("split", 8)), (("fcm", 16),)]:
+        ts = [transform.apply(s, tspec) for s in fs]
+        d, mm, dm, mo = textmodel._artifacts(ts, b"", 256, 3, 256, textmodel.MAX_CHAIN)
+        mt = textmodel.Model(type_id="x", dictionary=d, blob=b"", main_model=mm,
+                             dist_model=dm, mode_model=mo, transform=tspec, use_lz=False)
+        check(mt, [fs[5]])
 
 
 def test_auto_cross_compatible(lib):

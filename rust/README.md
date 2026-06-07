@@ -34,9 +34,16 @@ a drop-in for the ctypes loader. Modules:
   motion-compensated) / INTRA (MED) selection, hierarchical motion search, `ctxcoder`-coded
   mode/MV/residual streams, independent-plane YUV (`VID1` / `VYUV`). Byte-identical to Python
   (every numpy motion-search tie-break reproduced — strict `<`, zero-MV preference on ties).
+- **`textcodec`** — the trained per-file-type text/byte codec: loads a Python-trained model
+  (`CMP7`) and runs the full pipeline — reversible transform → cost-optimal LZ + dictionary
+  parse → Witten–Neal–Cleary arithmetic coding of the token stream → `CZ` container. The
+  decode path is pure integer arithmetic; the cost-optimal parse prices tokens with the same
+  `f64` `log2` costs as the reference, so the **whole codec is byte-identical** — including
+  the float-priced optimal parse, repeat-offset cache, and all four transforms.
 
-**Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
-**byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
+**Guarantee.** Every codec except the two `zlib`-using ones is **byte-identical** to
+Python/C (`ctxcoder`, `calic`, `columnar`, `transform`, `imagecodec`, `audiocodec`,
+`videocodec`, `textcodec`). `floatcodec` and `csvcolumnar` additionally use `zlib`
 (dictionary / text columns); since Rust's deflate differs from CPython's, those sub-blobs
 are *not* byte-identical, but the streams are valid and **cross-decodable both directions**
 (Python decodes Rust's output and vice versa) at the same ratio — so the codecs are fully
@@ -46,7 +53,8 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-Remaining toward a fully standalone library: the trained-text/model codec.
+The port is now **feature-complete**: every codec in `compressor/` has a byte-identical (or,
+for the two `zlib`-using codecs, cross-decodable) Rust twin behind the same C ABI.
 
 ## Standalone CLIs (no Python)
 
@@ -80,13 +88,16 @@ python3 -m pytest tests/test_rust_port.py   # byte-identical + cross-compatible 
 
 ## Status
 
-- **Correctness:** all four modules byte-identical to Python/C, cross-compatible both
-  directions, on real data (LiDAR, Kodak, sao).
+- **Correctness:** the full codec set is byte-identical to Python/C (the two `zlib` codecs
+  cross-decodable both directions), verified on real data (LiDAR, Kodak, sao) and synthetic
+  audio/video/text fixtures in `tests/test_rust_port.py`.
 - **Speed:** ctxcoder ~3.9 M residuals/s encode (≈ the C native's order; **~32× faster than
   pure Python**), memory-safe.
 - **C ABI:** `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
-  `columnar_encode`/`columnar_decode`, `float_encode`/`float_decode`,
-  `csv_encode`/`csv_decode` — drop-ins for the ctypes loader.
+  `columnar_encode`/`columnar_decode`, `float_encode`/`float_decode`, `csv_encode`/`csv_decode`,
+  `image_encode`/`image_decode`, `volume_encode`/`volume_decode`, `audio_encode`/`audio_decode`,
+  `video_encode`/`video_decode`, `text_compress`/`text_decompress`, plus the `transform_*` ops
+  and `auto_encode`/`auto_decode` — all drop-ins for the ctypes loader.
 
 ## Why Rust here
 

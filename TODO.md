@@ -130,9 +130,9 @@ fast rather than hindered):
   predictors in Python, validate the ratio on a proxy, and only push to the fast
   kernel once proven. This preserves the proxy-then-build workflow.
 
-### Rust port — STARTED (the entropy-coder hot path is ported)
+### Rust port — COMPLETE (every codec ported, byte-identical to Python/C)
 
-- [~] **`rust/` crate: core codecs ported to safe Rust, byte-identical to Python/C.** A
+- [x] **`rust/` crate: core codecs ported to safe Rust, byte-identical to Python/C.** A
       `cdylib` behind the same C ABI as the C native (drop-in for the ctypes seam), four
       modules: `arith` (WNC arithmetic coder), `ctxcoder` (context-adaptive residual coder —
       the shared entropy back-end), `calic` (full CALIC image codec — GAP + bias + energy
@@ -159,7 +159,12 @@ fast rather than hindered):
       integer arithmetic + f64 Rice run), and the full **`videocodec`** (per-16×16-block
       SKIP/INTER-qpel/INTRA-MED selection, hierarchical motion search, ctxcoder mode/MV/
       residual streams, YUV — VID1/VYUV; byte-identical, every numpy motion-search tie-break
-      reproduced). Remaining toward a *fully* standalone library: the trained text/model codec.
+      reproduced) and the full **`textcodec`** (the trained per-type text/byte codec: transform
+      → cost-optimal LZ+dictionary parse → WNC arithmetic coding → CZ container; loads a
+      Python-trained CMP7 model; byte-identical *including* the f64-`log2`-priced optimal parse,
+      the repeat-offset cache, and all four transforms delta/split/xor/fcm). **The Rust port is
+      now feature-complete** — every codec in `compressor/` has a byte-identical (or, for the
+      two zlib codecs, cross-decodable) Rust twin behind the same C ABI.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to

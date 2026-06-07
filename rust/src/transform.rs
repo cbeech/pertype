@@ -47,6 +47,148 @@ pub fn split_inv(data: &[u8], n: usize) -> Vec<u8> {
     out
 }
 
+// --- stride XOR-delta (Gorilla) ---------------------------------------------
+
+pub fn xor_fwd(data: &[u8], stride: usize) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for i in stride..out.len() {
+        out[i] ^= data[i - stride];
+    }
+    out
+}
+
+pub fn xor_inv(data: &[u8], stride: usize) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for i in stride..out.len() {
+        out[i] ^= out[i - stride];
+    }
+    out
+}
+
+// --- FCM/DFCM float64 value prediction (FPC) --------------------------------
+
+const U64M: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+
+#[inline]
+fn lead_zero_bytes(r: u64) -> u32 {
+    if r == 0 {
+        return 8;
+    }
+    let mut c = 0;
+    for p in (0..8).rev() {
+        if (r >> (8 * p)) & 0xFF != 0 {
+            break;
+        }
+        c += 1;
+    }
+    c
+}
+
+pub fn fcm_fwd(data: &[u8], bits: u32) -> Vec<u8> {
+    let n = data.len();
+    let nval = n / 8;
+    let mask: u64 = (1u64 << bits) - 1;
+    let mut fcm = vec![0u64; 1usize << bits];
+    let mut dfcm = vec![0u64; 1usize << bits];
+    let (mut fh, mut dh, mut last) = (0u64, 0u64, 0u64);
+    let mut sel = vec![0u8; nval];
+    let mut res = vec![0u64; nval];
+    for i in 0..nval {
+        let mut vb = [0u8; 8];
+        vb.copy_from_slice(&data[i * 8..i * 8 + 8]);
+        let v = u64::from_le_bytes(vb);
+        let pf = fcm[fh as usize];
+        let pd = last.wrapping_add(dfcm[dh as usize]) & U64M;
+        let rf = v ^ pf;
+        let rd = v ^ pd;
+        if lead_zero_bytes(rd) > lead_zero_bytes(rf) {
+            sel[i] = 1;
+            res[i] = rd;
+        } else {
+            res[i] = rf;
+        }
+        fcm[fh as usize] = v;
+        let diff = v.wrapping_sub(last) & U64M;
+        dfcm[dh as usize] = diff;
+        fh = ((fh << 6) ^ (v >> 48)) & mask;
+        dh = ((dh << 2) ^ (diff >> 40)) & mask;
+        last = v;
+    }
+    let mut out = Vec::with_capacity(n);
+    out.extend_from_slice(&sel);
+    let mut planes = vec![0u8; 8 * nval];
+    for i in 0..nval {
+        let r = res[i];
+        for p in 0..8 {
+            planes[p * nval + i] = ((r >> (8 * p)) & 0xFF) as u8;
+        }
+    }
+    out.extend_from_slice(&planes);
+    out.extend_from_slice(&data[nval * 8..]);
+    out
+}
+
+pub fn fcm_inv(data: &[u8], bits: u32) -> Vec<u8> {
+    let l = data.len();
+    let nval = l / 9; // l = nval + 8*nval + rem, rem < 8 < 9
+    let mask: u64 = (1u64 << bits) - 1;
+    let mut fcm = vec![0u64; 1usize << bits];
+    let mut dfcm = vec![0u64; 1usize << bits];
+    let (mut fh, mut dh, mut last) = (0u64, 0u64, 0u64);
+    let sel = &data[..nval];
+    let planes = &data[nval..nval + 8 * nval];
+    let trailing = &data[nval + 8 * nval..];
+    let mut out = vec![0u8; 8 * nval];
+    for i in 0..nval {
+        let mut r = 0u64;
+        for p in 0..8 {
+            r |= (planes[p * nval + i] as u64) << (8 * p);
+        }
+        let pf = fcm[fh as usize];
+        let pd = last.wrapping_add(dfcm[dh as usize]) & U64M;
+        let v = (r ^ (if sel[i] != 0 { pd } else { pf })) & U64M;
+        out[i * 8..i * 8 + 8].copy_from_slice(&v.to_le_bytes());
+        fcm[fh as usize] = v;
+        let diff = v.wrapping_sub(last) & U64M;
+        dfcm[dh as usize] = diff;
+        fh = ((fh << 6) ^ (v >> 48)) & mask;
+        dh = ((dh << 2) ^ (diff >> 40)) & mask;
+        last = v;
+    }
+    out.extend_from_slice(trailing);
+    out
+}
+
+/// Apply a transform spec (each `(code, arg)`: 0=delta 1=split 2=xor 3=fcm) in order.
+pub fn apply(data: &[u8], spec: &[(u8, u8)]) -> Vec<u8> {
+    let mut d = data.to_vec();
+    for &(op, arg) in spec {
+        d = match op {
+            0 => delta_fwd(&d, arg as usize),
+            1 => split_fwd(&d, arg as usize),
+            2 => xor_fwd(&d, arg as usize),
+            3 => fcm_fwd(&d, arg as u32),
+            _ => d,
+        };
+    }
+    d
+}
+
+/// Invert a transform spec (ops applied in reverse).
+pub fn invert(data: &[u8], spec: &[(u8, u8)]) -> Vec<u8> {
+    let mut d = data.to_vec();
+    for &(op, arg) in spec.iter().rev() {
+        d = match op {
+            0 => delta_inv(&d, arg as usize),
+            1 => split_inv(&d, arg as usize),
+            2 => xor_inv(&d, arg as usize),
+            3 => fcm_inv(&d, arg as u32),
+            _ => d,
+        };
+    }
+    d
+}
+
 unsafe fn run(f: fn(&[u8], usize) -> Vec<u8>, data: *const u8, len: i64, arg: i64, out: *mut u8) {
     let v = f(std::slice::from_raw_parts(data, len as usize), arg as usize);
     std::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
