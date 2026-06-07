@@ -26,6 +26,10 @@ a drop-in for the ctypes loader. Modules:
 - **`imagecodec`** + **`predictors`** — the full image codec: per-plane MED / CALIC / RLE
   selection, gray / Bayer / RGB modes, and inter-slice-delta volumes (`RIMG` / `RVOL`),
   byte-identical to Python (gray/RGB/int16/Bayer/uint16-volume all verified).
+- **`audiocodec`** — the lossless audio codec: mid/side → fixed order-2 → 3-stage sign-sign
+  LMS cascade → adaptive Rice or `ctxcoder` (`AUD1`). Byte-identical to Python/C for both
+  back-ends (integer cascade uses wrapping arithmetic to match the C `-fwrapv`; the Rice
+  run-magnitude uses `f64` exactly as the reference).
 
 **Guarantee.** The pure-arithmetic codecs (`ctxcoder`, `calic`, `columnar`) are
 **byte-identical** to Python/C. `floatcodec` and `csvcolumnar` additionally use `zlib`
@@ -38,7 +42,7 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-Remaining toward a fully standalone library: the audio, video, and trained-text codecs.
+Remaining toward a fully standalone library: the video and trained-text codecs.
 
 ## Standalone CLIs (no Python)
 

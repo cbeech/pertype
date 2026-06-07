@@ -152,10 +152,12 @@ fast rather than hindered):
       record, byte-identical. Added a Rust **`auto` router + `azc` CLI** that emits the same
       `AZ` container as Python's `auto` (store/deflate/csv/columnar), cross-decodable by
       Python's `auto_decompress` (CSV 14.8×, records 4.38×). Added the reversible **`transform`**
-      ops (`delta`/`split`), byte-identical to Python. Remaining toward a *fully* standalone
-      library: the MED predictor + the `imagecodec` orchestration around it (RIMG container,
-      per-plane MED/CALIC/RLE selection — the CALIC engine is already ported), and the larger
-      text/audio/video codecs.
+      ops (`delta`/`split`), byte-identical to Python. Added the full **`imagecodec`** (MED +
+      `predictors`, per-plane MED/CALIC/RLE selection, gray/Bayer/RGB, inter-slice-delta
+      volumes — RIMG/RVOL) and the full **`audiocodec`** (mid/side → fixed-2 → 3-stage
+      sign-sign LMS cascade → adaptive Rice or ctxcoder — AUD1), both byte-identical to
+      Python/C (wrapping integer arithmetic to match the C `-fwrapv`; f64 Rice run). Remaining
+      toward a *fully* standalone library: the video codec and the trained text/model codec.
 
 The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
 longer-term, optional step — pursue it only when the goal shifts from *research* to

@@ -9,11 +9,15 @@
 //! * `ctxcoder` — context-adaptive residual coder (every numeric/columnar/float codec)
 //! * `calic`    — full CALIC image codec (GAP + bias + energy-conditional coding)
 //! * `columnar` — complete standalone codec for fixed-width binary record streams
+//! * `imagecodec`/`audiocodec` — the full image and audio codecs (MED/CALIC/RLE; mid/side
+//!   + LMS cascade + adaptive Rice), byte-identical to Python/C.
 //!
 //! C ABI exported: `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
-//! `columnar_encode`/`columnar_decode`.
+//! `columnar_encode`/`columnar_decode`, `image_encode`/`image_decode`,
+//! `audio_encode`/`audio_decode`, …
 
 pub mod arith;
+pub mod audiocodec;
 pub mod auto;
 pub mod calic;
 pub mod columnar;

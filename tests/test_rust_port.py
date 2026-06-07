@@ -11,8 +11,8 @@ import os
 import numpy as np
 import pytest
 
-from compressor import (auto, columnar, csvcolumnar, ctxcoder, floatcodec, imagecodec,
-                        predictors, transform)
+from compressor import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
+                        imagecodec, predictors, transform)
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
@@ -27,7 +27,7 @@ def lib():
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
-                 "volume_encode", "volume_decode"):
+                 "volume_encode", "volume_decode", "audio_encode", "audio_decode"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -161,6 +161,39 @@ def test_imagecodec_byte_identical(lib):
     buf = (ctypes.c_uint8 * len(vdata)).from_buffer_copy(vdata)
     m = lib.volume_encode(buf, len(vdata), n, h, w, 2, 0, out, len(out))
     assert m >= 0 and bytes(out[:m]) == imagecodec.encode_volume(vol)
+
+
+def test_audiocodec_byte_identical(lib):
+    # synth 16-bit stereo: two correlated random walks (so mid/side + LMS do real work)
+    rng = np.random.default_rng(5)
+    n = 6000
+    L = np.clip(np.cumsum(rng.integers(-30, 31, n)), -30000, 30000).astype(np.int16)
+    R = np.clip(L + np.cumsum(rng.integers(-8, 9, n)), -30000, 30000).astype(np.int16)
+    pcm = np.stack([L, R], axis=1).astype(np.int16)   # (n, 2)
+    flat = np.ascontiguousarray(pcm).reshape(-1)       # interleaved
+
+    def renc(coder):
+        out = (ctypes.c_uint8 * (flat.size * 8 + (1 << 20)))()
+        buf = np.ascontiguousarray(flat, np.int16)
+        m = lib.audio_encode(buf.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+                             n, 2, 44100, coder, out, len(out))
+        assert m >= 0
+        return bytes(out[:m])
+
+    def rdec(blob):
+        out = (ctypes.c_int16 * (n * 2 + 16))()
+        buf = (ctypes.c_uint8 * len(blob)).from_buffer_copy(blob)
+        m = lib.audio_decode(buf, len(blob), out, len(out))
+        assert m == n * 2
+        return np.array(out[:m], np.int16).reshape(n, 2)
+
+    for coder, cid in (("rice", 0), ("ctx", 1)):
+        rb = renc(cid)
+        assert rb == audiocodec.encode(pcm, 44100, coder=coder)          # byte-identical
+        assert np.array_equal(rdec(rb), pcm)                              # rust round-trip
+        pb = audiocodec.encode(pcm, 44100, coder=coder)
+        assert np.array_equal(audiocodec.decode(rb)[0], pcm)             # py decodes rust
+        assert np.array_equal(rdec(pb), pcm)                             # rust decodes py
 
 
 def test_auto_cross_compatible(lib):
