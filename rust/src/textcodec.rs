@@ -1269,11 +1269,20 @@ fn read_varint(blob: &[u8], pos: &mut usize) -> u64 {
     }
 }
 
+/// Per-file hash-chain depth — deep on small inputs (cheap, ~1% denser), tapering to
+/// `MAX_CHAIN` on large ones (bounded cost). Always `>= MAX_CHAIN`, so never worse than the
+/// fixed default. Byte-for-byte the same rule as `tokenizer.adaptive_max_chain`.
+fn adaptive_max_chain(n: usize) -> usize {
+    const ADAPT_MAX: usize = 2048;
+    const ADAPT_BUDGET: usize = 2048 * 2048;
+    (ADAPT_BUDGET / n.max(1)).clamp(MAX_CHAIN, ADAPT_MAX)
+}
+
 pub fn compress(model_blob: &[u8], data: &[u8]) -> Vec<u8> {
     let m = Model::load(model_blob);
     let tdata = transform::apply(data, &m.transform);
     let tokens = if m.use_lz {
-        tokenize_optimal(&m, &tdata, MAX_CHAIN)
+        tokenize_optimal(&m, &tdata, adaptive_max_chain(tdata.len()))
     } else {
         tokenize_dict_only(&m, &tdata)
     };

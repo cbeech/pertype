@@ -17,7 +17,19 @@ both, which is what makes the codec competitive with zstd's trained dictionary.
 WINDOW = 1 << 19          # how far back an LZ match may reach (covers blob + file)
 MIN_MATCH = 3             # shortest worthwhile match (dict or LZ)
 MAX_MATCH = 1 << 12       # cap on a single match length
-MAX_CHAIN = 128           # hash-chain search depth (speed vs. ratio)
+MAX_CHAIN = 128           # default / training hash-chain depth (also the adaptive floor)
+ADAPT_MAX_CHAIN = 2048    # deepest adaptive parse (small inputs)
+ADAPT_BUDGET = 2048 * 2048  # per-file work budget: depth ≈ BUDGET / size
+
+
+def adaptive_max_chain(n):
+    """Per-file hash-chain depth: deep on small inputs (where the ~1% optimal-parse gain
+    lives and the absolute cost is tiny), tapering to ``MAX_CHAIN`` on large inputs (where a
+    deep parse is expensive and the proportional gain is negligible). Always ``>= MAX_CHAIN``,
+    so the result is never worse than the fixed default — a Pareto improvement with bounded
+    cost. The parse cost scales with file size × depth, so ``BUDGET / size`` caps that product;
+    matched byte-for-byte in the Rust port (`textcodec::adaptive_max_chain`)."""
+    return max(MAX_CHAIN, min(ADAPT_MAX_CHAIN, ADAPT_BUDGET // max(n, 1)))
 
 # Optional native acceleration of the LZ match-finder (the dominant cost of the
 # cost-optimal parse). Imported lazily so the core stays zero-dependency; it

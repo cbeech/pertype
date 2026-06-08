@@ -31,7 +31,8 @@ from compressor import transform
 from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
 from compressor.model import MODE_NORMAL, REP_INIT
 from compressor.tokenizer import (
-    MIN_MATCH, detokenize, tokenize, tokenize_optimal, value_from, value_slot,
+    MIN_MATCH, adaptive_max_chain, detokenize, tokenize, tokenize_optimal, value_from,
+    value_slot,
 )
 
 MAGIC = 0xC7
@@ -206,9 +207,11 @@ def compress(data, model, max_chain=None):
     # Decorrelate first; the rest of the pipeline encodes the transformed bytes.
     tdata = transform.apply(data, model.transform)
     if model.use_lz:
-        kw = {} if max_chain is None else {"max_chain": max_chain}
+        # Adaptive parse depth by default: deep on small files (cheap, ~1% denser), shallow
+        # on large ones (bounded cost). Always >= the fixed default, so never worse.
+        mc = adaptive_max_chain(len(tdata)) if max_chain is None else max_chain
         tokens = tokenize_optimal(tdata, model.dictionary, model.costs(),
-                                  prefix=model.blob, **kw)
+                                  prefix=model.blob, max_chain=mc)
     else:
         tokens = tokenize(tdata, model.dictionary, use_lz=False)
     payload = _encode_payload(tokens, model)

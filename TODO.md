@@ -643,9 +643,22 @@ Still high-value untested, in rough priority:
       entropy, rep cache, deeper search, or a rep-aware parser. It is the diffuse sum
       of zstd's mature, integrated parser+coder. Marking this **won't-fix** unless we
       commit to reimplementing zstd's sequence coder wholesale (high effort, no
-      demonstrated win). (Measured aside: the parse is search-limited — bumping
-      `max_chain` 128 → 2048 alone recovers ~1 KB, json → ~51.7 KB / ~4% behind, at a
-      real speed cost; a candidate default bump independent of the parser question.)
+      demonstrated win).
+- [x] **Adaptive parse depth — SHIPPED.** Followed up the "deeper search helps" aside with a
+      rigorous cross-type sweep (`corpus/{json,html,logs}/test`, held out). The real win is
+      **~0.5–1.4%** (not the stale "~4%", which was the *gap to zstd --train* on a larger json,
+      not a size gain): coupled json +1.4% at depth 2048, most of it by 512; monotonic,
+      zero-regression (deeper only ever finds cheaper parses), and **free at train time** (the
+      blob search dominates training and uses the shallow decision-chain). The only cost is
+      compress speed (+4% json … +59% logs at 2048). So instead of a flat bump,
+      `tokenizer.adaptive_max_chain(n)` sets depth = `clamp(2048², 128, 2048) / size`: deep on
+      small files (where the gain lives and the absolute cost is tiny), tapering to the old 128
+      on large/match-rich inputs (big-file guard: 0.40 s vs 4.17 s at fixed-2048). Always
+      `>= 128`, so it's a strict **Pareto improvement** over the old default — never worse on
+      ratio, bounded cost. Wired into `codec.compress` (default) and the **byte-identical Rust
+      port** (`textcodec::adaptive_max_chain`), verified at both ends of the taper. Realized:
+      json +1.18% / html +0.84% / logs +0.53% on the held-out sets. Training is unchanged
+      (stays at `MAX_CHAIN`), so existing models need no regeneration.
 - [ ] More **transforms**: 2D predictors, RLE for the zero-runs decorrelation
       produces, channel de-interleaving.
 - [x] **Audio: third LMS stage** — added a 512-tap (shift 14) stage after the

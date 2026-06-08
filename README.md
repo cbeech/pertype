@@ -93,7 +93,11 @@ numeric/image data so the coder has far less to encode. Text selects identity.
 For LZ types the parser is **cost-optimal**: a dynamic program finds the
 minimum-cost path through the token graph, pricing every candidate (literal,
 dict ref, each LZ match) by its actual arithmetic-coded bit cost. Dict-only
-types keep the cheap greedy longest-match parse.
+types keep the cheap greedy longest-match parse. The match-finder's search depth
+is **adaptive** (`tokenizer.adaptive_max_chain`): deep on small files — where the
+optimal parse is ~1% denser and the absolute cost is tiny — tapering to the fixed
+default on large/match-rich inputs. It never goes below the default, so it's a
+Pareto improvement (never worse on ratio) with bounded compress cost.
 
 Tokens are literals, dictionary references, or `(length, distance)` LZ matches.
 Match lengths and distances are bucketed into slots (one coded symbol + a few
@@ -338,11 +342,12 @@ each octave), so an "FSE offset coder" would buy almost nothing. zstd's edge is 
 **repeat-offset-aware optimal parser**: json is fragmented (avg match ~44 B, so
 ~9.7 K offsets must be coded), and zstd restructures the token sequence to turn more
 of those matches into near-free repeat-offset hits. Ours prices every match as a
-full distance, so it can't. (Deepening our hash-chain search alone — the parse is
-search-limited — recovers ~1 KB more, to ~51.7 KB / ~4% behind, at a real speed
-cost.) Closing the last ~2 KB needs a rep-aware cost-optimal parser — a substantial
-rewrite of the DP, with no guaranteed win. The shipped model is large (real html
-~1.5 MB), so it only amortizes over many files.
+full distance, so it can't. (Deepening the hash-chain search — the parse is
+search-limited — recovers up to ~1 KB on this larger json, shrinking the gap to
+zstd-train; we now do this adaptively per file, see above, for a measured ~0.5–1.4%
+on held-out text at bounded cost.) Closing the last ~2 KB needs a rep-aware
+cost-optimal parser — a substantial rewrite of the DP, with no guaranteed win. The
+shipped model is large (real html ~1.5 MB), so it only amortizes over many files.
 
 ### Synthetic corpora — where we win (but it's partly overfit)
 

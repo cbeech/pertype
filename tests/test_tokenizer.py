@@ -5,8 +5,25 @@ import os
 
 from compressor.dictionary import Dictionary, mine_patterns
 from compressor.tokenizer import (
-    MIN_MATCH, _match_len, tokenize, tokenize_optimal, detokenize, value_slot,
+    MAX_CHAIN, MIN_MATCH, _match_len, adaptive_max_chain, tokenize, tokenize_optimal,
+    detokenize, value_slot,
 )
+
+
+def test_adaptive_max_chain_taper():
+    # deep on small inputs, tapering to the fixed floor on large ones; never below MAX_CHAIN
+    assert adaptive_max_chain(0) == 2048           # empty / tiny -> deepest
+    assert adaptive_max_chain(512) == 2048         # small file -> deepest
+    assert adaptive_max_chain(2048) == 2048
+    assert adaptive_max_chain(4096) == 1024        # 2048^2 / 4096
+    assert adaptive_max_chain(8192) == 512
+    assert adaptive_max_chain(1 << 20) == MAX_CHAIN  # large -> floor (128)
+    # monotonically non-increasing in size, always >= the fixed default
+    prev = adaptive_max_chain(1)
+    for n in (10, 100, 1000, 10_000, 100_000, 1_000_000):
+        cur = adaptive_max_chain(n)
+        assert MAX_CHAIN <= cur <= prev
+        prev = cur
 
 
 def _naive_match_len(buf, i, j, limit):

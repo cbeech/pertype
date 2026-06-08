@@ -269,7 +269,10 @@ def test_textcodec_byte_identical(lib):
     d, mm, dm, mo = textmodel._artifacts(html, blob, 512, 3, 256, textmodel.MAX_CHAIN)
     ml = textmodel.Model(type_id="html", dictionary=d, blob=blob, main_model=mm,
                          dist_model=dm, mode_model=mo, transform=(), use_lz=True)
-    check(ml, [html[7], b"<html>" * 30, b"novel \x00\x01 binary" * 4, b""])
+    # small payloads hit the deep end of the adaptive parse (2048); a large one (~80 KB)
+    # exercises the shallow end (depth tapers to MAX_CHAIN) — both must stay byte-identical.
+    big = b"".join(html) * 8
+    check(ml, [html[7], b"<html>" * 30, b"novel \x00\x01 binary" * 4, b"", big])
 
     # 3) each transform (delta/split/xor/fcm) round-trips byte-identically
     import math
