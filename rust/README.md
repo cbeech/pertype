@@ -141,6 +141,26 @@ Run it:
 PYTHONPATH=. python3 scripts/rust_vs_python_benchmark.py
 ```
 
+### Training (`scripts/rust_vs_python_train_benchmark.py`)
+
+Building a model is the heaviest path. Here the Python side is a *mix* — pure-Python mining /
+blob building + a C-native parse — and the Rust trainer is all-native (single-threaded). Both
+serial (fit slices < 512 KB, so Python's process pool doesn't fork); wall-clock seconds:
+
+```
+corpus         samples      KB use_lz   py s   rust s  speedup
+json               400      22   True  163.1     1.4    115x
+logs               600      36   True  272.6     2.5    109x
+http              1200     177   True  460.6    18.1     25x
+float64             40      94   True   36.5     3.1     12x
+```
+
+**11–115× faster.** The win is largest where pure-Python dictionary mining dominates (small
+text → 100×+) and smallest where the C-native parse does (float64 → 12×). Output is
+byte-identical wherever the `zlib` transform proxy agrees. Past a 512 KB fit slice Python's
+process pool narrows the gap on the blob search; rayon over that search is the matching Rust
+follow-up (the trainer is currently serial).
+
 ## Why Rust here
 
 A Rust port is a **performance / distribution** step, not a compression one — the ratios
