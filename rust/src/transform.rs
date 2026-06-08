@@ -189,6 +189,78 @@ pub fn invert(data: &[u8], spec: &[(u8, u8)]) -> Vec<u8> {
     d
 }
 
+/// Candidate transform pipelines tried by training (op codes: 0=delta 1=split 2=xor 3=fcm).
+/// Mirrors `transform.TRANSFORM_SPECS`.
+pub fn transform_specs() -> Vec<Vec<(u8, u8)>> {
+    vec![
+        vec![],
+        vec![(0, 1)],
+        vec![(0, 2)],
+        vec![(0, 4)],
+        vec![(1, 2)],
+        vec![(1, 2), (0, 1)],
+        vec![(1, 2), (0, 2)],
+        vec![(0, 4), (1, 2)],
+        vec![(2, 8)],
+        vec![(2, 8), (1, 8)],
+        vec![(1, 8)],
+        vec![(2, 4), (1, 4)],
+        vec![(3, 16)],
+    ]
+}
+
+/// Pick the transform that most shrinks the data under a zlib proxy (level 6) — byte-for-byte
+/// the same *procedure* as `transform.select`, but the ranking uses flate2's deflate, which
+/// can disagree with CPython's on near-ties (so the chosen spec may differ on borderline
+/// numeric data; the resulting model is still valid and cross-loadable).
+pub fn select(samples: &[&[u8]]) -> Vec<(u8, u8)> {
+    const CAP: usize = 1 << 21;
+    const SLOW_CAP: usize = 1 << 18;
+    let mut blob: Vec<u8> = samples.concat();
+    if blob.len() > CAP {
+        blob.truncate(CAP);
+    }
+    if blob.is_empty() {
+        return vec![];
+    }
+    let zsize = |spec: &[(u8, u8)], b: &[u8]| crate::zlibw::deflate_level(&apply(b, spec), 6).len();
+    let specs = transform_specs();
+    let is_slow = |s: &[(u8, u8)]| s.iter().any(|&(op, _)| op == 3);
+
+    let mut best: Vec<(u8, u8)> = vec![];
+    let mut best_size: Option<usize> = None;
+    for spec in specs.iter().filter(|s| !is_slow(s)) {
+        let size = zsize(spec, &blob);
+        if best_size.map_or(true, |b| size < b) {
+            best = spec.clone();
+            best_size = Some(size);
+        }
+    }
+    let slow: Vec<&Vec<(u8, u8)>> = specs.iter().filter(|s| is_slow(s)).collect();
+    if !slow.is_empty() {
+        let sample = &blob[..SLOW_CAP.min(blob.len())];
+        let mut incumbent = zsize(&best, sample);
+        for spec in slow {
+            let size = zsize(spec, sample);
+            if size < incumbent {
+                best = spec.clone();
+                incumbent = size;
+            }
+        }
+    }
+    best
+}
+
+/// Serialize a transform spec — `[len, (code, arg)…]`, matching `transform.serialize`.
+pub fn serialize(spec: &[(u8, u8)]) -> Vec<u8> {
+    let mut out = vec![spec.len() as u8];
+    for &(op, arg) in spec {
+        out.push(op);
+        out.push(arg);
+    }
+    out
+}
+
 unsafe fn run(f: fn(&[u8], usize) -> Vec<u8>, data: *const u8, len: i64, arg: i64, out: *mut u8) {
     let v = f(std::slice::from_raw_parts(data, len as usize), arg as usize);
     std::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());

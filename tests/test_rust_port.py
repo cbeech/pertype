@@ -31,7 +31,8 @@ def lib():
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
                  "volume_encode", "volume_decode", "audio_encode", "audio_decode",
-                 "video_encode", "video_decode", "text_compress", "text_decompress"):
+                 "video_encode", "video_decode", "text_compress", "text_decompress",
+                 "train_model"):
         getattr(lb, name).restype = ctypes.c_long
     return lb
 
@@ -281,6 +282,49 @@ def test_textcodec_byte_identical(lib):
         mt = textmodel.Model(type_id="x", dictionary=d, blob=b"", main_model=mm,
                              dist_model=dm, mode_model=mo, transform=tspec, use_lz=False)
         check(mt, [fs[5]])
+
+
+def _rust_train(lib, samples, type_id, max_patterns=256, min_len=3, max_len=256):
+    flat = b"".join(samples)
+    lens = (ctypes.c_int64 * len(samples))(*[len(s) for s in samples])
+    data = (ctypes.c_uint8 * max(1, len(flat))).from_buffer_copy(flat or b"\x00")
+    tb = type_id.encode()
+    tbuf = (ctypes.c_uint8 * len(tb)).from_buffer_copy(tb)
+    out = (ctypes.c_uint8 * (8 << 20))()
+    m = lib.train_model(data, lens, len(samples), tbuf, len(tb),
+                        max_patterns, min_len, max_len, out, len(out))
+    assert m >= 0
+    return bytes(out[:m])
+
+
+def test_textcodec_training_byte_identical(lib):
+    # Rust trains its own models. Byte-identical to Python where the zlib transform proxy
+    # agrees (the deterministic core: mining, COVER blob, greedy+optimal parse, freq
+    # quantization, blob search); always valid + cross-loadable otherwise.
+    import math
+    import struct
+
+    from compressor.model import Model
+
+    def check(samples, tid, mp=256):
+        pm_obj = textmodel.train(samples, type_id=tid, max_patterns=mp)
+        rm = _rust_train(lib, samples, tid, mp)
+        rm_obj = Model.load(rm)
+        # always: the Rust-trained model is valid and round-trips (Python loads & uses it)
+        for s in samples[:5]:
+            assert text_decompress(text_compress(s, rm_obj), rm_obj) == s
+        # byte-identical whenever the transform choice agrees (zlib proxy is the only seam)
+        if rm_obj.transform == pm_obj.transform:
+            assert rm == pm_obj.save()
+        return pm_obj.use_lz
+
+    # dict-only (JSON-like) and repeated-record (logs) — reliably byte-identical
+    check([b'{"name":"item%d","value":%d,"ok":true}' % (i, i * 7) for i in range(80)], "json")
+    check([b"record %04d | name=%s | status=ok\n" % (i, b"abcdef") for i in range(120)], "logs")
+    # use_lz path end-to-end (float64): exercises COVER blob + cost-optimal final artifacts
+    flt = [b"".join(struct.pack("<d", math.sin((i + k) * 0.01) * 1000.0) for i in range(120))
+           for k in range(16)]
+    assert check(flt, "f64"), "expected the float64 corpus to train a use_lz model"
 
 
 def test_auto_cross_compatible(lib):

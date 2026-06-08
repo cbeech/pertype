@@ -39,7 +39,12 @@ a drop-in for the ctypes loader. Modules:
   parse → Witten–Neal–Cleary arithmetic coding of the token stream → `CZ` container. The
   decode path is pure integer arithmetic; the cost-optimal parse prices tokens with the same
   `f64` `log2` costs as the reference, so the **whole codec is byte-identical** — including
-  the float-priced optimal parse, repeat-offset cache, and all four transforms.
+  the float-priced optimal parse, repeat-offset cache, and all four transforms. It also
+  **trains its own models** (`train_model`): dictionary mining, COVER blob building, the
+  greedy + cost-optimal parse, the blob-strategy search and freq-table quantization — all
+  byte-identical to `model.py`, *except* the transform selector's `zlib` proxy (flate2 ≠
+  CPython zlib, so on borderline numeric data it can pick a different — still valid and
+  cross-loadable — transform). So Rust can now build models end-to-end with no Python.
 
 **Guarantee.** Every codec except the two `zlib`-using ones is **byte-identical** to
 Python/C (`ctxcoder`, `calic`, `columnar`, `transform`, `imagecodec`, `audiocodec`,
@@ -53,8 +58,10 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-The port is now **feature-complete**: every codec in `compressor/` has a byte-identical (or,
-for the two `zlib`-using codecs, cross-decodable) Rust twin behind the same C ABI.
+The port is now **feature-complete**, compress *and train*: every codec in `compressor/` has
+a byte-identical (or, for the two `zlib`-using codecs, cross-decodable) Rust twin behind the
+same C ABI, and the trained text codec can build its own models without Python (byte-identical
+bar the `zlib` transform-proxy seam).
 
 ## Standalone CLIs (no Python)
 
@@ -96,8 +103,8 @@ python3 -m pytest tests/test_rust_port.py   # byte-identical + cross-compatible 
 - **C ABI:** `ctx_encode`/`ctx_decode`, `calic_codec_encode`/`calic_codec_decode`,
   `columnar_encode`/`columnar_decode`, `float_encode`/`float_decode`, `csv_encode`/`csv_decode`,
   `image_encode`/`image_decode`, `volume_encode`/`volume_decode`, `audio_encode`/`audio_decode`,
-  `video_encode`/`video_decode`, `text_compress`/`text_decompress`, plus the `transform_*` ops
-  and `auto_encode`/`auto_decode` — all drop-ins for the ctypes loader.
+  `video_encode`/`video_decode`, `text_compress`/`text_decompress`, `train_model`, plus the
+  `transform_*` ops and `auto_encode`/`auto_decode` — all drop-ins for the ctypes loader.
 
 ## Benchmarks
 

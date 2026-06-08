@@ -202,6 +202,16 @@ struct FreqModel {
     index: HashMap<i64, usize>,
 }
 impl FreqModel {
+    fn new(symbols: Vec<i64>, freqs: Vec<u64>) -> Self {
+        let n = symbols.len();
+        let mut cum = vec![0u64; n + 1];
+        for i in 0..n {
+            cum[i + 1] = cum[i] + freqs[i];
+        }
+        let total = cum[n];
+        let index = symbols.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+        FreqModel { symbols, freqs, cum, total, index }
+    }
     fn deserialize(blob: &[u8]) -> Self {
         let n = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
         let mut pos = 4;
@@ -214,13 +224,27 @@ impl FreqModel {
             freqs.push(f as u64);
             pos += 8;
         }
-        let mut cum = vec![0u64; n + 1];
-        for i in 0..n {
-            cum[i + 1] = cum[i] + freqs[i];
+        FreqModel::new(symbols, freqs)
+    }
+    /// Build from raw `{symbol: count}` (every count >= 1), quantized to `TARGET_TOTAL`,
+    /// symbols ascending — byte-identical to `freqmodel.FrequencyModel.from_counts`.
+    fn from_counts(counts: &std::collections::BTreeMap<i64, u64>) -> Self {
+        let raw_total: u64 = counts.values().sum();
+        let symbols: Vec<i64> = counts.keys().copied().collect();
+        let freqs: Vec<u64> = symbols
+            .iter()
+            .map(|s| (counts[s] * TARGET_TOTAL / raw_total).max(1))
+            .collect();
+        FreqModel::new(symbols, freqs)
+    }
+    fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + 8 * self.symbols.len());
+        out.extend_from_slice(&(self.symbols.len() as u32).to_be_bytes());
+        for (&s, &f) in self.symbols.iter().zip(&self.freqs) {
+            out.extend_from_slice(&(s as u32).to_be_bytes());
+            out.extend_from_slice(&(f as u32).to_be_bytes());
         }
-        let total = cum[n];
-        let index = symbols.iter().enumerate().map(|(i, &s)| (s, i)).collect();
-        FreqModel { symbols, freqs, cum, total, index }
+        out
     }
     fn encode(&self, enc: &mut AEnc, sym: i64) {
         let i = self.index[&sym];
@@ -246,16 +270,7 @@ struct Dictionary {
     index: IntMap<u16, Vec<usize>>, // 2-byte prefix -> pattern ids, longest-first
 }
 impl Dictionary {
-    fn deserialize(blob: &[u8]) -> Self {
-        let count = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-        let mut pos = 4;
-        let mut patterns = Vec::with_capacity(count);
-        for _ in 0..count {
-            let len = u16::from_be_bytes([blob[pos], blob[pos + 1]]) as usize;
-            pos += 2;
-            patterns.push(blob[pos..pos + len].to_vec());
-            pos += len;
-        }
+    fn new(patterns: Vec<Vec<u8>>) -> Self {
         let mut index: IntMap<u16, Vec<usize>> = Default::default();
         for (pid, p) in patterns.iter().enumerate() {
             if p.len() >= 2 {
@@ -266,6 +281,27 @@ impl Dictionary {
             bucket.sort_by(|&a, &b| patterns[b].len().cmp(&patterns[a].len()));
         }
         Dictionary { patterns, index }
+    }
+    fn deserialize(blob: &[u8]) -> Self {
+        let count = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        let mut pos = 4;
+        let mut patterns = Vec::with_capacity(count);
+        for _ in 0..count {
+            let len = u16::from_be_bytes([blob[pos], blob[pos + 1]]) as usize;
+            pos += 2;
+            patterns.push(blob[pos..pos + len].to_vec());
+            pos += len;
+        }
+        Dictionary::new(patterns)
+    }
+    fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(self.patterns.len() as u32).to_be_bytes());
+        for p in &self.patterns {
+            out.extend_from_slice(&(p.len() as u16).to_be_bytes());
+            out.extend_from_slice(p);
+        }
+        out
     }
     /// Longest pattern that is a prefix of `data[pos..]` → (pid, length).
     fn matcher(&self, data: &[u8], pos: usize, min_match: usize) -> Option<(usize, usize)> {
@@ -305,9 +341,36 @@ const WINDOW: usize = 1 << 19;
 const MAX_CHAIN: usize = 128;
 const MODE_NORMAL: i64 = 0;
 const REP_N: usize = 16;
+const VERSION: u16 = 7;
+const TARGET_TOTAL: u64 = 1 << 16;
+const DECISION_CHAIN: usize = 16; // shallow depth for the use_lz validation decision
+const LZ_OVER_DICT_MARGIN: usize = 4;
 
 fn rep_init() -> Vec<i64> {
     (1..=REP_N as i64).collect()
+}
+
+#[inline]
+fn max_len_slot() -> u32 {
+    value_slot((MAX_MATCH - MIN_MATCH + 1) as u64).0
+}
+#[inline]
+fn max_dist_slot() -> u32 {
+    value_slot(WINDOW as u64).0
+}
+
+// Short LZ matches only pay off when nearby (the greedy parse's `_accept_lz`).
+fn accept_lz(length: usize, distance: usize) -> bool {
+    if length < MIN_MATCH {
+        return false;
+    }
+    let cap = match length {
+        3 => 1usize << 7,
+        4 => 1usize << 11,
+        5 => 1usize << 14,
+        _ => return true,
+    };
+    distance <= cap
 }
 
 // --- model -------------------------------------------------------------------
@@ -362,6 +425,27 @@ impl Model {
     fn len_base(&self) -> i64 {
         256 + self.dictionary.patterns.len() as i64
     }
+    fn save(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"CMP7");
+        out.extend_from_slice(&self.version.to_be_bytes());
+        out.push(self.use_lz as u8);
+        let tid = self.type_id.as_bytes();
+        out.push(tid.len() as u8);
+        out.extend_from_slice(tid);
+        for chunk in [
+            self.dictionary.serialize(),
+            self.main.serialize(),
+            self.dist.serialize(),
+            self.mode.serialize(),
+            transform::serialize(&self.transform),
+            self.blob.clone(),
+        ] {
+            out.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+            out.extend_from_slice(&chunk);
+        }
+        out
+    }
 }
 
 // --- tokens ------------------------------------------------------------------
@@ -405,7 +489,7 @@ struct Forward {
     cand_dist: Vec<usize>,
 }
 
-fn lz_forward(combined: &[u8], base: usize) -> Forward {
+fn lz_forward(combined: &[u8], base: usize, max_chain: usize) -> Forward {
     let nn = combined.len();
     let mut head: IntMap<u32, usize> = Default::default();
     head.reserve(nn);
@@ -433,7 +517,7 @@ fn lz_forward(combined: &[u8], base: usize) -> Forward {
         if p + MIN_MATCH <= nn {
             gen += 1;
             let mut cand = *head.get(&key3(combined, p)).unwrap_or(&usize::MAX);
-            let mut chain = MAX_CHAIN;
+            let mut chain = max_chain;
             let limit = MAX_MATCH.min(nn - p);
             while cand != usize::MAX && p - cand <= WINDOW && chain > 0 {
                 let length = match_len(combined, cand, p, limit);
@@ -485,7 +569,7 @@ fn match_cost(m: &Model, length: usize, distance: usize) -> f64 {
 
 // --- parsers -----------------------------------------------------------------
 
-fn tokenize_optimal(m: &Model, data: &[u8]) -> Vec<Tok> {
+fn tokenize_optimal(m: &Model, data: &[u8], max_chain: usize) -> Vec<Tok> {
     let base = m.blob.len();
     let combined: Vec<u8> = if base > 0 {
         let mut c = m.blob.clone();
@@ -495,7 +579,7 @@ fn tokenize_optimal(m: &Model, data: &[u8]) -> Vec<Tok> {
         data.to_vec()
     };
     let nn = combined.len();
-    let fwd = lz_forward(&combined, base);
+    let fwd = lz_forward(&combined, base, max_chain);
     let (dpid, dlen) = dict_matches(&m.dictionary, &combined, base);
 
     let mut cost_to_end = vec![0f64; nn + 1];
@@ -561,6 +645,128 @@ fn tokenize_dict_only(m: &Model, data: &[u8]) -> Vec<Tok> {
     tokens
 }
 
+// Greedy lazy LZ+dict parse (the `tokenizer.tokenize` use_lz path) — used by training's
+// provisional/decision passes. Byte-identical to the Python lazy walk.
+enum Choice {
+    Lit,
+    Dict(usize, usize),  // pid, length
+    Match(usize, usize), // length, distance
+}
+fn choice_cover(c: &Choice) -> usize {
+    match c {
+        Choice::Lit => 0,
+        Choice::Dict(_, l) => *l,
+        Choice::Match(l, _) => *l,
+    }
+}
+
+fn find_lz(
+    data: &[u8], pos: usize, head: &IntMap<u32, usize>, prev: &[usize], max_chain: usize,
+) -> (usize, usize) {
+    let n = data.len();
+    let (mut best_len, mut best_dist) = (0usize, 0usize);
+    if pos + MIN_MATCH <= n {
+        let mut cand = *head.get(&key3(data, pos)).unwrap_or(&usize::MAX);
+        let mut chain = max_chain;
+        let limit = MAX_MATCH.min(n - pos);
+        while cand != usize::MAX && pos - cand <= WINDOW && chain > 0 {
+            let length = match_len(data, cand, pos, limit);
+            if length > best_len {
+                best_len = length;
+                best_dist = pos - cand;
+                if length == limit {
+                    break;
+                }
+            }
+            cand = prev[cand];
+            chain -= 1;
+        }
+    }
+    (best_len, best_dist)
+}
+
+fn decide(m: &Model, data: &[u8], pos: usize, best_len: usize, best_dist: usize) -> Choice {
+    let dm = m.dictionary.matcher(data, pos, MIN_MATCH);
+    let dict_len = dm.map(|(_, l)| l).unwrap_or(0);
+    let use_dict = dict_len >= MIN_MATCH;
+    let lz_ok = accept_lz(best_len, best_dist);
+    if use_dict && (!lz_ok || best_len < dict_len + LZ_OVER_DICT_MARGIN) {
+        return Choice::Dict(dm.unwrap().0, dict_len);
+    }
+    if lz_ok {
+        return Choice::Match(best_len, best_dist);
+    }
+    Choice::Lit
+}
+
+fn tokenize_greedy(m: &Model, data: &[u8], max_chain: usize) -> Vec<Tok> {
+    let base = m.blob.len();
+    let combined: Vec<u8> = if base > 0 {
+        let mut c = m.blob.clone();
+        c.extend_from_slice(data);
+        c
+    } else {
+        data.to_vec()
+    };
+    let nn = combined.len();
+    let mut head: IntMap<u32, usize> = Default::default();
+    head.reserve(nn);
+    let mut prev = vec![usize::MAX; nn];
+    let insert = |head: &mut IntMap<u32, usize>, prev: &mut [usize], i: usize| {
+        if i + MIN_MATCH <= nn {
+            let key = key3(&combined, i);
+            prev[i] = *head.get(&key).unwrap_or(&usize::MAX);
+            head.insert(key, i);
+        }
+    };
+    for i in 0..base {
+        insert(&mut head, &mut prev, i);
+    }
+    let choice = |head: &IntMap<u32, usize>, prev: &[usize], at: usize| -> Choice {
+        let (bl, bd) = find_lz(&combined, at, head, prev, max_chain);
+        decide(m, &combined, at, bl, bd)
+    };
+
+    let mut tokens = Vec::new();
+    let mut pos = base;
+    let mut pending: Option<Choice> = None;
+    while pos < nn {
+        let tok = pending.take().unwrap_or_else(|| choice(&head, &prev, pos));
+        match tok {
+            Choice::Lit => {
+                tokens.push(Tok::Lit(combined[pos]));
+                insert(&mut head, &mut prev, pos);
+                pos += 1;
+            }
+            Choice::Dict(pid, length) => {
+                tokens.push(Tok::Dict(pid));
+                for i in pos..pos + length {
+                    insert(&mut head, &mut prev, i);
+                }
+                pos += length;
+            }
+            Choice::Match(length, dist) => {
+                insert(&mut head, &mut prev, pos); // so the lookahead at pos+1 sees pos
+                if pos + 1 < nn {
+                    let nxt = choice(&head, &prev, pos + 1);
+                    if choice_cover(&nxt) > length {
+                        tokens.push(Tok::Lit(combined[pos]));
+                        pending = Some(nxt);
+                        pos += 1;
+                        continue;
+                    }
+                }
+                tokens.push(Tok::Match(length, dist));
+                for i in pos + 1..pos + length {
+                    insert(&mut head, &mut prev, i);
+                }
+                pos += length;
+            }
+        }
+    }
+    tokens
+}
+
 fn detokenize(m: &Model, tokens: &[Tok]) -> Vec<u8> {
     let base = m.blob.len();
     let mut out = m.blob.clone();
@@ -577,6 +783,383 @@ fn detokenize(m: &Model, tokens: &[Tok]) -> Vec<u8> {
         }
     }
     out[base..].to_vec()
+}
+
+// ============================================================================
+// Training — byte-identical to model.py / dictionary.py / freqmodel.py, except the
+// transform selector's zlib proxy (flate2 ≠ CPython zlib, so its choice can differ on
+// borderline numeric data; the resulting model is still valid + cross-loadable).
+// ============================================================================
+
+use std::collections::BTreeMap;
+
+/// Walk a token sequence with the repeat-offset cache, invoking `f(table, sym, extra)` —
+/// table 0=main / 1=dist / 2=mode. Mirrors `model._rep_stream`; shared by counting + pricing.
+fn for_each_sym(tokens: &[Tok], len_base: i64, mut f: impl FnMut(u8, i64, u32)) {
+    let mut reps = rep_init();
+    for tok in tokens {
+        match tok {
+            Tok::Lit(b) => f(0, *b as i64, 0),
+            Tok::Dict(pid) => f(0, 256 + *pid as i64, 0),
+            Tok::Match(length, dist) => {
+                let (lslot, _) = value_slot((length - MIN_MATCH + 1) as u64);
+                f(0, len_base + lslot as i64, lslot);
+                let d = *dist as i64;
+                if let Some(i) = reps.iter().position(|&r| r == d) {
+                    f(2, (i + 1) as i64, 0);
+                    reps.remove(i);
+                } else {
+                    f(2, MODE_NORMAL, 0);
+                    let (dslot, _) = value_slot(*dist as u64);
+                    f(1, dslot as i64, dslot);
+                    reps.pop();
+                }
+                reps.insert(0, d);
+            }
+        }
+    }
+}
+
+/// Baseline count of 1 for every symbol that could ever be emitted (the losslessness floor).
+fn baseline_counts(
+    n_patterns: usize, len_base: i64,
+) -> (BTreeMap<i64, u64>, BTreeMap<i64, u64>, BTreeMap<i64, u64>) {
+    let mut main = BTreeMap::new();
+    let mut dist = BTreeMap::new();
+    let mut mode = BTreeMap::new();
+    for b in 0..256i64 {
+        main.insert(b, 1);
+    }
+    for pid in 0..n_patterns as i64 {
+        main.insert(256 + pid, 1);
+    }
+    for slot in 0..=max_len_slot() as i64 {
+        main.insert(len_base + slot, 1);
+    }
+    for slot in 0..=max_dist_slot() as i64 {
+        dist.insert(slot, 1);
+    }
+    for m in 0..=REP_N as i64 {
+        mode.insert(m, 1);
+    }
+    (main, dist, mode)
+}
+
+fn models_from_tokenized(
+    tokenized: &[Vec<Tok>], n_patterns: usize, len_base: i64,
+) -> (FreqModel, FreqModel, FreqModel) {
+    let (mut main, mut dist, mut mode) = baseline_counts(n_patterns, len_base);
+    for toks in tokenized {
+        for_each_sym(toks, len_base, |t, sym, _| {
+            let m = match t {
+                0 => &mut main,
+                1 => &mut dist,
+                _ => &mut mode,
+            };
+            *m.entry(sym).or_insert(0) += 1;
+        });
+    }
+    (
+        FreqModel::from_counts(&main),
+        FreqModel::from_counts(&dist),
+        FreqModel::from_counts(&mode),
+    )
+}
+
+// --- dictionary mining -------------------------------------------------------
+
+fn mine_patterns(samples: &[&[u8]], max_patterns: usize, min_len: usize, max_len: usize) -> Dictionary {
+    const MAX_MINING: usize = 1_000_000;
+    const DMER: usize = 8;
+    let mut blob: Vec<u8> = samples.concat();
+    if blob.len() > MAX_MINING {
+        blob.truncate(MAX_MINING);
+    }
+    let n = blob.len();
+    let d = DMER.min(min_len.max(1));
+    const DEFAULT_LENGTHS: [usize; 15] =
+        [3, 4, 5, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
+    let mut lengths: Vec<usize> =
+        DEFAULT_LENGTHS.iter().copied().filter(|&l| min_len <= l && l <= max_len).collect();
+    if lengths.is_empty() {
+        lengths = vec![min_len];
+    }
+
+    let mut dmer_freq: HashMap<&[u8], u64> = HashMap::new();
+    if n >= d {
+        for i in 0..=n - d {
+            *dmer_freq.entry(&blob[i..i + d]).or_insert(0) += 1;
+        }
+    }
+    let mut counts: HashMap<&[u8], u64> = HashMap::new();
+    for &length in &lengths {
+        if n < length {
+            continue;
+        }
+        if length >= d {
+            for i in 0..=n - length {
+                if dmer_freq.get(&blob[i..i + d]).copied().unwrap_or(0) >= 2 {
+                    *counts.entry(&blob[i..i + length]).or_insert(0) += 1;
+                }
+            }
+        } else {
+            for i in 0..=n - length {
+                *counts.entry(&blob[i..i + length]).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut scored: Vec<(u64, &[u8])> = Vec::new();
+    for (&pat, &freq) in &counts {
+        if freq < 2 {
+            continue;
+        }
+        if pat.len() <= 2 {
+            continue; // saving = len - _REFERENCE_COST(2) must be > 0
+        }
+        scored.push((freq * (pat.len() as u64 - 2), pat));
+    }
+    // score desc, then length desc, then pattern bytes ascending — a total order, so the
+    // result is deterministic regardless of HashMap iteration order.
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.len().cmp(&a.1.len()))
+            .then_with(|| a.1.cmp(b.1))
+    });
+    let patterns: Vec<Vec<u8>> =
+        scored.iter().take(max_patterns).map(|(_, p)| p.to_vec()).collect();
+    Dictionary::new(patterns)
+}
+
+// --- LZ blob (COVER coverage selection) -------------------------------------
+
+fn build_blob(samples: &[&[u8]], cap: usize) -> Vec<u8> {
+    const D: usize = 8;
+    const SEG: usize = 2048;
+    const STRIDE: usize = 512;
+    const MAX_BYTES: usize = 1_000_000;
+    let mut src: Vec<u8> = samples.concat();
+    if src.len() > MAX_BYTES {
+        src.truncate(MAX_BYTES);
+    }
+    let n = src.len();
+    if n <= cap {
+        return src;
+    }
+    let mut dmer_freq: HashMap<&[u8], i64> = HashMap::new();
+    for i in 0..=n - D {
+        *dmer_freq.entry(&src[i..i + D]).or_insert(0) += 1;
+    }
+    let mut candidates: Vec<(i64, usize, usize)> = Vec::new();
+    let mut start = 0;
+    while start <= n - D {
+        let length = SEG.min(n - start);
+        if length >= D {
+            let mut score = 0i64;
+            for j in start..=start + length - D {
+                score += dmer_freq[&src[j..j + D]];
+            }
+            candidates.push((score, start, length));
+        }
+        start += STRIDE;
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0)); // -score; stable keeps start ascending on ties
+
+    let mut selected: Vec<Vec<u8>> = Vec::new();
+    let mut total = 0usize;
+    for (_score, start, length) in candidates {
+        if total >= cap {
+            break;
+        }
+        let mut s = 0i64;
+        for j in start..=start + length - D {
+            s += dmer_freq[&src[j..j + D]];
+        }
+        if s <= 0 {
+            continue; // already covered by earlier picks
+        }
+        let mut piece = src[start..start + length].to_vec();
+        if total + piece.len() > cap {
+            piece.truncate(cap - total);
+        }
+        total += piece.len();
+        selected.push(piece);
+        for j in start..=start + length - D {
+            *dmer_freq.get_mut(&src[j..j + D]).unwrap() = 0;
+        }
+    }
+    selected.reverse(); // most valuable (first selected) nearest the data
+    selected.concat()
+}
+
+fn build_blob_naive(samples: &[&[u8]], cap: usize) -> Vec<u8> {
+    let mut blob = Vec::new();
+    for s in samples {
+        if blob.len() >= cap {
+            break;
+        }
+        blob.extend_from_slice(s);
+    }
+    blob.truncate(cap);
+    blob
+}
+
+fn blob_for(spec: (u8, usize), samples: &[&[u8]]) -> Vec<u8> {
+    match spec.0 {
+        0 => Vec::new(),                          // none
+        1 => build_blob_naive(samples, spec.1),   // naive
+        _ => build_blob(samples, spec.1),         // cover
+    }
+}
+
+fn blob_specs() -> Vec<(u8, usize)> {
+    vec![
+        (0, 0),
+        (1, 1 << 15),
+        (2, 1 << 15),
+        (2, 1 << 16),
+        (2, 1 << 17),
+        (1, 1 << 17),
+        (2, 1 << 18),
+        (2, 1 << 19),
+        (1, 1 << 19),
+    ]
+}
+
+// --- artifacts / pricing / search -------------------------------------------
+
+fn empty_model(dictionary: Dictionary, blob: Vec<u8>, use_lz: bool) -> Model {
+    Model {
+        type_id: String::new(),
+        version: VERSION,
+        use_lz,
+        dictionary,
+        main: FreqModel::new(vec![], vec![]),
+        dist: FreqModel::new(vec![], vec![]),
+        mode: FreqModel::new(vec![], vec![]),
+        transform: vec![],
+        blob,
+    }
+}
+
+fn artifacts(
+    samples: &[&[u8]], blob: &[u8], max_patterns: usize, min_len: usize, max_len: usize,
+    max_chain: usize,
+) -> (Dictionary, FreqModel, FreqModel, FreqModel) {
+    let use_lz = !blob.is_empty();
+    let dictionary = mine_patterns(samples, max_patterns, min_len, max_len);
+    let n_patterns = dictionary.patterns.len();
+    let len_base = 256 + n_patterns as i64;
+    let mut m = empty_model(dictionary, blob.to_vec(), use_lz);
+    let tokenized: Vec<Vec<Tok>> = if use_lz {
+        // bootstrap costs from a fast lazy parse, then one cost-optimal re-parse
+        let prov: Vec<Vec<Tok>> =
+            samples.iter().map(|s| tokenize_greedy(&m, s, DECISION_CHAIN)).collect();
+        let (pm, pd, pmode) = models_from_tokenized(&prov, n_patterns, len_base);
+        m.main = pm;
+        m.dist = pd;
+        m.mode = pmode;
+        samples.iter().map(|s| tokenize_optimal(&m, s, max_chain)).collect()
+    } else {
+        samples.iter().map(|s| tokenize_dict_only(&m, s)).collect()
+    };
+    let (main, dist, mode) = models_from_tokenized(&tokenized, n_patterns, len_base);
+    (m.dictionary, main, dist, mode)
+}
+
+fn price(
+    samples: &[&[u8]], dictionary: Dictionary, blob: Vec<u8>, main: FreqModel, dist: FreqModel,
+    mode: FreqModel, max_chain: usize,
+) -> f64 {
+    let use_lz = !blob.is_empty();
+    let m = Model {
+        type_id: String::new(),
+        version: VERSION,
+        use_lz,
+        dictionary,
+        main,
+        dist,
+        mode,
+        transform: vec![],
+        blob,
+    };
+    let len_base = m.len_base();
+    let mut bits = 0f64;
+    for s in samples {
+        let toks = if use_lz {
+            tokenize_optimal(&m, s, max_chain)
+        } else {
+            tokenize_dict_only(&m, s)
+        };
+        for_each_sym(&toks, len_base, |t, sym, extra| {
+            let fm = match t {
+                0 => &m.main,
+                1 => &m.dist,
+                _ => &m.mode,
+            };
+            bits += fm.cost_bits(sym) + extra as f64;
+        });
+    }
+    bits
+}
+
+fn search_costs(
+    specs: &[(u8, usize)], fit: &[&[u8]], val: &[&[u8]], max_patterns: usize, min_len: usize,
+    max_len: usize,
+) -> Vec<f64> {
+    specs
+        .iter()
+        .map(|&spec| {
+            let blob = blob_for(spec, fit);
+            let (d, mm, dm, mo) =
+                artifacts(fit, &blob, max_patterns, min_len, max_len, DECISION_CHAIN);
+            price(val, d, blob, mm, dm, mo, DECISION_CHAIN)
+        })
+        .collect()
+}
+
+/// Train a model from byte samples — byte-identical to `model.train` where the zlib transform
+/// proxy agrees (text/image/float), valid + cross-loadable otherwise.
+pub fn train(
+    samples: &[&[u8]], type_id: &str, max_patterns: usize, min_len: usize, max_len: usize,
+) -> Vec<u8> {
+    let tspec = transform::select(samples);
+    let tsamples: Vec<Vec<u8>> = samples.iter().map(|s| transform::apply(s, &tspec)).collect();
+    let refs: Vec<&[u8]> = tsamples.iter().map(|v| v.as_slice()).collect();
+
+    let (fit, val): (&[&[u8]], &[&[u8]]) = if refs.len() >= 5 {
+        let cut = (refs.len() * 4 / 5).max(1);
+        (&refs[..cut], &refs[cut..])
+    } else {
+        (&refs[..], &refs[..])
+    };
+
+    let specs = blob_specs();
+    let costs = search_costs(&specs, fit, val, max_patterns, min_len, max_len);
+    let mut best_cost: Option<f64> = None;
+    let mut best_spec = (0u8, 0usize);
+    for (&spec, &cost) in specs.iter().zip(&costs) {
+        if best_cost.map_or(true, |b| cost < b) {
+            best_cost = Some(cost);
+            best_spec = spec;
+        }
+    }
+
+    let blob = blob_for(best_spec, &refs);
+    let (dictionary, main, dist, mode) =
+        artifacts(&refs, &blob, max_patterns, min_len, max_len, MAX_CHAIN);
+    let model = Model {
+        type_id: type_id.to_string(),
+        version: VERSION,
+        use_lz: !blob.is_empty(),
+        dictionary,
+        main,
+        dist,
+        mode,
+        transform: tspec,
+        blob,
+    };
+    model.save()
 }
 
 // --- token stream entropy coding --------------------------------------------
@@ -690,7 +1273,7 @@ pub fn compress(model_blob: &[u8], data: &[u8]) -> Vec<u8> {
     let m = Model::load(model_blob);
     let tdata = transform::apply(data, &m.transform);
     let tokens = if m.use_lz {
-        tokenize_optimal(&m, &tdata)
+        tokenize_optimal(&m, &tdata, MAX_CHAIN)
     } else {
         tokenize_dict_only(&m, &tdata)
     };
@@ -751,6 +1334,30 @@ pub unsafe extern "C" fn text_decompress(
     let m = std::slice::from_raw_parts(model, model_len as usize);
     let d = std::slice::from_raw_parts(data, data_len as usize);
     let blob = decompress(m, d);
+    if blob.len() as i64 > cap {
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(blob.as_ptr(), out, blob.len());
+    blob.len() as i64
+}
+
+/// Train a model from `n` samples (flat `data` split by `lens`), returning a saved CMP7 blob.
+#[no_mangle]
+pub unsafe extern "C" fn train_model(
+    data: *const u8, lens: *const i64, n: i64, type_id: *const u8, tid_len: i64,
+    max_patterns: i64, min_len: i64, max_len: i64, out: *mut u8, cap: i64,
+) -> i64 {
+    let lens = std::slice::from_raw_parts(lens, n as usize);
+    let total: i64 = lens.iter().sum();
+    let flat = std::slice::from_raw_parts(data, total as usize);
+    let mut samples: Vec<&[u8]> = Vec::with_capacity(n as usize);
+    let mut off = 0usize;
+    for &l in lens {
+        samples.push(&flat[off..off + l as usize]);
+        off += l as usize;
+    }
+    let tid = std::str::from_utf8(std::slice::from_raw_parts(type_id, tid_len as usize)).unwrap();
+    let blob = train(&samples, tid, max_patterns as usize, min_len as usize, max_len as usize);
     if blob.len() as i64 > cap {
         return -1;
     }

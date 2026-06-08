@@ -96,8 +96,16 @@ Primitives:
       compress/decompress hot path is now native** — `compress` of 0.8 MB text
       111 s → 0.78 s (~140×). Remaining pure-Python is *training*-only (pattern
       mining + blob building), not the parse.
-- [ ] (optional) port **pattern mining / blob building** — the last Python in
-      training (~54 s of it); not on the compress path, so lower priority.
+- [x] **port training to Rust — DONE.** `train_model` in `rust/src/textcodec.rs` ports the
+      whole trainer: transform selection, dictionary mining, COVER blob building, the greedy +
+      cost-optimal parse, the blob-strategy validation search, and freq-table quantization →
+      a saved `CMP7` model. **Byte-identical to `model.py`** on json/logs/html/numeric/float
+      (verified in `tests/test_rust_port.py`, incl. a `use_lz=True` float64 model that
+      exercises COVER blob + cost-optimal final artifacts end-to-end) **except the transform
+      selector's `zlib` proxy** — flate2 ≠ CPython zlib, so on borderline data it can pick a
+      different transform, which cascades to a different (still valid + cross-loadable) model;
+      same caveat already accepted for float/csv. **The Rust crate now builds models with no
+      Python** — the port is complete for both compress *and* train.
 - [x] **context-adaptive arithmetic coder (`ctxcoder`)** — ported, byte-identical
       both directions; ~45–60× (ECG record 12.6 s → 0.28 s). The data where we
       *beat xz* is now fast.

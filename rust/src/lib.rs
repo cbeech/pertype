@@ -13,7 +13,9 @@
 //!   (MED/CALIC/RLE; mid/side + LMS + Rice; motion-compensated inter), byte-identical to
 //!   Python/C.
 //! * `textcodec` — the trained per-type text/byte codec (transform → cost-optimal LZ+dict
-//!   parse → WNC arithmetic coding), byte-identical including the `f64`-priced parse.
+//!   parse → WNC arithmetic coding), byte-identical including the `f64`-priced parse. Also
+//!   *trains* models (`train_model`: mining + COVER blob + parse search + freq quantization),
+//!   byte-identical to `model.py` except the `zlib` transform-proxy seam.
 //!
 //! This is the feature-complete port: every `compressor/` codec has a Rust twin behind the
 //! same C ABI (`ctx_encode`/`ctx_decode`, `calic_codec_encode`/…, `image_encode`/…,
