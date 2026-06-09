@@ -403,6 +403,13 @@ temporal redundancy, which is usually the dominant source of compressibility.
 
 Fits structured / numeric data; useless on already-compressed / encrypted / noise.
 
+> **Opportunity backlog: [`docs/data-type-opportunities.md`](docs/data-type-opportunities.md)** —
+> a ranked, web-researched list of *uncovered* data types that fit the model (bars-to-beat +
+> public test data). Top untapped veins: multichannel int16/uint16 scientific time-series &
+> imaging (Mode A), and schema-repetitive telemetry / record streams (Mode B / columnar).
+> Best first measure-first targets: Neuropixels ephys, MQTT/IoT telemetry, financial ITCH/DBN,
+> cryo-EM counting movies.
+
 - [x] **Auto-detect + dispatch (the `file`-command idea)** — `pertype/detect.py`
       + a `cli identify` subcommand sniffs a file's type (magic bytes for PNG/JPEG/GIF/
       FITS/DICOM/TIFF/CR2/WAV/y4m/npy/gzip/zip/xz/zstd/bzip2/ELF/PDF, then text-content
