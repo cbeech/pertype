@@ -28,6 +28,25 @@ Turning the validated research codec into an installable, runnable tool. Three p
   readme); a unified `compressor` binary exposing the full codec (not just the `azc` subset);
   crates.io-ready (publish gated on the license decision).
 
+## IP due diligence (before the commercial release)
+
+A technical IP review (copyright / patents / dependency licences; not legal advice) found:
+- **Copyright: clean** — no copied code; all external names are algorithm/paper citations; no
+  vendored source; no committed data files.
+- **Dependency licences: clean** — bundled Rust crates are all permissive (AGPL-compatible);
+  optional Python extras aren't redistributed (see `THIRD-PARTY-NOTICES.md`; three carry
+  GPL/LGPL native-lib caveats for *commercial* users — ffmpeg/x264, LibRaw, libsndfile).
+- **Patents: low overall** — built on expired/public-domain foundations (WNC arithmetic, LZ77,
+  Rice, JPEG-LS & CALIC patents both expired ~2015, LMS); ANS deliberately avoided (sidesteps
+  its live patent thicket). **One elevated area: video motion compensation** (the densest patent
+  domain — though H.264/HEVC pools target conformant bitstreams, which this codec does not
+  produce), then the two post-2010 techniques (Gorilla XOR-delta, FPC/FCM-DFCM).
+
+**Action before commercial release:** commission a professional **freedom-to-operate (FTO)
+search** from a patent attorney, **scoped to the video path first**. If the initial commercial
+offering excludes the video codec, residual patent risk drops substantially and a lighter review
+suffices. The text/image/audio/arithmetic core is the lowest-priority area for paid review.
+
 ## Out of scope (this pass)
-- Actually publishing to PyPI / crates.io (needs the license + accounts/secrets — the user's
-  call). CI pipelines. A docs site.
+- Actually publishing to PyPI / crates.io (needs accounts/secrets + the real repo URL — the
+  user's call). CI pipelines. A docs site. The FTO search above (an attorney's job).

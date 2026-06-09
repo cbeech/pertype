@@ -33,6 +33,21 @@ grant such a license directly.
 **To enquire:** Craig Beech — <craigbeech@gmail.com>. Tell us roughly how you intend to use it
 and we'll sort out terms.
 
+## Scope of a commercial license
+
+A commercial license covers **this project's own code** (the `compressor` package and the
+`compressor_rs` crate). Two boundaries to be aware of:
+
+- **Third-party dependencies.** Bundled dependencies are permissive and carry over freely;
+  certain *optional* Python extras pull in GPL/LGPL native libraries (ffmpeg/x264, LibRaw,
+  libsndfile) whose terms you must satisfy separately for a closed-source product — see
+  [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+- **Patents.** The codec is built on expired or public-domain techniques and a commercial
+  license grants rights in our copyright, **not** a patent indemnity. A technical review rates
+  overall patent risk low, with the **video motion-compensation** path the one area meriting a
+  professional freedom-to-operate search before commercial deployment. Terms can be scoped
+  accordingly (e.g. excluding the video codec).
+
 ---
 
 *Not sure which applies?* If you're an individual, a researcher, a hobbyist, or another

@@ -251,7 +251,9 @@ as a network service, you must offer your users the corresponding source under t
 For **proprietary / closed-source / hosted-SaaS** use without the AGPL's copyleft and
 network-source obligations, a **commercial license** is available — see
 [`COMMERCIAL.md`](COMMERCIAL.md). Contributions are accepted under a lightweight CLA so the
-project can keep offering both ([`CLA.md`](CLA.md)).
+project can keep offering both ([`CLA.md`](CLA.md)). Third-party dependency notices (and the
+GPL/LGPL caveats for the optional media extras) are in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## Dependencies
 
