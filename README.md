@@ -902,17 +902,21 @@ effective range to ~±19 px, then a per-block full-res refinement) — a genuine
 stronger, more robust search, no round-trip change (the decoder reconstructs from
 whatever MVs the encoder picks). It moved high-motion by <1%. The block-mode mix
 explains it: only **5% of high-motion blocks even use inter prediction** — motion
-search was never the bottleneck. The real lever for high-motion is the *intra* path
-(the open roadmap item below); the hierarchical search is kept because it's strictly
-better and helps fast-but-coherent camera pans, which the CIF clips don't exercise.
+search was never the bottleneck. The intra path looked like the real lever — but a
+measure-first test (`scripts/video_intra_benchmark.py`) ruled out a *predictor* upgrade:
+swapping plain MED for CALIC-class intra gains only ~0.4% where intra dominates (high-motion
+residuals are near-random), a mode-weighted **≤1.13%** overall — below the +3% bar. The
+high-motion gap to FFV1 is its context-modelled *entropy* path, the same large rewrite as the
+json gap (see Status & roadmap). The hierarchical search is kept because it's strictly better
+and helps fast-but-coherent camera pans, which the CIF clips don't exercise.
 
 ## Status & roadmap
 
-A research prototype, validated end-to-end on real data across four domains
-(every result round-trip verified):
+Validated end-to-end on real data across four domains (every result round-trip verified),
+**fully ported to Rust, and packaged as an installable tool**:
 
 - **text / byte** — trained per-type dictionary + LZ (with a validation-gated
-  blob) + repeat offsets + cost-optimal parse + arithmetic coding;
+  blob) + repeat offsets + cost-optimal parse (adaptive search depth) + arithmetic coding;
 - **audio** — adaptive sign-sign LMS cascade → adaptive Rice / context coder
   (beats FLAC, and xz by +59%);
 - **video** — quarter-pel motion compensation + per-block SKIP/INTER/INTRA (MED
@@ -923,6 +927,12 @@ A research prototype, validated end-to-end on real data across four domains
 
 The whole compress/decompress hot path is **native** (C via ctypes, bit-identical
 with a pure-Python fallback) — ~140× on text — so the family is fast enough to use.
+
+**Shipped as a product** (see the Quickstart and License sections above): `pip install .` gives
+a `compressor` command with a unified, self-describing `compress`/`decompress`; a complete
+**Rust** crate is byte-identical to the Python/C reference for both *compress and train* (with a
+standalone `compressor` binary, cross-compatible with the Python tool); dual-licensed
+**AGPL-3.0-or-later + commercial**.
 
 The honest open frontier (full list in `TODO.md`):
 
@@ -938,29 +948,30 @@ The honest open frontier (full list in `TODO.md`):
   have an equal-length alternative at a cached distance (json's matches hit too many
   distinct blob positions), worth ~186 B. So **no single lever closes the ~2 KB gap**;
   it is the diffuse sum of zstd's mature, integrated parser+coder, won't-fix short of
-  reimplementing its sequence coder wholesale. (A deeper hash-chain search recovers
-  ~1 KB more on its own, to ~4% behind, at a real speed cost.)
-- **Stronger video intra (the high-motion lever)** — on real movies we beat FFV1 on
-  all animation (peak **+55%** on stop-motion) and general live action, but lose on
-  high-motion. The block-mode mix proves why: high-motion frames are **~85% intra**,
-  and our intra path is plain MED while FFV1's is context-modelled. A wider
-  (hierarchical) motion search — already shipped — moved it <1%, because only ~6% of
-  those blocks use inter. The real fix is upgrading the intra coder (e.g. the
-  CALIC-class predictor + energy-conditioned coding already in `predictors.py` for
-  images) for the intra blocks. `scripts/movie_lossless_benchmark.py` reports the
-  per-clip mode mix so this is measurable.
+  reimplementing its sequence coder wholesale. (Deepening the hash-chain search — the parse is
+  search-limited — recovers up to ~1 KB on this larger json; we now do this **adaptively per
+  file** — deep on small files, tapering on large — a measured Pareto **+0.5–1.4%** on held-out
+  text at bounded cost. The rep-aware parser is the only larger lever, still won't-fix.)
+- **Stronger video intra — measured below bar, ruled out.** On real movies we beat FFV1 on
+  all animation (peak **+55%** on stop-motion) and general live action, but lose on high-motion.
+  The obvious fix looked like swapping the plain-MED intra path for a CALIC-class predictor +
+  energy-conditioned coding. Measured first (`scripts/video_intra_benchmark.py`): CALIC beats
+  MED+ctxcoder by +4.6% on low-motion / +4.2% on medium but only **+0.4% on high-motion** (the
+  target), and the mode-weighted realized gain is **≤1.13%** across clips — below the +3% bar.
+  The lever helps where intra is rare (smooth frames are inter-coded) and does nothing where
+  intra dominates (high-motion residuals are near-random). The high-motion gap to FFV1 is an
+  *entropy-model* problem, not a predictor one — the same large rewrite as the json gap.
 - **More transforms** — a 2D MED/Paeth intra predictor (shared image + video). Float is
   now handled by Gorilla XOR-delta **and** an FCM/DFCM value predictor (both beat
   xz/zstd on float64; FCM/DFCM dominates structured series). A native C port of the FCM
   predictor would remove its pure-Python training-time cost.
-- **Distribution** — a Rust port toward a single self-contained crate (`rayon` block
-  parallelism) for shipping a library. **In progress:** `rust/` ports the core to safe Rust —
-  the arithmetic coder, the context-adaptive residual coder, the full **CALIC image codec**,
-  a standalone **columnar record codec**, the **float codec** and the **CSV table codec** —
-  cross-compatible both directions with Python (the pure-arithmetic ones byte-identical; the
-  zlib-using float/CSV codecs cross-decodable at the same ratio). Verified in
-  `tests/test_rust_port.py` on LiDAR/Kodak/weather/power-CSV; plus a `colz` CLI. See
-  `rust/README.md`. Remaining: MED/transform loops, the detect/auto router, and `rayon`.
+- **Distribution — complete.** `rust/` is a **feature-complete** safe-Rust port: every codec
+  (arithmetic coder, `ctxcoder`, CALIC, columnar, float, CSV, image, audio, video, the trained
+  text codec) plus model **training**, byte-identical to the Python/C reference (the two
+  `zlib`-using codecs cross-decodable both directions), with `rayon` block parallelism. It
+  ships a standalone `compressor` binary (no Python), cross-compatible with the Python tool.
+  Verified in `tests/test_rust_port.py`; speed in `scripts/rust_vs_python*benchmark.py`
+  (decode 1–10×, training 11–115×). See `rust/README.md`.
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats

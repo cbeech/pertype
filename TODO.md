@@ -1,9 +1,13 @@
 # TODO / Roadmap
 
-Future work, captured. Current state: a per-type trained text/byte compressor + a
-reversible transform stage + a dedicated adaptive-filter audio codec — validated
-across text (≈parity with `zstd --train`), raw images (parity with JPEG XL), and
-audio (beats FLAC). See `README.md` for results. Everything below is *future*.
+Current state: a per-type trained text/byte compressor + reversible transforms + specialist
+image/audio/video/numeric/columnar/float codecs — validated across text (≈parity with
+`zstd --train`), images (parity with JPEG XL), audio (beats FLAC) and scientific data. The
+whole codec **and model training** are ported to Rust (byte-identical to Python/C, bar the two
+`zlib` seams), and it's **packaged as an installable tool** (`pip install .` → a `compressor`
+command + a standalone Rust binary) and **dual-licensed AGPL-3.0-or-later + commercial**. See
+`README.md` and `docs/productization-plan.md`. The ratio frontiers are now exhausted — every
+measured lever is shipped or ruled out (below); what remains is speculative or productization.
 
 ---
 
@@ -65,12 +69,13 @@ audio (beats FLAC). See `README.md` for results. Everything below is *future*.
       a colour transform — closing it would need a major entropy-coder upgrade (high risk,
       uncertain reward), not a transform.
 
-## 1. Optimised port — IN PROGRESS
+## 1. Optimised port — COMPLETE
 
-The algorithms are validated; pure Python is the only blocker. Approach
-established: C primitives in `compressor/_native/`, compiled by gcc on import,
-called via ctypes (`compressor/native.py`), bit-identical to the pure-Python
-reference, with a Python fallback and a zero-dependency core (lazy native import).
+Two ports, both done: (1) the C-via-ctypes primitives (`compressor/_native/`, gcc-on-import,
+pure-Python fallback) that make the Python path fast; (2) a **feature-complete safe-Rust port**
+of every codec *and* training (`rust/`, byte-identical bar the `zlib` seams; standalone
+`compressor` binary; see the "Rust port — COMPLETE" subsection below). The algorithms were
+validated first; both ports preserve byte-exactness.
 
 **Port the reusable PRIMITIVES, not the pipelines** — keep orchestration + the
 validation gate + new-domain prototyping in Python (numpy / PyTorch model).
@@ -174,26 +179,33 @@ fast rather than hindered):
       now feature-complete** — every codec in `compressor/` has a byte-identical (or, for the
       two zlib codecs, cross-decodable) Rust twin behind the same C ABI.
 
-The C-via-ctypes primitives already deliver the speed, so a *full* port remains a
-longer-term, optional step — pursue it only when the goal shifts from *research* to
-*shipping a real library/CLI*. What the rest of a Rust port would buy:
+- [x] **port training to Rust — DONE** (see the dedicated item above): `train_model` ports
+      the whole trainer (transform select, mining, COVER blob, parse search, freq quantization)
+      — byte-identical to `model.py` bar the `zlib` transform-proxy seam. The Rust crate now
+      builds models with no Python.
 
-- **Distribution as a single self-contained binary / crate** — no gcc-at-import,
-  no Python/numpy runtime needed; usable from other languages.
-- **Near-linear multi-threading** via `rayon` over independent blocks (vs the
-  GIL-bounded ~3.8× we get from Python threads over ctypes today).
-- **Memory safety + maintainability** for the whole pipeline (not just hot loops),
-  and SIMD-friendly inner loops.
-- Likely **another large speed step** beyond the C primitives (whole-pipeline
-  native, no Python/ctypes/numpy boundary crossings per block).
+What the full Rust port delivered (all realised): distribution as a single self-contained
+binary/crate (no gcc-at-import, no Python/numpy runtime), `rayon` block parallelism, whole-
+pipeline memory safety, and a measured speed step (decode 1–10× over the C-native Python,
+training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
 
-Keep the same architecture: generic `Transform`/`Coder`/`Model` traits, the
-per-type validation gate, block = unit of seek + parallelism. A pragmatic path is
-to port incrementally behind the existing `native.py` seam (Rust via `cffi`/a C
-ABI, same as the current C), so the Python orchestration and prototyping workflow
-keep working throughout — then optionally move orchestration into Rust last.
-Reuse a reference Rust audio/range-coder crate where sensible rather than
-reimplementing from scratch.
+## 1b. Productization & licensing — COMPLETE
+
+- [x] **Packaged & installable.** `pyproject.toml` (PEP 621/639) with a `compressor` console
+      entry point, optional-dependency extras (`image`/`audio`/`video`/`science`/`all`/`dev`)
+      so the zero-dep core stays clean; `__main__.py`; README Quickstart. `pip install .` →
+      a `compressor` command. (`docs/productization-plan.md`.)
+- [x] **Unified UX.** `compress`/`decompress` auto-route by default and try the trained codec
+      when `--model` is given (smaller wins), emitting a self-describing `.cmp` that
+      `decompress` sniffs (no flags for auto; helpful error for a trained container missing its
+      model). `tests/test_cli.py`.
+- [x] **Rust distribution.** A standalone `compressor` binary (no Python) mirroring
+      train/compress/decompress, cross-compatible with the Python tool (a Rust-trained model is
+      byte-identical to Python's); crates.io-ready `Cargo.toml` metadata.
+- [x] **Dual-licensed AGPL-3.0-or-later + commercial** (`LICENSE`, `COMMERCIAL.md`, `CLA.md`,
+      SPDX in `pyproject.toml`/`Cargo.toml` + entry-point headers). Open for everyone;
+      closed/SaaS use buys a commercial license. **Remaining for an actual public release:** the
+      real repo URL, PyPI/crates.io accounts + the publish run (out of scope here).
 
 ---
 
