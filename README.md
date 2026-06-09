@@ -4,6 +4,30 @@ A lossless compressor built on one idea: **learn the common patterns of a file
 type, then encode files as short references to those patterns plus short codes
 for frequent bytes.**
 
+## Quickstart
+
+```bash
+pip install .                 # core (zero-dependency); add extras for specialist codecs:
+pip install ".[all]"          # image / audio / video / scientific support (numpy, pillow, …)
+
+# 1) Compress anything — detect the type, route to the best codec, verify byte-exact:
+compressor auto-compress data.csv -o data.az
+compressor auto-decompress data.az -o restored.csv
+
+# 2) Trained text/byte codec — learn a model from a corpus, reuse it across many files:
+compressor train json corpus/json/train -o json.model
+compressor compress page.json --model json.model -o page.cz
+compressor decompress page.cz --model json.model -o page.json
+
+# Not sure what a file is? Ask (like `file`, but it names the ideal codec):
+compressor identify mystery.bin
+```
+
+`python -m compressor …` works identically without installing. The text/byte core has **no
+dependencies**; the image/audio/video/science codecs pull theirs via the matching extra.
+Native (C) acceleration builds itself on first use and falls back to pure Python if `gcc`
+isn't available. A standalone **Rust** build (byte-identical, no Python) lives in `rust/`.
+
 Two intuitions, realized honestly:
 
 - *"256 patterns make up a file"* → a **trained dictionary** of common multi-byte

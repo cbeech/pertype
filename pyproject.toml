@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "compressor"
+version = "0.1.0"
+description = "Per-file-type trained lossless compressor — dictionary + LZ + arithmetic coding, with specialist image/audio/video/numeric/columnar codecs"
+readme = "README.md"
+requires-python = ">=3.9"
+# TODO: choose a license (MIT / Apache-2.0) before any PyPI publish; see docs/productization-plan.md
+# license = { text = "MIT" }
+authors = [{ name = "Craig Beech" }]
+keywords = ["compression", "lossless", "arithmetic-coding", "dictionary", "lz", "codec"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Archiving :: Compression",
+    "Intended Audience :: Developers",
+]
+# The text/byte core is zero-dependency on purpose; specialist codecs pull deps via extras.
+dependencies = []
+
+[project.optional-dependencies]
+science = ["numpy", "imagecodecs"]
+image = ["numpy", "pillow", "rawpy", "imagecodecs"]
+audio = ["numpy", "soundfile"]
+video = ["numpy", "imageio-ffmpeg"]
+all = ["numpy", "pillow", "rawpy", "imagecodecs", "soundfile", "imageio-ffmpeg"]
+dev = ["numpy", "pytest"]
+
+[project.scripts]
+compressor = "compressor.cli:main"
+
+[project.urls]
+Repository = "https://github.com/craigbeech/compression"
+
+[tool.setuptools.packages.find]
+include = ["compressor*"]
+
+[tool.setuptools.package-data]
+# ship the C sources so the lazy native build works post-install (falls back to pure Python)
+compressor = ["_native/*.c"]
