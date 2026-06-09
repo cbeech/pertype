@@ -1,5 +1,5 @@
 """Round-trip and behaviour tests for the delimited-text columnar codec."""
-from compressor import csvcolumnar as CV
+from pertype import csvcolumnar as CV
 
 
 def _grid(rows, delim=b";", lt=b"\n", trailing=True):

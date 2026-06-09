@@ -1,7 +1,7 @@
 """Round-trip and selection tests for the columnar record codec."""
 import numpy as np
 
-from compressor import columnar as C
+from pertype import columnar as C
 
 
 def _records(cols, schema):

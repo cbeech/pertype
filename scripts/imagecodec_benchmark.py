@@ -1,4 +1,4 @@
-"""Benchmark the shipped raw/photo image codec (`compressor.imagecodec`).
+"""Benchmark the shipped raw/photo image codec (`pertype.imagecodec`).
 
 Reproduces the README image numbers from the actual codec (not a transform proxy):
 for each Canon CR2 it compresses the **Bayer** sensor plane and the **demosaiced RGB**
@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 import rawpy
 from PIL import Image
 
-from compressor import imagecodec
+from pertype import imagecodec
 
 CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 

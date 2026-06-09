@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Craig Beech. Dual-licensed: AGPL-3.0-or-later, or a commercial license
 // (see ../COMMERCIAL.md).
 //! Rust port of the compression codec's hot path — byte-identical to the Python reference
-//! (`compressor/`) and its C twin (`compressor/_native/audio.c`), so a blob produced by any
+//! (`pertype/`) and its C twin (`pertype/_native/audio.c`), so a blob produced by any
 //! of the three decodes in the others. Built as a `cdylib` behind the same C ABI as the C
 //! native, a drop-in for the ctypes loader. This is the performance/distribution port; the
 //! ratios are validated in Python.
@@ -20,7 +20,7 @@
 //!   *trains* models (`train_model`: mining + COVER blob + parse search + freq quantization),
 //!   byte-identical to `model.py` except the `zlib` transform-proxy seam.
 //!
-//! This is the feature-complete port: every `compressor/` codec has a Rust twin behind the
+//! This is the feature-complete port: every `pertype/` codec has a Rust twin behind the
 //! same C ABI (`ctx_encode`/`ctx_decode`, `calic_codec_encode`/…, `image_encode`/…,
 //! `audio_encode`/…, `video_encode`/…, `text_compress`/`text_decompress`, etc.).
 

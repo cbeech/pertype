@@ -1,5 +1,5 @@
 //! Columnar codec for fixed-width binary record streams — byte-identical to
-//! `compressor/columnar.py`. De-interleaves records into per-field integer columns and
+//! `pertype/columnar.py`. De-interleaves records into per-field integer columns and
 //! codes each as the smallest of raw / delta / second-difference under the ctxcoder; a
 //! self-describing `COL1` container with a store fallback. A complete standalone codec:
 //! a blob it produces decodes in the Python version and vice versa.

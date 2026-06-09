@@ -4,7 +4,7 @@ A LAS file stores N point records, each interleaving scaled-integer X/Y/Z, inten
 GPS time, RGB and small categorical fields. Points have strong spatial locality
 (consecutive deltas ≪ range), so the win is **de-interleave the fields into columns,
 then first-difference the spatial/temporal ones** before entropy coding — exactly what
-our columnar codec (`compressor.columnar`) does. We compare against general codecs on
+our columnar codec (`pertype.columnar`) does. We compare against general codecs on
 the raw records; the domain specialist is **LAZ (LASzip)**, which typically reaches
 ~5–15× on airborne LiDAR (cited as reference — needs laszip, not run here).
 
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from compressor import columnar
+from pertype import columnar
 
 # field layout per LAS point-data-record format (name, numpy dtype, delta?)
 _BASE = [("X", "<i4", 1), ("Y", "<i4", 1), ("Z", "<i4", 1), ("intensity", "<u2", 1),

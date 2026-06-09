@@ -8,7 +8,7 @@ codec competitive with the standard lossless codecs (FFV1, intra JPEG-XL)?
 
 This decodes a short clip from a movie to raw 4:2:0 frames **locally** (bundled
 ffmpeg from imageio-ffmpeg — nothing leaves the machine) and compares:
-  raw YUV  vs  FFV1  vs  intra JPEG-XL  vs  ours (compressor.videocodec)
+  raw YUV  vs  FFV1  vs  intra JPEG-XL  vs  ours (pertype.videocodec)
 with a full round-trip check on ours. Sizes are bytes; ratios are vs raw YUV.
 
 Usage:
@@ -29,8 +29,8 @@ import numpy as np
 import imagecodecs as ic
 import imageio_ffmpeg
 
-from compressor import videocodec as vc
-from compressor import cli
+from pertype import videocodec as vc
+from pertype import cli
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 

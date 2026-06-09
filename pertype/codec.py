@@ -27,10 +27,10 @@ model fails the id_hash check (and then the length/CRC checks) on decompress.
 """
 import zlib
 
-from compressor import transform
-from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-from compressor.model import MODE_NORMAL, REP_INIT
-from compressor.tokenizer import (
+from pertype import transform
+from pertype.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+from pertype.model import MODE_NORMAL, REP_INIT
+from pertype.tokenizer import (
     MIN_MATCH, adaptive_max_chain, detokenize, tokenize, tokenize_optimal, value_from,
     value_slot,
 )
@@ -78,7 +78,7 @@ def _get_native():
     global _native
     if _native is None:
         try:
-            from compressor import native as n
+            from pertype import native as n
             _native = n if n.HAVE_NATIVE else False
         except Exception:
             _native = False

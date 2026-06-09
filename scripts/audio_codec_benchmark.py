@@ -1,4 +1,4 @@
-"""Benchmark the dedicated lossless audio codec (compressor.audiocodec) vs FLAC.
+"""Benchmark the dedicated lossless audio codec (pertype.audiocodec) vs FLAC.
 
 Real music decoded to 16-bit stereo PCM (libsndfile). Each track's chunk is
 compressed by ours and by FLAC; both are decoded back and verified bit-exact
@@ -23,7 +23,7 @@ import gzip
 import numpy as np
 import soundfile as sf
 
-from compressor import audiocodec as ac
+from pertype import audiocodec as ac
 
 MUSIC = os.environ.get("MUSIC_DIR", "data/music")
 

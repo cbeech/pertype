@@ -1,7 +1,7 @@
 """Round-trip tests for the shared 2D intra predictors (MED / Paeth)."""
 import numpy as np
 
-from compressor import predictors
+from pertype import predictors
 
 
 def _check(arr, kind):

@@ -1,7 +1,7 @@
 """Tests for reversible byte-stream transforms."""
 import os
 
-from compressor import transform as T
+from pertype import transform as T
 
 
 def test_all_specs_roundtrip():

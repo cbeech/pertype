@@ -8,7 +8,7 @@
 use std::fs;
 use std::process::exit;
 
-use compressor_rs::auto;
+use pertype::auto;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

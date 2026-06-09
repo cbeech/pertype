@@ -13,8 +13,8 @@ import os
 import subprocess
 import tempfile
 
-from compressor.codec import compress, decompress
-from compressor.model import train
+from pertype.codec import compress, decompress
+from pertype.model import train
 
 
 def _read_dir(path):

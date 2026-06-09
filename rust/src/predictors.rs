@@ -1,4 +1,4 @@
-//! MED (JPEG-LS) predictor — byte-identical to `compressor/predictors.py`. Forward gives the
+//! MED (JPEG-LS) predictor — byte-identical to `pertype/predictors.py`. Forward gives the
 //! residual `P - pred`; reconstruct replays it causally. (GAP/CALIC live in `calic`.)
 
 const ORIGIN: i64 = 128;

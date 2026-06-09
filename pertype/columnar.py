@@ -18,7 +18,7 @@ header).
 """
 import numpy as np
 
-from compressor import ctxcoder
+from pertype import ctxcoder
 
 CMAGIC = b"COL1"
 M_STORE, M_COL = 0, 1

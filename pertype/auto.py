@@ -1,7 +1,7 @@
 """Automatic compress / decompress: detect the data, route to the ideal codec.
 
 The front door over the specialist codecs. ``auto_compress`` identifies the input
-(:mod:`compressor.detect`), builds a few candidate encodings — the matching
+(:mod:`pertype.detect`), builds a few candidate encodings — the matching
 specialist plus universal fallbacks — **verifies each round-trips byte-exact**, and
 keeps the smallest that verifies. The method is tagged in a 4-byte header so
 ``auto_decompress`` routes back. Because *store* always verifies, the result is never
@@ -10,11 +10,11 @@ worse than the original and never wrong.
 What routes to a specialist today (byte-exact, including the format's non-array
 metadata): **FITS** int16 images and **.npy** 2D/3D integer arrays -> the image codec
 (gray / RGB / inter-slice-delta volume); **.npy float** arrays -> the low-cardinality
-float codec (:mod:`compressor.floatcodec`, a value dictionary + delta-coded indices);
+float codec (:mod:`pertype.floatcodec`, a value dictionary + delta-coded indices);
 **text** -> the CSV/delimited-table columnar
-codec (:mod:`compressor.csvcolumnar`, which itself falls back to deflate when the data
+codec (:mod:`pertype.csvcolumnar`, which itself falls back to deflate when the data
 isn't a regular grid); **opaque binary** -> the fixed-width-record columnar codec
-(:mod:`compressor.columnar`, auto-detecting the record period — wins on LiDAR-style point
+(:mod:`pertype.columnar`, auto-detecting the record period — wins on LiDAR-style point
 data, stores otherwise); **.y4m video** -> the motion-compensated video codec and **.wav
 PCM** -> the predictive audio codec (both preserving the container's exact non-sample
 bytes). Everything else falls back to generic deflate or store.
@@ -35,8 +35,8 @@ import zlib
 
 import numpy as np
 
-from compressor import columnar, csvcolumnar, floatcodec, imagecodec
-from compressor.detect import identify
+from pertype import columnar, csvcolumnar, floatcodec, imagecodec
+from pertype.detect import identify
 
 AMAGIC = b"AZ"
 AVERSION = 1
@@ -194,7 +194,7 @@ def _dicom_decode(payload):
 # --- .y4m video -> videocodec (headers preserved verbatim) ------------------------
 def _try_y4m(data):
     try:
-        from compressor import videocodec, y4m
+        from pertype import videocodec, y4m
         header, fheaders, planes = y4m.parse(data)
         vblob = videocodec.encode_yuv(*planes)
     except Exception:
@@ -205,7 +205,7 @@ def _try_y4m(data):
 
 
 def _y4m_decode(payload):
-    from compressor import videocodec, y4m
+    from pertype import videocodec, y4m
     n = payload[0]; p = 1
     hl = int.from_bytes(payload[p:p + 4], "big"); p += 4
     header = payload[p:p + hl]; p += hl
@@ -242,7 +242,7 @@ def _try_wav(data):
     if parsed is None:
         return None
     prefix, pcm, suffix, ch, sr = parsed
-    from compressor import audiocodec
+    from pertype import audiocodec
     fr = len(pcm) // (2 * ch)                         # whole multi-channel frames
     samples = np.frombuffer(pcm[:fr * 2 * ch], "<i2").reshape(fr, ch)
     tail = pcm[fr * 2 * ch:]                          # leftover bytes (rare)
@@ -252,7 +252,7 @@ def _try_wav(data):
 
 
 def _wav_decode(payload):
-    from compressor import audiocodec
+    from pertype import audiocodec
     p = 0
     pl = int.from_bytes(payload[p:p + 4], "big"); p += 4; prefix = payload[p:p + pl]; p += pl
     sl = int.from_bytes(payload[p:p + 4], "big"); p += 4; suffix = payload[p:p + sl]; p += sl

@@ -21,7 +21,7 @@ import subprocess
 
 import numpy as np
 
-from compressor import transform
+from pertype import transform
 
 CSV = os.environ.get("SCI_DATA", "data/sci") + "/household_power_consumption.txt"
 MAXROWS = 1_000_000

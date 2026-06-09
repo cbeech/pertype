@@ -15,14 +15,14 @@ import time
 
 import numpy as np
 
-from compressor import (audiocodec, columnar, csvcolumnar, ctxcoder, floatcodec,
+from pertype import (audiocodec, columnar, csvcolumnar, ctxcoder, floatcodec,
                         imagecodec, native, predictors, videocodec)
-from compressor import model as textmodel
-from compressor.codec import compress as text_compress
-from compressor.codec import decompress as text_decompress
+from pertype import model as textmodel
+from pertype.codec import compress as text_compress
+from pertype.codec import decompress as text_decompress
 
 _SO = glob.glob(os.path.join(os.path.dirname(__file__), "..", "rust", "target", "release",
-                             "**", "libcompressor_rs.so"), recursive=True)
+                             "**", "libpertype.so"), recursive=True)
 assert _SO, "build the cdylib first: (cd rust && cargo build --release)"
 LIB = ctypes.CDLL(_SO[0])
 for name in ("ctx_encode", "calic_codec_encode", "calic_codec_decode", "columnar_encode",

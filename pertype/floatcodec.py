@@ -20,7 +20,7 @@ import zlib
 
 import numpy as np
 
-from compressor import ctxcoder
+from pertype import ctxcoder
 
 FMAGIC = b"FLT1"
 M_STORE, M_DICT = 0, 1

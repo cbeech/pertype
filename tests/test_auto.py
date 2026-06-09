@@ -5,7 +5,7 @@ import zlib
 
 import numpy as np
 
-from compressor import auto
+from pertype import auto
 
 
 def _roundtrip(data, name=None):

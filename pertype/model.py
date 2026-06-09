@@ -22,10 +22,10 @@ encodable later — that is what guarantees losslessness on unseen files.
 import os
 from collections import Counter
 
-from compressor import transform
-from compressor.dictionary import Dictionary, mine_patterns
-from compressor.freqmodel import FrequencyModel
-from compressor.tokenizer import (
+from pertype import transform
+from pertype.dictionary import Dictionary, mine_patterns
+from pertype.freqmodel import FrequencyModel
+from pertype.tokenizer import (
     MAX_CHAIN, MAX_DIST_SLOT, MAX_LEN_SLOT, MIN_MATCH,
     tokenize, tokenize_optimal, value_slot,
 )
@@ -449,7 +449,7 @@ class Model:
     @classmethod
     def load(cls, blob):
         if blob[:4] != MAGIC:
-            raise ValueError("not a compressor model file")
+            raise ValueError("not a pertype model file")
         pos = 4
         version = int.from_bytes(blob[pos : pos + 2], "big")
         pos += 2

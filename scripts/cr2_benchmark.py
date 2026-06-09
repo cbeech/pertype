@@ -24,9 +24,9 @@ import numpy as np
 import rawpy
 from PIL import Image
 
-from compressor.benchmark import _gzip_size, _zstd_size, _zstd_dict, _zstd_dict_size
-from compressor.codec import compress, decompress
-from compressor.model import train
+from pertype.benchmark import _gzip_size, _zstd_size, _zstd_dict, _zstd_dict_size
+from pertype.codec import compress, decompress
+from pertype.model import train
 
 CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 
@@ -78,7 +78,7 @@ def main():
         # (zstd+dict < zstd), and a big blob makes the parse intractable at this
         # size. Disable it; in-file LZ + repeat offsets + cost-optimal parse
         # (chain 128) stay at full strength — that is what matters on raw.
-        import compressor.model as M
+        import pertype.model as M
         M.BLOB_SPECS = (("none", 0), ("naive", 1 << 12))
         print("note: blob disabled for large crop (dead weight on raw); in-file LZ "
               "+ repeat offsets + cost-optimal parse remain full-strength", flush=True)

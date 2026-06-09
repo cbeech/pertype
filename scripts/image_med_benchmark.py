@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore")
 
 from PIL import Image
 
-from compressor import ctxcoder, predictors
+from pertype import ctxcoder, predictors
 
 KINDS = {
     "icons": dict(dirs=["/usr/share/icons", "/usr/share/pixmaps"], lo=16, hi=128, want=120),

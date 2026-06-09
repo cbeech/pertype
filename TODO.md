@@ -4,7 +4,7 @@ Current state: a per-type trained text/byte compressor + reversible transforms +
 image/audio/video/numeric/columnar/float codecs — validated across text (≈parity with
 `zstd --train`), images (parity with JPEG XL), audio (beats FLAC) and scientific data. The
 whole codec **and model training** are ported to Rust (byte-identical to Python/C, bar the two
-`zlib` seams), and it's **packaged as an installable tool** (`pip install .` → a `compressor`
+`zlib` seams), and it's **packaged as an installable tool** (`pip install .` → a `pertype`
 command + a standalone Rust binary) and **dual-licensed AGPL-3.0-or-later + commercial**. See
 `README.md` and `docs/productization-plan.md`. The ratio frontiers are now exhausted — every
 measured lever is shipped or ruled out (below); what remains is speculative or productization.
@@ -71,10 +71,10 @@ measured lever is shipped or ruled out (below); what remains is speculative or p
 
 ## 1. Optimised port — COMPLETE
 
-Two ports, both done: (1) the C-via-ctypes primitives (`compressor/_native/`, gcc-on-import,
+Two ports, both done: (1) the C-via-ctypes primitives (`pertype/_native/`, gcc-on-import,
 pure-Python fallback) that make the Python path fast; (2) a **feature-complete safe-Rust port**
 of every codec *and* training (`rust/`, byte-identical bar the `zlib` seams; standalone
-`compressor` binary; see the "Rust port — COMPLETE" subsection below). The algorithms were
+`pertype` binary; see the "Rust port — COMPLETE" subsection below). The algorithms were
 validated first; both ports preserve byte-exactness.
 
 **Port the reusable PRIMITIVES, not the pipelines** — keep orchestration + the
@@ -176,7 +176,7 @@ fast rather than hindered):
       → cost-optimal LZ+dictionary parse → WNC arithmetic coding → CZ container; loads a
       Python-trained CMP7 model; byte-identical *including* the f64-`log2`-priced optimal parse,
       the repeat-offset cache, and all four transforms delta/split/xor/fcm). **The Rust port is
-      now feature-complete** — every codec in `compressor/` has a byte-identical (or, for the
+      now feature-complete** — every codec in `pertype/` has a byte-identical (or, for the
       two zlib codecs, cross-decodable) Rust twin behind the same C ABI.
 
 - [x] **port training to Rust — DONE** (see the dedicated item above): `train_model` ports
@@ -191,15 +191,15 @@ training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
 
 ## 1b. Productization & licensing — COMPLETE
 
-- [x] **Packaged & installable.** `pyproject.toml` (PEP 621/639) with a `compressor` console
+- [x] **Packaged & installable.** `pyproject.toml` (PEP 621/639) with a `pertype` console
       entry point, optional-dependency extras (`image`/`audio`/`video`/`science`/`all`/`dev`)
       so the zero-dep core stays clean; `__main__.py`; README Quickstart. `pip install .` →
-      a `compressor` command. (`docs/productization-plan.md`.)
+      a `pertype` command. (`docs/productization-plan.md`.)
 - [x] **Unified UX.** `compress`/`decompress` auto-route by default and try the trained codec
       when `--model` is given (smaller wins), emitting a self-describing `.cmp` that
       `decompress` sniffs (no flags for auto; helpful error for a trained container missing its
       model). `tests/test_cli.py`.
-- [x] **Rust distribution.** A standalone `compressor` binary (no Python) mirroring
+- [x] **Rust distribution.** A standalone `pertype` binary (no Python) mirroring
       train/compress/decompress, cross-compatible with the Python tool (a Rust-trained model is
       byte-identical to Python's); crates.io-ready `Cargo.toml` metadata.
 - [x] **Dual-licensed AGPL-3.0-or-later + commercial** (`LICENSE`, `COMMERCIAL.md`, `CLA.md`,
@@ -223,7 +223,7 @@ temporal redundancy, which is usually the dominant source of compressibility.
       README "Lossless video". Frame-delta wins static, loses motion — exactly the
       boundary needing motion compensation.
 - [~] 2D spatial predictor (MED / Paeth) for intra frames (shared with images) —
-      built `compressor/predictors.py` (MED + Paeth, vectorised forward + causal
+      built `pertype/predictors.py` (MED + Paeth, vectorised forward + causal
       inverse, round-trip tested incl. odd shapes; `tests/test_predictors.py`).
       Measure-first (`scripts/image_med_benchmark.py`) settled whether to build an
       image-codec path around it, and the answer is **no, on the data we have**:
@@ -242,7 +242,7 @@ temporal redundancy, which is usually the dominant source of compressibility.
       MED residuals through the LZ codec drops to 1.74x — LZ hurts on noise. So:
       build a dedicated **raw-image path** (Bayer-deinterleave -> MED -> ctxcoder, no
       LZ); leave graphics to the LZ+dictionary codec. Predictor module + tests done.
-- [x] **Raw-image codec path** — built `compressor/imagecodec.py`: Bayer-deinterleave
+- [x] **Raw-image codec path** — built `pertype/imagecodec.py`: Bayer-deinterleave
       → 2D MED → ctxcoder (no LZ, no model), RIMG container + dims header + CRC, CLI
       `image-encode`/`image-decode` (.npy or .CR2 → .rimg), `tests/test_imagecodec.py`.
       Decode uses the native `med_fill` (predictors aligned to origin 128 so the
@@ -339,7 +339,7 @@ temporal redundancy, which is usually the dominant source of compressibility.
       plane-optimal mode, while `ctxcoder` already codes chroma MVs/modes so cheaply
       that the saved overhead is negligible. Kept the independent coder. Lesson:
       the shared-MV design only pays when MV/mode coding is expensive.
-- [x] **first-class video codec** (`compressor/videocodec.py`): the validated
+- [x] **first-class video codec** (`pertype/videocodec.py`): the validated
       pipeline is now a real `encode`/`decode` (+ `encode_yuv`/`decode_yuv`) with a
       VID1 container, not just benchmark scripts — quarter-pel MC + per-block
       SKIP/INTER/INTRA (MED), residuals/MVs via `ctxcoder`, numpy+ctxcoder only.
@@ -363,7 +363,7 @@ temporal redundancy, which is usually the dominant source of compressibility.
 - [x] **consolidated / deduped the video experiments**: the 8 exploratory
       `scripts/video_*_benchmark.py` ablation scripts (~1400 lines, heavily
       duplicated) are retired to git history now that the pipeline lives in the
-      tested `compressor/videocodec.py`; `scripts/video_ffv1_benchmark.py` (ours vs
+      tested `pertype/videocodec.py`; `scripts/video_ffv1_benchmark.py` (ours vs
       FFV1/JXL via the real codec) is the one remaining, canonical video benchmark.
       The completed video items above name those now-retired scripts as the
       historical site of each ablation.
@@ -403,11 +403,11 @@ temporal redundancy, which is usually the dominant source of compressibility.
 
 Fits structured / numeric data; useless on already-compressed / encrypted / noise.
 
-- [x] **Auto-detect + dispatch (the `file`-command idea)** — `compressor/detect.py`
+- [x] **Auto-detect + dispatch (the `file`-command idea)** — `pertype/detect.py`
       + a `cli identify` subcommand sniffs a file's type (magic bytes for PNG/JPEG/GIF/
       FITS/DICOM/TIFF/CR2/WAV/y4m/npy/gzip/zip/xz/zstd/bzip2/ELF/PDF, then text-content
       heuristics for json/xml/html/code/log/csv/plain) and names the ideal codec.
-      `compressor/auto.py` + `cli auto-compress` / `auto-decompress` then *route*: detect →
+      `pertype/auto.py` + `cli auto-compress` / `auto-decompress` then *route*: detect →
       build candidate encodings (matching specialist + universal fallbacks) → **verify each
       round-trips byte-exact** → keep the smallest verified, tagged in a 4-byte header so
       decompress routes back. Wired specialists: **.npy** 2D/3D int arrays and **FITS** int16
@@ -419,7 +419,7 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
       trained-dict win on arbitrary text without a shipped model and falls back to deflate.
       Done: **y4m → videocodec** and **WAV → audiocodec** now route through `auto` too
       (verify-gated, preserving the container's exact non-sample bytes; `.y4m` parse/serialize
-      factored into `compressor/y4m.py`, shared with the CLI). Measured: akiyo y4m →
+      factored into `pertype/y4m.py`, shared with the CLI). Measured: akiyo y4m →
       `y4m->videocodec` 6.6×, realistic WAV → `wav->audiocodec`, both byte-exact. **DICOM**
       now routes too: standard (DICM-preamble) 16-bit images/volumes → imagecodec, splicing the
       compressed pixel data back into the file's exact DICOM structure (byte-exact, verify-gated,
@@ -431,7 +431,7 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
 **Tested (2026-06):** two real datasets, every result round-trip verified — see
 README "Scientific numeric time-series". Key finding: **the predictor and the
 entropy coder interact** — strong adaptive predictor + Rice ≈ weak predictor +
-context-adaptive coder. The new `compressor/ctxcoder.py` (context-adaptive
+context-adaptive coder. The new `pertype/ctxcoder.py` (context-adaptive
 arithmetic, order-2 context) beats `xz -9` on ECG (3.16x vs 2.94x) where Rice
 lost, but does *not* help audio (the LMS cascade already whitens the residual).
 - [x] **Biosignals (ECG)** — PhysioNet Apnea-ECG. delta + ctx **beats xz**. The
@@ -474,7 +474,7 @@ Still high-value untested, in rough priority:
       codec's fixed-2 + 16/256-tap LMS cascade + `ctxcoder` (generalises directly —
       seismic is a smooth waveform like music). Confirms the prediction niche
       decisively.
-- [x] **Columnar / numeric CSV — built (`compressor/csvcolumnar.py`).** The "CSV-aware
+- [x] **Columnar / numeric CSV — built (`pertype/csvcolumnar.py`).** The "CSV-aware
       front-end" the earlier probe asked for. Detects a regular delimited grid (delimiter /
       line-ending / constant field count), peels the header row, transposes to column-major,
       and codes each column by type: **fixed-decimal / integer columns → scale to ints →
@@ -505,7 +505,7 @@ Still high-value untested, in rough priority:
           16-bit (+9% on FITS) and the small inter-slice deltas get tracked thresholds.
         * **3D volumes** — `encode_volume`/`decode_volume`: slice 0 direct, later slices
           as inter-slice deltas. **+31%** over per-slice on a correlated volume. 94 tests.
-      Open: HDF5. (CSV transpose front-end now built — `compressor/csvcolumnar.py`.)
+      Open: HDF5. (CSV transpose front-end now built — `pertype/csvcolumnar.py`.)
 - [x] **Terrain DEM + hyperspectral** — two new scientific niches, public data, round-trip
       verified (`scripts/dem_benchmark.py`, `scripts/hyperspectral_benchmark.py`):
         * **DEM (SRTM int16 elevation)** — smooth height fields are squarely the predictor's
@@ -526,7 +526,7 @@ Still high-value untested, in rough priority:
           per column. Beats general codecs; LAZ (LASzip) is the ~5–15× specialist (not run —
           no laszip). A genuinely new structure (irregular 3D geometry) and the clearest case
           yet for a columnar/transpose front-end (cf. the open CSV-transpose item).
-- [x] **Columnar front-end built (`compressor/columnar.py`).** A real codec module for
+- [x] **Columnar front-end built (`pertype/columnar.py`).** A real codec module for
       fixed-width binary record streams: a *schema* (list of field byte-widths in {1,2,4})
       de-interleaves records into per-field integer columns, each coded as the smaller of
       raw / first-difference under `ctxcoder`; self-describing container; *store* fallback so
@@ -554,7 +554,7 @@ Still high-value untested, in rough priority:
       → csv 11.9×, LiDAR point region → binary-columnar 4.0× (schema-free). New `.az` methods
       M_CSV / M_COL. Open: leading-offset detection so whole headered files (e.g. a full .las)
       auto-route too.
-- [x] **Lossless float codec — closes the lossless-float boundary (`compressor/floatcodec.py`).**
+- [x] **Lossless float codec — closes the lossless-float boundary (`pertype/floatcodec.py`).**
       Diagnosis on the NCEP reanalysis grid showed the win isn't in prediction (every
       predictor/XOR variant *lost* to xz, which finds repeated values via LZ) — it's that
       fixed-precision float32 holds **few distinct values** (weather: 6.8 K = 0.18%). So:

@@ -1,5 +1,5 @@
 //! Auto front door — tries the Rust codecs, verifies each round-trips, keeps the smallest.
-//! Produces the **same `AZ` container as `compressor/auto.py`** for the methods Rust
+//! Produces the **same `AZ` container as `pertype/auto.py`** for the methods Rust
 //! implements (store / deflate / csv→columnar / binary→columnar), so a Rust-produced `.az`
 //! is decoded by the Python `auto_decompress` and vice versa. (Python additionally routes
 //! image/float/video/audio formats Rust doesn't carry; those methods aren't produced here.)

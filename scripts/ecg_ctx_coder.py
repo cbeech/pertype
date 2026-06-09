@@ -20,8 +20,8 @@ import time
 
 import numpy as np
 
-from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-from compressor.bitio import BitReader
+from pertype.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+from pertype.bitio import BitReader
 
 NB = 20            # buckets 0..19 (alphabet)
 RESCALE = 1 << 14  # halve counts when a context's total reaches this

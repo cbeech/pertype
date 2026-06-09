@@ -1,5 +1,5 @@
 """Tests for bit-level I/O."""
-from compressor.bitio import BitWriter, BitReader
+from pertype.bitio import BitWriter, BitReader
 
 
 def test_single_bits_roundtrip():

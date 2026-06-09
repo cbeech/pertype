@@ -3,7 +3,7 @@
 Row-major CSV interleaves unlike values on every line; transposing to column-major and
 coding each column with the strategy that fits it (fixed-decimal columns -> scaled-int
 delta + ctxcoder, text columns -> deflate) beats the general tools on numeric tables.
-`compressor.csvcolumnar` is round-trip verified at encode time (else it stores).
+`pertype.csvcolumnar` is round-trip verified at encode time (else it stores).
 
 Usage: python3 scripts/csv_benchmark.py <file.csv> [max_rows]
 e.g. the UCI household power consumption set (2M rows, ';'-delimited fixed-decimals).
@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from compressor import csvcolumnar
+from pertype import csvcolumnar
 
 
 def sh(cmd, data):

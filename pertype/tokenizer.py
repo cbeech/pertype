@@ -42,7 +42,7 @@ def _get_native():
     global _native
     if _native is None:
         try:
-            from compressor import native as n
+            from pertype import native as n
             _native = n if n.HAVE_NATIVE else False
         except Exception:
             _native = False

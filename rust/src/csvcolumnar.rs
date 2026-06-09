@@ -1,5 +1,5 @@
 //! Columnar codec for regular delimited-text tables — the Rust twin of
-//! `compressor/csvcolumnar.py`. Detects a regular grid, transposes to column-major, and
+//! `pertype/csvcolumnar.py`. Detects a regular grid, transposes to column-major, and
 //! codes each column as numeric (scaled-int Δ), text-dictionary, or deflate — whichever is
 //! smallest. Round-trips and is cross-compatible with the Python version (deflate sub-blobs
 //! are valid cross-decodable zlib, not byte-identical to CPython's).

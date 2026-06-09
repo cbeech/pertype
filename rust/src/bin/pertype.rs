@@ -1,11 +1,11 @@
-//! `compressor` — the standalone Rust CLI (no Python). Mirrors the Python `compressor`
+//! `pertype` — the standalone Rust CLI (no Python). Mirrors the Python `pertype`
 //! command's core flow: train a per-type model, then `compress` / `decompress` with a
 //! self-describing container that routes itself.
 //!
-//!   compressor train <type_id> <corpus_dir> -o <model>
-//!   compressor compress   <in> [-m <model>] [-o <out>]   # auto-routes; --model also tries the
+//!   pertype train <type_id> <corpus_dir> -o <model>
+//!   pertype compress   <in> [-m <model>] [-o <out>]   # auto-routes; --model also tries the
 //!                                                          # trained codec, smaller wins (.cmp)
-//!   compressor decompress <in> [-m <model>] [-o <out>]   # sniffs the container
+//!   pertype decompress <in> [-m <model>] [-o <out>]   # sniffs the container
 //!
 //! Output is cross-compatible with the Python tool (byte-identical for the arithmetic-coded
 //! parts; the auto-router's deflate sub-blobs differ but decode in both).
@@ -13,7 +13,7 @@
 use std::fs;
 use std::process::exit;
 
-use compressor_rs::{auto, textcodec};
+use pertype::{auto, textcodec};
 
 const CZ_MAGIC: u8 = 0xC7; // trained-model container
 const AZ_MAGIC: &[u8] = b"AZ"; // auto container
@@ -54,14 +54,14 @@ fn write(path: &str, data: &[u8]) {
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() < 2 {
-        die("usage: compressor <train|compress|decompress> …  (see --help in the README)");
+        die("usage: pertype <train|compress|decompress> …  (see --help in the README)");
     }
     let rest = &argv[2..];
     match argv[1].as_str() {
         "train" => {
             let (pos, _m, output) = parse_opts(rest);
             if pos.len() != 2 {
-                die("usage: compressor train <type_id> <corpus_dir> -o <model>");
+                die("usage: pertype train <type_id> <corpus_dir> -o <model>");
             }
             let out = output.unwrap_or_else(|| die("train needs -o <model>"));
             let mut entries: Vec<_> = fs::read_dir(&pos[1])
@@ -82,7 +82,7 @@ fn main() {
         "compress" => {
             let (pos, model, output) = parse_opts(rest);
             if pos.len() != 1 {
-                die("usage: compressor compress <in> [-m <model>] [-o <out>]");
+                die("usage: pertype compress <in> [-m <model>] [-o <out>]");
             }
             let data = read(&pos[0]);
             let mut best = auto::encode(&data);
@@ -102,7 +102,7 @@ fn main() {
         "decompress" => {
             let (pos, model, output) = parse_opts(rest);
             if pos.len() != 1 {
-                die("usage: compressor decompress <in> [-m <model>] [-o <out>]");
+                die("usage: pertype decompress <in> [-m <model>] [-o <out>]");
             }
             let data = read(&pos[0]);
             let out = if data.first() == Some(&CZ_MAGIC) {
@@ -111,7 +111,7 @@ fn main() {
             } else if data.starts_with(AZ_MAGIC) {
                 auto::decode(&data)
             } else {
-                die("unrecognized container (not a compressor .cmp/.cz/.az file)");
+                die("unrecognized container (not a pertype .cmp/.cz/.az file)");
             };
             let dest = output.unwrap_or_else(|| {
                 pos[0].strip_suffix(".cmp").map(str::to_string).unwrap_or_else(|| format!("{}.out", pos[0]))

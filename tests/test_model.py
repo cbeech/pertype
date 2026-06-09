@@ -1,5 +1,5 @@
 """Tests for model training and serialization."""
-from compressor.model import BLOB_CAP, Model, _build_blob, train
+from pertype.model import BLOB_CAP, Model, _build_blob, train
 
 
 def test_blob_contains_frequent_content_and_respects_cap():

@@ -1,5 +1,5 @@
 //! Lossless video codec — motion-compensated inter-frame coding, byte-identical to
-//! `compressor/videocodec.py`. Per 16×16 block, per frame (frame 0 all-intra):
+//! `pertype/videocodec.py`. Per 16×16 block, per frame (frame 0 all-intra):
 //!   * SKIP  — block bit-identical to the co-located previous block (mode flag only).
 //!   * INTER — quarter-pel motion-compensated residual vs the previous frame (+ luma MV).
 //!   * INTRA — residual vs the causal MED (JPEG-LS) predictor in this frame.

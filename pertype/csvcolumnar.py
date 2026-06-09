@@ -23,7 +23,7 @@ import zlib
 
 import numpy as np
 
-from compressor import ctxcoder
+from pertype import ctxcoder
 
 CMAGIC = b"CSV1"
 M_STORE, M_DEFLATE, M_GRID = 0, 1, 2

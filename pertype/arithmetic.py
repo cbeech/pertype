@@ -10,7 +10,7 @@ The classic E1/E2/E3 renormalization with "pending bits" handles carry and
 underflow. ``total`` must stay below ``QUARTER`` (it is ~2^16 here), which keeps
 the range from collapsing.
 """
-from compressor.bitio import BitWriter, BitReader
+from pertype.bitio import BitWriter, BitReader
 
 CODE_BITS = 32
 MAX = (1 << CODE_BITS) - 1

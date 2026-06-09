@@ -1,4 +1,4 @@
-//! Trained per-file-type text/byte codec — byte-identical to `compressor/codec.py` +
+//! Trained per-file-type text/byte codec — byte-identical to `pertype/codec.py` +
 //! `model.py`/`tokenizer.py`/`dictionary.py`/`freqmodel.py`/`arithmetic.py`. Loads a
 //! Python-trained model (`CMP7`) and compresses/decompresses a file to the `CZ` container:
 //!   transform → cost-optimal LZ + dictionary parse → arithmetic-coded token stream.
@@ -388,7 +388,7 @@ struct Model {
 }
 impl Model {
     fn load(blob: &[u8]) -> Model {
-        assert_eq!(&blob[..4], b"CMP7", "not a compressor model file");
+        assert_eq!(&blob[..4], b"CMP7", "not a pertype model file");
         let version = u16::from_be_bytes([blob[4], blob[5]]);
         let use_lz = blob[6] != 0;
         let tid_len = blob[7] as usize;

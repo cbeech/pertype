@@ -1,7 +1,7 @@
 """Round-trip tests for the lossless video codec (encode -> decode == frames)."""
 import numpy as np
 
-from compressor import videocodec as vc
+from pertype import videocodec as vc
 
 
 def _clip(T=5, H=32, W=48, seed=0):
@@ -81,7 +81,7 @@ def test_cli_y4m_roundtrip(tmp_path=None):
     """CLI video-encode -> video-decode reproduces the .y4m byte-exact."""
     import os
     import tempfile
-    from compressor import cli
+    from pertype import cli
 
     H, W, T = 32, 64, 3                          # chroma 16x32 -> multiples of 16
     rng = np.random.default_rng(11)
@@ -109,7 +109,7 @@ def test_cli_y4m_roundtrip(tmp_path=None):
 def _cli_roundtrips(src_bytes):
     import os
     import tempfile
-    from compressor import cli
+    from pertype import cli
     d = tempfile.mkdtemp()
     y, v, o = os.path.join(d, "c.y4m"), os.path.join(d, "c.vid"), os.path.join(d, "o.y4m")
     with open(y, "wb") as fh:

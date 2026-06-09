@@ -31,8 +31,8 @@ warnings.filterwarnings("ignore")
 import rawpy
 from PIL import Image
 
-from compressor import codec, ctxcoder, predictors
-from compressor.model import train
+from pertype import codec, ctxcoder, predictors
+from pertype.model import train
 
 CR2_DIR = os.environ.get("CR2_DIR", "data/raw")          # local data dir; set CR2_DIR to point at it
 
@@ -100,7 +100,7 @@ def main():
         print("need >=8 usable CR2s"); return
 
     # disable the cross-image blob on photographic raw (dead weight; see cr2_benchmark)
-    import compressor.model as M
+    import pertype.model as M
     M.BLOB_SPECS = (("none", 0), ("naive", 1 << 12))
 
     cut = len(crops) * 4 // 5

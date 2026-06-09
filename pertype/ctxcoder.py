@@ -22,8 +22,8 @@ Encoder and decoder update their counts identically as they go, so nothing is
 transmitted. Pure Python (like the arithmetic coder it builds on) and exactly
 reversible: ``decode(encode(res), len(res)) == res``.
 """
-from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-from compressor.bitio import BitReader
+from pertype.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+from pertype.bitio import BitReader
 
 NB = 65            # buckets 0..64 — covers any int64 zigzag magnitude
 CTX_CLAMP = 16     # buckets clamped to this for the context (keeps it dense)
@@ -48,7 +48,7 @@ def _get_native():
     global _native
     if _native is None:
         try:
-            from compressor import native as n
+            from pertype import native as n
             _native = n if n.HAVE_NATIVE else False
         except Exception:
             _native = False

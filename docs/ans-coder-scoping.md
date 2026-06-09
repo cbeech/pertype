@@ -15,7 +15,7 @@ ANS and arithmetic coding both encode a symbol stream to within a fraction of a 
 **model entropy** `-Σ log2 p(sym)`. They are mathematically equivalent in compression; ANS
 wins on *throughput* (table-driven, no per-symbol division) and loses a little flexibility
 (adaptive probabilities are awkward; tANS uses static/blockwise tables). We already use a
-range/arithmetic coder (`compressor/arithmetic.py`) behind `ctxcoder` and CALIC. So swapping
+range/arithmetic coder (`pertype/arithmetic.py`) behind `ctxcoder` and CALIC. So swapping
 in ANS would change speed, not size — **expected ratio gain ≈ 0%.**
 
 JPEG-XL and zstd use ANS *because they need speed at scale*, and they get their compression

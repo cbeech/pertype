@@ -2,7 +2,7 @@
 
 NCEP/NCAR reanalysis surface fields are float32 grids (time x lat x lon). They look noisy
 byte-wise (the mantissa defeats prediction and XOR-delta — those lose to xz), but at fixed
-precision the array holds **few distinct values**, which `compressor.floatcodec` exploits
+precision the array holds **few distinct values**, which `pertype.floatcodec` exploits
 losslessly: map each value's bit pattern to a dictionary index, then delta-code the smooth
 index field. This beats xz on exactly this smooth-fixed-precision case (the standing
 boundary). (Reading the file also exercises HDF5.)
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from compressor import floatcodec
+from pertype import floatcodec
 
 
 def sh(cmd, data):

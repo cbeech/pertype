@@ -1,5 +1,5 @@
 """Tests for the pattern miner and longest-match matcher."""
-from compressor.dictionary import Dictionary, mine_patterns
+from pertype.dictionary import Dictionary, mine_patterns
 
 
 def test_mines_frequent_substring():

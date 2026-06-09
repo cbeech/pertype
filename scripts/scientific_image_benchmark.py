@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore")
 
 from PIL import Image
 
-from compressor import imagecodec
+from pertype import imagecodec
 
 DATA = os.path.expanduser("~/sample_data")
 

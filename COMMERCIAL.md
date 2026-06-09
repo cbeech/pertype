@@ -35,8 +35,8 @@ and we'll sort out terms.
 
 ## Scope of a commercial license
 
-A commercial license covers **this project's own code** (the `compressor` package and the
-`compressor_rs` crate). Two boundaries to be aware of:
+A commercial license covers **this project's own code** (the `pertype` package and the
+`pertype` crate). Two boundaries to be aware of:
 
 - **Third-party dependencies.** Bundled dependencies are permissive and carry over freely;
   certain *optional* Python extras pull in GPL/LGPL native libraries (ffmpeg/x264, LibRaw,

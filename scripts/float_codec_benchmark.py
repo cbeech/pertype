@@ -8,8 +8,8 @@ import subprocess
 
 import numpy as np
 
-from compressor import codec
-from compressor.model import train
+from pertype import codec
+from pertype.model import train
 
 CSV = os.environ.get("SCI_DATA", "data/sci") + "/household_power_consumption.txt"
 CHUNK = 4096          # floats per "file" (32 KB)

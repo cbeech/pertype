@@ -1,5 +1,5 @@
 """Tests for the format detector (the 'file'-like identification layer)."""
-from compressor.detect import identify
+from pertype.detect import identify
 
 
 def test_magic_formats():

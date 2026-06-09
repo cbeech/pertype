@@ -11,15 +11,15 @@ import os
 import numpy as np
 import pytest
 
-from compressor import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
+from pertype import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
                         imagecodec, predictors, transform, videocodec)
-from compressor import model as textmodel
-from compressor.codec import compress as text_compress
-from compressor.codec import decompress as text_decompress
+from pertype import model as textmodel
+from pertype.codec import compress as text_compress
+from pertype.codec import decompress as text_decompress
 
 _HERE = os.path.dirname(__file__)
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
-                             "libcompressor_rs.so"), recursive=True)
+                             "libpertype.so"), recursive=True)
 
 pytestmark = pytest.mark.skipif(not _SO, reason="Rust cdylib not built (cargo build --release in rust/)")
 
@@ -307,7 +307,7 @@ def test_textcodec_training_byte_identical(lib):
     import math
     import struct
 
-    from compressor.model import Model
+    from pertype.model import Model
 
     def check(samples, tid, mp=256):
         pm_obj = textmodel.train(samples, type_id=tid, max_patterns=mp)

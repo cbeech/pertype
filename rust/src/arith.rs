@@ -1,6 +1,6 @@
 //! Shared Witten–Neal–Cleary 32-bit arithmetic coder + bit I/O, and the bucket-model
 //! constants used by both the ctxcoder and CALIC ports. MSB-first output with a
-//! zero-padded final byte, byte-identical to `compressor/_native/audio.c`.
+//! zero-padded final byte, byte-identical to `pertype/_native/audio.c`.
 
 pub const NB: usize = 65; // magnitude buckets 0..64 cover any int64 zigzag
 pub const INCR: i64 = 32;

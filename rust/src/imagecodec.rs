@@ -1,4 +1,4 @@
-//! Lossless image codec — byte-identical to `compressor/imagecodec.py`. Per-plane choice of
+//! Lossless image codec — byte-identical to `pertype/imagecodec.py`. Per-plane choice of
 //! MED / CALIC / RLE (cheapest wins), gray / Bayer / RGB modes, and inter-slice-delta
 //! volumes. Plane coding is all arithmetic (ctxcoder/CALIC) and the checksum is standard
 //! crc32, so the `RIMG`/`RVOL` containers are exact twins of the Python output.

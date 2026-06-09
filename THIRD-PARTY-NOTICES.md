@@ -1,6 +1,6 @@
 # Third-party notices
 
-This project (the `compressor` Python package and the `compressor_rs` Rust crate) is original
+This project (the `pertype` Python package and the `pertype` Rust crate) is original
 work, dual-licensed AGPL-3.0-or-later + commercial (see [`LICENSE`](LICENSE) and
 [`COMMERCIAL.md`](COMMERCIAL.md)). It contains **no vendored third-party source code**. It does,
 however, *depend on* third-party software in two distinct ways, with different obligations:
@@ -37,14 +37,14 @@ GPLv3/AGPLv3 are one-directionally compatible with Apache-2.0, so mixing these i
 work is fine; for a commercial build they impose only the usual "preserve notices" requirement.
 
 The Python text/byte core has **zero** runtime dependencies. The native acceleration compiles
-this project's *own* C sources (`compressor/_native/*.c`) with the system `gcc` at runtime — no
+this project's *own* C sources (`pertype/_native/*.c`) with the system `gcc` at runtime — no
 third-party code is compiled or linked (GCC's runtime-library exception means compiler use does
 not affect the output's licensing).
 
 ## Installed separately — Python optional extras
 
 These are declared in `pyproject.toml` `[project.optional-dependencies]` and pulled by, e.g.,
-`pip install "compressor[all]"`. They are not part of this project's distribution. Most are
+`pip install "pertype[all]"`. They are not part of this project's distribution. Most are
 permissive (numpy — BSD-3-Clause; pillow — MIT-CMU; imagecodecs — BSD-3-Clause, whose
 GPL-capable codecs are source-only and not built by default; pytest — MIT, dev-only). **Three
 carry native-library obligations worth knowing about:**

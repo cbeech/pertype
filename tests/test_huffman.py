@@ -1,6 +1,6 @@
 """Tests for canonical, length-limited Huffman coding."""
-from compressor.bitio import BitWriter, BitReader
-from compressor.huffman import HuffmanCode, build_code_lengths
+from pertype.bitio import BitWriter, BitReader
+from pertype.huffman import HuffmanCode, build_code_lengths
 
 
 def _roundtrip(freqs, message):

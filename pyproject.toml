@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]  # PEP 639 SPDX license expression support
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "compressor"
+name = "pertype"
 version = "0.1.0"
 description = "Per-file-type trained lossless compressor — dictionary + LZ + arithmetic coding, with specialist image/audio/video/numeric/columnar codecs"
 readme = "README.md"
@@ -30,14 +30,14 @@ all = ["numpy", "pillow", "rawpy", "imagecodecs", "soundfile", "imageio-ffmpeg"]
 dev = ["numpy", "pytest"]
 
 [project.scripts]
-compressor = "compressor.cli:main"
+pertype = "pertype.cli:main"
 
 [project.urls]
 Repository = "https://github.com/craigbeech/compression"
 
 [tool.setuptools.packages.find]
-include = ["compressor*"]
+include = ["pertype*"]
 
 [tool.setuptools.package-data]
 # ship the C sources so the lazy native build works post-install (falls back to pure Python)
-compressor = ["_native/*.c"]
+pertype = ["_native/*.c"]

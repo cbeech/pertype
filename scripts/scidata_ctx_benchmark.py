@@ -3,7 +3,7 @@
 Corrects an earlier wrong conclusion. The first pass on UCI household power used
 the memoryless adaptive *Rice* coder (delta + Rice = 2.78x) and concluded the
 data "needs LZ, which our fast path lacks". But the order-2 context coder
-(`compressor.ctxcoder`, built for ECG) was never run on it — and it handles the
+(`pertype.ctxcoder`, built for ECG) was never run on it — and it handles the
 long zero-runs of quantised sensor data extremely well (after a zero, the
 bucket-given-context probability ~ 1, so ~0 bits/zero). Per int32 column:
 delta-1 then ctxcoder; round-trip verified. Compared to gzip/xz on the same
@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from compressor import ctxcoder, native
+from pertype import ctxcoder, native
 
 ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 NAMES = ["G_active", "G_reactive", "Voltage", "G_intensity", "Sub_1", "Sub_2", "Sub_3"]

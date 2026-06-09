@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from compressor import audiocodec, native, transform
+from pertype import audiocodec, native, transform
 
 DIR = os.environ.get("SCI_DATA", "data/sci") + "/ecg"
 

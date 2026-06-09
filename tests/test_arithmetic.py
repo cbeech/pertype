@@ -1,9 +1,9 @@
 """Tests for the arithmetic coder and frequency model."""
 import os
 
-from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-from compressor.bitio import BitReader
-from compressor.freqmodel import FrequencyModel
+from pertype.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+from pertype.bitio import BitReader
+from pertype.freqmodel import FrequencyModel
 
 
 def _roundtrip_symbols(counts, message):

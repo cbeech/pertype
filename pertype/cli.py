@@ -3,9 +3,9 @@ import argparse
 import os
 import sys
 
-from compressor.benchmark import format_report, run_benchmark
-from compressor.codec import compress, decompress
-from compressor.model import Model, train
+from pertype.benchmark import format_report, run_benchmark
+from pertype.codec import compress, decompress
+from pertype.model import Model, train
 
 
 def _read(path):
@@ -38,7 +38,7 @@ def cmd_compress(args):
     """Compress a file. With ``--model`` the trained text/byte codec is tried; otherwise (or
     if it loses) the auto-router picks the best specialist codec. The smaller, verified result
     wins, and the output is self-describing so ``decompress`` needs no flags to route it."""
-    from compressor import auto
+    from pertype import auto
     data = _read(args.input)
     best = auto.auto_compress(data, name=args.input)        # always-available, self-describing
     tag = f"auto/{auto.method_name(best)}"
@@ -55,8 +55,8 @@ def cmd_compress(args):
 def cmd_decompress(args):
     """Decompress a file produced by ``compress`` — sniffs the container so it routes itself.
     Trained-model (``.cz``) containers need the matching ``--model``; auto (``.az``) don't."""
-    from compressor import auto
-    from compressor.codec import MAGIC as CZ_MAGIC
+    from pertype import auto
+    from pertype.codec import MAGIC as CZ_MAGIC
     data = _read(args.input)
     if data and data[0] == CZ_MAGIC:                        # trained-model container
         if not args.model:
@@ -65,7 +65,7 @@ def cmd_decompress(args):
     elif data[:2] == auto.AMAGIC:                           # self-describing auto container
         out = auto.auto_decompress(data)
     else:
-        sys.exit("unrecognized container (not a compressor .cmp/.cz/.az file)")
+        sys.exit("unrecognized container (not a pertype .cmp/.cz/.az file)")
     dest = args.output or (args.input[:-4] if args.input.endswith(".cmp") else args.input + ".out")
     _write(dest, out)
     print(f"{args.input}: -> {len(out):,} bytes -> {dest}")
@@ -82,18 +82,18 @@ VY4M = b"VY4M"   # CLI container: y4m + per-frame headers + a videocodec VYUV bl
 
 
 def _read_y4m(path):
-    """Parse a .y4m file into (header, [frame_headers], [planes]) — see compressor.y4m."""
-    from compressor import y4m
+    """Parse a .y4m file into (header, [frame_headers], [planes]) — see pertype.y4m."""
+    from pertype import y4m
     return y4m.parse(_read(path))
 
 
 def _write_y4m(path, header, fheaders, planes):
-    from compressor import y4m
+    from pertype import y4m
     _write(path, y4m.serialize(header, fheaders, planes))
 
 
 def cmd_video_encode(args):
-    from compressor import videocodec
+    from pertype import videocodec
     header, fheaders, planes = _read_y4m(args.input)
     fhblob = b"".join(fheaders)
     blob = (VY4M + bytes([len(planes)])
@@ -110,7 +110,7 @@ def cmd_video_encode(args):
 
 
 def cmd_video_decode(args):
-    from compressor import videocodec
+    from pertype import videocodec
     blob = _read(args.input)
     if blob[:4] != VY4M:
         sys.exit("not a VY4M video container")
@@ -131,7 +131,7 @@ def cmd_image_encode(args):
     2D uint16 array, or a .CR2 (decoded to its Bayer plane via rawpy if installed)."""
     import numpy as np
 
-    from compressor import imagecodec
+    from pertype import imagecodec
     path = args.input
     if path.lower().endswith(".cr2"):
         import rawpy
@@ -158,7 +158,7 @@ def cmd_image_encode(args):
 def cmd_image_decode(args):
     import numpy as np
 
-    from compressor import imagecodec
+    from pertype import imagecodec
     img = imagecodec.decode(_read(args.input))
     dest = args.output or (args.input[:-5] if args.input.endswith(".rimg") else args.input)
     np.save(dest, img)                      # np.save ensures a .npy suffix
@@ -169,7 +169,7 @@ def cmd_image_decode(args):
 
 def cmd_identify(args):
     """The 'file'-like tool: sniff a file's type and name the codec that suits it."""
-    from compressor.detect import identify
+    from pertype.detect import identify
     for path in args.inputs:
         d = identify(_read(path), name=path)
         print(f"{path}: {d.kind}  ->  {d.codec}  ({d.detail})")
@@ -179,7 +179,7 @@ def cmd_columnar_encode(args):
     """Compress a fixed-width binary record stream (LiDAR LAS point data, etc.) by
     de-interleaving records into columns. Pass --width W, or --schema 4,4,4,2 for an
     exact field layout; with neither, the record period is auto-detected."""
-    from compressor import columnar
+    from pertype import columnar
     data = _read(args.input)
     schema = [int(x) for x in args.schema.split(",")] if args.schema else None
     blob = columnar.encode(data, width=args.width, schema=schema)
@@ -190,7 +190,7 @@ def cmd_columnar_encode(args):
 
 
 def cmd_columnar_decode(args):
-    from compressor import columnar
+    from pertype import columnar
     data = columnar.decode(_read(args.input))
     dest = args.output or (args.input[:-4] if args.input.endswith(".col") else args.input + ".out")
     _write(dest, data)
@@ -201,7 +201,7 @@ def cmd_csv_encode(args):
     """Compress a delimited-text table (CSV/TSV) by transposing to column-major and
     coding each column by type. Auto-detects delimiter / line-ending / grid regularity;
     falls back to deflate or store for non-grids. Always lossless."""
-    from compressor import csvcolumnar
+    from pertype import csvcolumnar
     data = _read(args.input)
     blob = csvcolumnar.encode(data)
     dest = args.output or args.input + ".csvc"
@@ -212,7 +212,7 @@ def cmd_csv_encode(args):
 
 
 def cmd_csv_decode(args):
-    from compressor import csvcolumnar
+    from pertype import csvcolumnar
     data = csvcolumnar.decode(_read(args.input))
     dest = args.output or (args.input[:-5] if args.input.endswith(".csvc") else args.input + ".out")
     _write(dest, data)
@@ -221,7 +221,7 @@ def cmd_csv_decode(args):
 
 def cmd_auto_compress(args):
     """Detect, route to the best codec, and write a self-describing .az blob."""
-    from compressor import auto
+    from pertype import auto
     data = _read(args.input)
     blob = auto.auto_compress(data, name=args.input)
     dest = args.output or args.input + ".az"
@@ -232,7 +232,7 @@ def cmd_auto_compress(args):
 
 
 def cmd_auto_decompress(args):
-    from compressor import auto
+    from pertype import auto
     data = auto.auto_decompress(_read(args.input))
     dest = args.output or (args.input[:-3] if args.input.endswith(".az") else args.input + ".out")
     _write(dest, data)
@@ -240,7 +240,7 @@ def cmd_auto_decompress(args):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(prog="compressor", description=__doc__)
+    p = argparse.ArgumentParser(prog="pertype", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
 
     t = sub.add_parser("train", help="train a model from a corpus directory")
@@ -254,7 +254,7 @@ def build_parser():
                        help="compress a file — auto-routes to the best codec; --model adds the "
                             "trained text/byte codec, smaller wins (self-describing .cmp)")
     c.add_argument("input")
-    c.add_argument("-m", "--model", help="optional trained model (from `compressor train`)")
+    c.add_argument("-m", "--model", help="optional trained model (from `pertype train`)")
     c.add_argument("-o", "--output", help="output (default: <input>.cmp)")
     c.set_defaults(func=cmd_compress)
 

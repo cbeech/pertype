@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import soundfile as sf
 
-import compressor.model as M
-from compressor.benchmark import _gzip_size, _zstd_size
-from compressor.codec import compress, decompress
+import pertype.model as M
+from pertype.benchmark import _gzip_size, _zstd_size
+from pertype.codec import compress, decompress
 
 MUSIC = os.environ.get("MUSIC_DIR", "data/music")
 M.BLOB_SPECS = (("none", 0),)  # transform + entropy; LZ adds ~0 on audio residuals

@@ -18,7 +18,7 @@ import subprocess
 
 import numpy as np
 
-from compressor import ctxcoder, native
+from pertype import ctxcoder, native
 
 DIR = os.environ.get("SCI_DATA", "data/sci") + "/seismic"
 

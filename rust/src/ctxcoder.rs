@@ -1,4 +1,4 @@
-//! Context-adaptive arithmetic residual coder — byte-identical to `compressor/ctxcoder.py`
+//! Context-adaptive arithmetic residual coder — byte-identical to `pertype/ctxcoder.py`
 //! and the C twin. Order-2 magnitude-bucket model (prev, prev-prev) + top-mantissa-bit
 //! model per (context, k); the rest raw.
 

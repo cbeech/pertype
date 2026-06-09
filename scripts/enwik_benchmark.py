@@ -19,9 +19,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from compressor.benchmark import _zstd_dicts, _zstd_dict_size
-from compressor.codec import compress, decompress
-from compressor.model import train
+from pertype.benchmark import _zstd_dicts, _zstd_dict_size
+from pertype.codec import compress, decompress
+from pertype.model import train
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SCI_DATA", "data/sci") + "/enwik/enwik8"
 BLK = (int(sys.argv[2]) if len(sys.argv) > 2 else 64) * 1024

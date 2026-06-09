@@ -1,4 +1,4 @@
-//! Reversible byte-stream transforms — byte-identical to `compressor/transform.py`
+//! Reversible byte-stream transforms — byte-identical to `pertype/transform.py`
 //! (and the C `delta_fwd`/`delta_inv`). The building blocks the per-type model selects:
 //! stride `delta` (numeric/image decorrelation) and `split` (byte-plane de-interleave).
 //! Pure deterministic byte ops, so the output is exactly identical to the Python reference.

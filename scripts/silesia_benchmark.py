@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from compressor import ctxcoder, imagecodec
+from pertype import ctxcoder, imagecodec
 
 TEXT = ["dickens", "webster", "reymont", "samba", "xml", "nci"]
 BINARY = ["mozilla", "ooffice", "osdb"]
@@ -70,7 +70,7 @@ def run_special(d):
           f"{'WIN' if len(blob) < min(s.values()) else 'lose':>8}")
 
     # sao -> columnar record codec (28-byte records); x-ray -> numeric delta+ctx
-    from compressor import columnar
+    from pertype import columnar
     sao = open(os.path.join(d, "sao"), "rb").read()
     s = std_tools(sao)
     cb = columnar.encode(sao)                       # auto-detects the 28-byte period
@@ -95,9 +95,9 @@ def run_special(d):
 
 
 def run_text(d):
-    from compressor.benchmark import _zstd_dict_size, _zstd_dicts
-    from compressor.codec import compress, decompress
-    from compressor.model import train
+    from pertype.benchmark import _zstd_dict_size, _zstd_dicts
+    from pertype.codec import compress, decompress
+    from pertype.model import train
     # Train on 1 MB — the dictionary miner's saturation point (max_mining_bytes), now
     # reachable since the blob search is memory-bounded. On source code this is decisive
     # (samba: beats only gzip at 512 KB -> beats every standard tool at 1 MB).

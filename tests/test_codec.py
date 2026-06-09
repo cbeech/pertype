@@ -1,8 +1,8 @@
 """End-to-end codec tests — the lossless guarantee."""
 import os
 
-from compressor.codec import compress, decompress
-from compressor.model import train
+from pertype.codec import compress, decompress
+from pertype.model import train
 
 
 def _model():

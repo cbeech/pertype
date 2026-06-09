@@ -13,8 +13,8 @@ speed, so it is slow; the ratio is the point.
 """
 import numpy as np
 
-from compressor import ctxcoder, native
-from compressor.bitio import BitWriter, BitReader
+from pertype import ctxcoder, native
+from pertype.bitio import BitWriter, BitReader
 
 MAGIC = b"AUD1"
 # Residual entropy back-end: adaptive Rice (fast, native) or context-adaptive

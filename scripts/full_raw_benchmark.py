@@ -24,9 +24,9 @@ import numpy as np
 import rawpy
 from PIL import Image
 
-from compressor.benchmark import _gzip_size, _zstd_size
-from compressor.codec import compress, decompress
-import compressor.model as M
+from pertype.benchmark import _gzip_size, _zstd_size
+from pertype.codec import compress, decompress
+import pertype.model as M
 
 CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 

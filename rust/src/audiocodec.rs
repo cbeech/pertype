@@ -1,4 +1,4 @@
-//! Lossless audio codec — byte-identical to `compressor/audiocodec.py` and its C native.
+//! Lossless audio codec — byte-identical to `pertype/audiocodec.py` and its C native.
 //! mid/side → fixed order-2 → sign-sign LMS cascade → adaptive Rice (or ctxcoder). All
 //! integer (wrapping, matching numpy int64 / the C `-fwrapv`); the Rice run-magnitude uses
 //! f64 exactly as the reference (no FMA). A blob round-trips and is cross-decodable with

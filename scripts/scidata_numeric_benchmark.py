@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 
-from compressor import native, transform
+from pertype import native, transform
 
 ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 

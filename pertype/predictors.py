@@ -22,7 +22,7 @@ def _get_native():
     global _native
     if _native is None:
         try:
-            from compressor import native as n
+            from pertype import native as n
             _native = n if n.HAVE_NATIVE else False
         except Exception:
             _native = False
@@ -165,9 +165,9 @@ def _calic_codec_py(data, scale, H=None, W=None, encode=True):
     """Byte-identical pure-Python twin of the native ``calic_codec`` (predict +
     bias + energy-conditional entropy coding). Encode: data=plane -> bytes; decode:
     data=blob -> plane. Slow; used only when the native lib is unavailable."""
-    from compressor import ctxcoder as _cx
-    from compressor.arithmetic import ArithmeticEncoder, ArithmeticDecoder
-    from compressor.bitio import BitReader
+    from pertype import ctxcoder as _cx
+    from pertype.arithmetic import ArithmeticEncoder, ArithmeticDecoder
+    from pertype.bitio import BitReader
     NB, INCR, RESCALE, NEBIN = 65, 32, 1 << 14, 12
     MINCR, MRESCALE = 24, 1 << 13           # adaptation of the modelled top-mantissa bit
     tbias = [t * scale for t in (1, 3, 6, 11, 18, 30, 50, 90, 160, 300)]

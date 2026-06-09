@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from PIL import Image
 
-from compressor import imagecodec
+from pertype import imagecodec
 
 try:
     import imagecodecs as ic

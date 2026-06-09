@@ -4,7 +4,7 @@ lossless video codec) and intra-only JPEG-XL, on full YUV .y4m clips.
 FFV1 is provided by a static ffmpeg from the `imageio-ffmpeg` wheel (no system
 install). FFV1 is intra-only (no motion compensation), so our motion-compensated
 codec should win on static/slow content and stay competitive on motion. Ours is
-`compressor.videocodec.encode_yuv` (round-trip verified here). Sizes are full YUV
+`pertype.videocodec.encode_yuv` (round-trip verified here). Sizes are full YUV
 vs the raw 4:2:0 bytes.
 
 Usage: python3 scripts/video_ffv1_benchmark.py [n_frames]
@@ -22,8 +22,8 @@ import numpy as np
 import imagecodecs as ic
 import imageio_ffmpeg
 
-from compressor import videocodec as vc
-from compressor import cli
+from pertype import videocodec as vc
+from pertype import cli
 
 NF = int(sys.argv[1]) if len(sys.argv) > 1 else 60
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()

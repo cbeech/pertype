@@ -3,8 +3,8 @@ import os
 
 import os
 
-from compressor.dictionary import Dictionary, mine_patterns
-from compressor.tokenizer import (
+from pertype.dictionary import Dictionary, mine_patterns
+from pertype.tokenizer import (
     MAX_CHAIN, MIN_MATCH, _match_len, adaptive_max_chain, tokenize, tokenize_optimal,
     detokenize, value_slot,
 )

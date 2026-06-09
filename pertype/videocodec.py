@@ -13,7 +13,7 @@ Per 16x16 block, per frame (frame 0 is all-intra):
             (+ a luma motion vector).
   * INTRA : residual against the causal MED (JPEG-LS) predictor in this frame.
 The mode field, motion vectors (inter blocks only) and residuals (non-skip
-blocks) are entropy-coded by :mod:`compressor.ctxcoder`. Colour is handled by
+blocks) are entropy-coded by :mod:`pertype.ctxcoder`. Colour is handled by
 coding each plane independently (the per-plane winner; see the README).
 
 Single plane: :func:`encode` / :func:`decode` on a ``(T, H, W)`` uint8 array
@@ -21,7 +21,7 @@ Single plane: :func:`encode` / :func:`decode` on a ``(T, H, W)`` uint8 array
 """
 import numpy as np
 
-from compressor import ctxcoder, predictors
+from pertype import ctxcoder, predictors
 
 _native = None
 
@@ -30,7 +30,7 @@ def _get_native():
     global _native
     if _native is None:
         try:
-            from compressor import native as n
+            from pertype import native as n
             _native = n if n.HAVE_NATIVE else False
         except Exception:
             _native = False
@@ -151,7 +151,7 @@ def _refine(prev, curr, bdy, bdx, yy, xx):
 
 
 def _med_predict(P):
-    # The shared JPEG-LS MED predictor (compressor/predictors.py). Returns P's dtype
+    # The shared JPEG-LS MED predictor (pertype/predictors.py). Returns P's dtype
     # (uint8) — byte-identical to the old in-line version: the gradient branch a+b-c
     # only fires for c in [min(a,b), max(a,b)], so the result stays in [0, 255] and
     # never overflows, and the origin/edge convention (128, left, up) matches.

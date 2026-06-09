@@ -23,9 +23,9 @@ warnings.filterwarnings("ignore")
 
 from PIL import Image
 
-from compressor.benchmark import _gzip_size, _zstd_size, _zstd_dict, _zstd_dict_size
-from compressor.codec import compress, decompress
-from compressor.model import train
+from pertype.benchmark import _gzip_size, _zstd_size, _zstd_dict, _zstd_dict_size
+from pertype.codec import compress, decompress
+from pertype.model import train
 
 KINDS = {
     "icons": dict(dirs=["/usr/share/icons", "/usr/share/pixmaps"],

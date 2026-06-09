@@ -1,5 +1,5 @@
 [package]
-name = "compressor_rs"
+name = "pertype"
 version = "0.1.0"
 edition = "2021"
 description = "Lossless per-file-type compressor: trained dictionary + LZ + arithmetic coding, plus specialist image/audio/video/columnar/float codecs — byte-identical to the Python/C reference, and trains its own models."

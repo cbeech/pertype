@@ -2,8 +2,8 @@
 round-trip byte-exact, routing itself via the self-describing container."""
 import pytest
 
-from compressor import cli
-from compressor.model import train
+from pertype import cli
+from pertype.model import train
 
 
 def _run(*argv):

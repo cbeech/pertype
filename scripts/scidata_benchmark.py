@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from compressor import codec, model, transform
+from pertype import codec, model, transform
 
 CAP = int(sys.argv[1]) if len(sys.argv) > 1 else 0   # bytes; 0 = whole file
 ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"

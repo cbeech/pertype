@@ -1,7 +1,7 @@
 """Round-trip tests for the context-adaptive residual coder."""
 import random
 
-from compressor import ctxcoder
+from pertype import ctxcoder
 
 
 def _roundtrip(res):

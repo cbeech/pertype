@@ -23,11 +23,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from compressor import model as textmodel
-from compressor.model import Model
+from pertype import model as textmodel
+from pertype.model import Model
 
 _SO = glob.glob(os.path.join(os.path.dirname(__file__), "..", "rust", "target", "release",
-                             "**", "libcompressor_rs.so"), recursive=True)
+                             "**", "libpertype.so"), recursive=True)
 assert _SO, "build the cdylib first: (cd rust && cargo build --release)"
 LIB = ctypes.CDLL(_SO[0])
 LIB.train_model.restype = ctypes.c_long

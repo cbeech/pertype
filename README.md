@@ -12,20 +12,20 @@ pip install ".[all]"          # image / audio / video / scientific support (nump
 
 # Compress anything — auto-detects the type and routes to the best codec, verified byte-exact.
 # The output is self-describing, so decompress needs no flags to route it:
-compressor compress data.csv              # -> data.csv.cmp   (picks csv/columnar/…)
-compressor decompress data.csv.cmp        # -> data.csv
+pertype compress data.csv              # -> data.csv.cmp   (picks csv/columnar/…)
+pertype decompress data.csv.cmp        # -> data.csv
 
 # Have a trained model for this file type? Add --model: the trained codec is tried too and
 # the smaller result wins (on json that's ~8x vs ~2x for generic compression):
-compressor train json corpus/json/train -o json.model     # learn once, reuse across files
-compressor compress page.json --model json.model          # -> page.json.cmp  [trained-model]
-compressor decompress page.json.cmp --model json.model    # -> page.json
+pertype train json corpus/json/train -o json.model     # learn once, reuse across files
+pertype compress page.json --model json.model          # -> page.json.cmp  [trained-model]
+pertype decompress page.json.cmp --model json.model    # -> page.json
 
 # Not sure what a file is? Ask (like `file`, but it names the ideal codec):
-compressor identify mystery.bin
+pertype identify mystery.bin
 ```
 
-`python -m compressor …` works identically without installing. The text/byte core has **no
+`python -m pertype …` works identically without installing. The text/byte core has **no
 dependencies**; the image/audio/video/science codecs pull theirs via the matching extra.
 Native (C) acceleration builds itself on first use and falls back to pure Python if `gcc`
 isn't available. A standalone **Rust** build (byte-identical, no Python) lives in `rust/`.
@@ -74,8 +74,8 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **astronomy (FITS)** | NASA int16 / float32 | int16 **beats all: 5.54× vs xz 5.01×, PNG 3.94×**; float32 near the entropy floor (~1.2× for everyone) |
 | **terrain (DEM)** | SRTM int16 elevation | **beats all: 4.56× vs PNG-16 2.81×, xz 2.64×, zstd 2.21×** (1.62× over the best) — smooth height fields are the predictor's domain |
 | **hyperspectral** | AVIRIS cube (200 bands) | **inter-band delta** (3D volume codec): **2.41× vs xz 1.83×, zstd 1.65×**, +14% over per-band |
-| **LiDAR point cloud** | LAS (airborne, 110K pts) | **columnar codec** (`compressor/columnar.py` — de-interleave fields + per-column raw/delta/Δ²): **4.88× vs xz 2.88×, zstd 2.54×**, beats general codecs (LAZ specialist ~5–15×) |
-| **tabular CSV** | UCI power (2M-row numeric) | **columnar transpose** (`compressor/csvcolumnar.py` — per column: fixed-decimal→scaled-int Δ, low-cardinality text→value dictionary, else deflate): **16.5× vs xz 11.3×, zstd 10.1×, gzip 7.0×** (+32% over the best general tool) |
+| **LiDAR point cloud** | LAS (airborne, 110K pts) | **columnar codec** (`pertype/columnar.py` — de-interleave fields + per-column raw/delta/Δ²): **4.88× vs xz 2.88×, zstd 2.54×**, beats general codecs (LAZ specialist ~5–15×) |
+| **tabular CSV** | UCI power (2M-row numeric) | **columnar transpose** (`pertype/csvcolumnar.py` — per column: fixed-decimal→scaled-int Δ, low-cardinality text→value dictionary, else deflate): **16.5× vs xz 11.3×, zstd 10.1×, gzip 7.0×** (+32% over the best general tool) |
 | **sparse / volumes** | masks, CT/MR/FITS stacks | an **RLE coder** wins on sparse/label data (auto-selected); **3D inter-slice delta** adds +31% on correlated volumes |
 | **audio** | 16-bit PCM music | **beats FLAC +7.4%** (9/10), and **beats xz +59%** (1.96× vs 1.24×) |
 | **biosignal** | ECG (PhysioNet) | **beats xz +7%** (3.06× vs 2.94×) |
@@ -85,7 +85,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **video** | CIF clips + real movies (full YUV) | **beats FFV1**: animation **+16–55%** (peak on stop-motion), live action +3–12%; loses on high-motion (intra-bound). Motion compensation is the lever |
 | **genome (DNA)** | E. coli FASTA | *boundary* — a near-uniform 4-symbol source (~1.95 bits/base); 2-bit packing (4.05×) is the floor and prediction adds nothing. xz 3.72×, ours no edge — honestly not our niche |
 | **protein (AA)** | E. coli FASTA | *boundary* — a ~20-symbol near-i.i.d. source (~4.15 bits/residue); order-0 entropy coding *beats* the LZ tools (no repetition) but prediction adds nothing. Completes the DNA→protein→text alphabet story |
-| **climate grid (HDF5)** | NCEP reanalysis float32 | **beats all: 4.51× vs xz 3.20×, zstd 2.70×** (+29%) — `compressor/floatcodec.py` maps the few distinct values (0.18%) to a dictionary and delta-codes the smooth index field. Closes the lossless-float boundary where prediction/XOR fail |
+| **climate grid (HDF5)** | NCEP reanalysis float32 | **beats all: 4.51× vs xz 3.20×, zstd 2.70×** (+29%) — `pertype/floatcodec.py` maps the few distinct values (0.18%) to a dictionary and delta-codes the smooth index field. Closes the lossless-float boundary where prediction/XOR fail |
 
 The unifying result, and the dividing line: **predict per type, then entropy-code.**
 Where a signal is smooth or structured (audio, ECG, raw images, video, slowly
@@ -140,29 +140,29 @@ every file.
 
 | file | responsibility |
 |------|----------------|
-| `compressor/bitio.py` | MSB-first bit reader/writer |
-| `compressor/arithmetic.py` | integer arithmetic coder (Witten–Neal–Cleary) |
-| `compressor/freqmodel.py` | static frequency model driving the coder |
-| `compressor/huffman.py` | canonical Huffman (package-merge) — tested building block |
-| `compressor/transform.py` | reversible per-type decorrelating transforms (delta/split) |
-| `compressor/dictionary.py` | pattern miner + longest-match lookup |
-| `compressor/tokenizer.py` | reversible file ↔ token stream (dict + LZ) |
-| `compressor/model.py` | train / save / load a per-type model |
-| `compressor/codec.py` | compress / decompress + container + checksum |
-| `compressor/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
-| `compressor/ctxcoder.py` | context-adaptive arithmetic residual coder (beats xz on ECG) |
-| `compressor/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
-| `compressor/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
-| `compressor/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
-| `compressor/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
-| `compressor/auto.py` | detect → route to any specialist (image/float/csv/columnar/**video/audio**) → **verify byte-exact** → keep smallest; self-describing `.az` blob |
-| `compressor/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
-| `compressor/csvcolumnar.py` | columnar codec for delimited-text tables (transpose + per-column numeric/text coding) |
-| `compressor/floatcodec.py` | lossless low-cardinality float codec (value dictionary + delta-coded indices) |
-| `compressor/y4m.py` | byte-exact YUV4MPEG2 (.y4m) container parse/serialize (shared by CLI + auto) |
-| `compressor/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
-| `compressor/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
-| `compressor/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` / `csv-{encode,decode}` |
+| `pertype/bitio.py` | MSB-first bit reader/writer |
+| `pertype/arithmetic.py` | integer arithmetic coder (Witten–Neal–Cleary) |
+| `pertype/freqmodel.py` | static frequency model driving the coder |
+| `pertype/huffman.py` | canonical Huffman (package-merge) — tested building block |
+| `pertype/transform.py` | reversible per-type decorrelating transforms (delta/split) |
+| `pertype/dictionary.py` | pattern miner + longest-match lookup |
+| `pertype/tokenizer.py` | reversible file ↔ token stream (dict + LZ) |
+| `pertype/model.py` | train / save / load a per-type model |
+| `pertype/codec.py` | compress / decompress + container + checksum |
+| `pertype/audiocodec.py` | standalone lossless audio codec that beats FLAC (numpy) |
+| `pertype/ctxcoder.py` | context-adaptive arithmetic residual coder (beats xz on ECG) |
+| `pertype/videocodec.py` | lossless video codec: motion-compensated inter-frame (numpy) |
+| `pertype/predictors.py` | shared 2D intra predictors: MED / Paeth / GAP / CALIC (image + video) |
+| `pertype/imagecodec.py` | lossless raw/photo/medical image + volume codec: MED/CALIC/RLE per-plane, 3D inter-slice delta (numpy) |
+| `pertype/detect.py` | `file`-like type detection → recommends the ideal codec (magic + content) |
+| `pertype/auto.py` | detect → route to any specialist (image/float/csv/columnar/**video/audio**) → **verify byte-exact** → keep smallest; self-describing `.az` blob |
+| `pertype/columnar.py` | columnar codec for fixed-width binary records (de-interleave fields + per-column delta) |
+| `pertype/csvcolumnar.py` | columnar codec for delimited-text tables (transpose + per-column numeric/text coding) |
+| `pertype/floatcodec.py` | lossless low-cardinality float codec (value dictionary + delta-coded indices) |
+| `pertype/y4m.py` | byte-exact YUV4MPEG2 (.y4m) container parse/serialize (shared by CLI + auto) |
+| `pertype/native.py` + `_native/audio.c` | C hot loops (ctypes), auto-built, with Python fallback |
+| `pertype/benchmark.py` | comparison vs gzip / zstd / zstd-trained-dict |
+| `pertype/cli.py` | `train` / `compress` / `decompress` / `benchmark` / `video-{encode,decode}` / `image-{encode,decode}` / `identify` / `auto-{compress,decompress}` / `columnar-{encode,decode}` / `csv-{encode,decode}` |
 
 ## Usage
 
@@ -172,34 +172,34 @@ python3 scripts/make_corpus.py                 # synthetic, reproducible
 python3 scripts/collect_corpus.py              # real files from this machine -> corpus_real/
 
 # Train a model for one type
-python3 -m compressor.cli train json corpus/json/train -o json.model
+python3 -m pertype train json corpus/json/train -o json.model
 
 # Compress / decompress a single file
-python3 -m compressor.cli compress some.json -m json.model -o some.json.cz
-python3 -m compressor.cli decompress some.json.cz -m json.model -o roundtrip.json
+python3 -m pertype compress some.json -m json.model -o some.json.cz
+python3 -m pertype decompress some.json.cz -m json.model -o roundtrip.json
 
 # Benchmark against gzip and zstd on the held-out test set
-python3 -m compressor.cli benchmark json                      # synthetic corpus
-python3 -m compressor.cli benchmark json --root corpus_real   # real-world corpus
+python3 -m pertype benchmark json                      # synthetic corpus
+python3 -m pertype benchmark json --root corpus_real   # real-world corpus
 
 # Lossless video: encode/decode a .y4m (4:2:0/4:2:2/4:4:4/mono, byte-exact)
-python3 -m compressor.cli video-encode clip.y4m -o clip.vid
-python3 -m compressor.cli video-decode clip.vid -o roundtrip.y4m
+python3 -m pertype video-encode clip.y4m -o clip.vid
+python3 -m pertype video-decode clip.vid -o roundtrip.y4m
 
 # Identify a file's type + the codec that suits it (like `file`)
-python3 -m compressor.cli identify image.fits data.npy api.json
+python3 -m pertype identify image.fits data.npy api.json
 
 # Auto: detect → route to the best codec → verify byte-exact → keep smallest (.az)
-python3 -m compressor.cli auto-compress image.fits -o image.az
-python3 -m compressor.cli auto-decompress image.az -o roundtrip.fits
+python3 -m pertype auto-compress image.fits -o image.az
+python3 -m pertype auto-decompress image.az -o roundtrip.fits
 
 # Columnar: compress a fixed-width binary record stream (LiDAR point data, etc.)
-python3 -m compressor.cli columnar-encode points.bin --schema 4,4,4,2 -o points.col
-python3 -m compressor.cli columnar-decode points.col -o roundtrip.bin
+python3 -m pertype columnar-encode points.bin --schema 4,4,4,2 -o points.col
+python3 -m pertype columnar-decode points.col -o roundtrip.bin
 
 # CSV: compress a delimited-text table column-major (auto delimiter / line-ending)
-python3 -m compressor.cli csv-encode data.csv -o data.csvc
-python3 -m compressor.cli csv-decode data.csvc -o roundtrip.csv
+python3 -m pertype csv-encode data.csv -o data.csvc
+python3 -m pertype csv-decode data.csvc -o roundtrip.csv
 ```
 
 Cross-domain benchmark scripts (each compares ours vs the domain's standard codec). They read
@@ -290,8 +290,8 @@ pytest`. To run just the stdlib-only text/byte core, deselect the numpy modules:
 ## Native acceleration (the optimised port)
 
 Pure Python validated the *ratios*; for speed, the hot loops are ported to C
-(`compressor/_native/audio.c`), compiled to a shared library by `gcc` on first
-import and called via `ctypes` (no Python.h needed) — see `compressor/native.py`.
+(`pertype/_native/audio.c`), compiled to a shared library by `gcc` on first
+import and called via `ctypes` (no Python.h needed) — see `pertype/native.py`.
 Each native function is **bit-identical and byte-interchangeable** with its
 pure-Python reference (verified in tests), so output is unchanged and a file
 compressed on one path decompresses on the other. If `gcc`/`numpy` is absent,
@@ -448,7 +448,7 @@ lossless-image baseline. Tools: `scripts/image_benchmark.py` (PIL),
 | demosaiced RGB photo (8-bit) | — | 1.73x | 1.88x (xz) | 2.33x | **2.64x** | **1st** |
 | 16-bit grayscale (DICOM/FITS-like) | — | 1.27x | 1.37x (xz) | 1.24x (PNG-16) | **1.45x** | **1st** |
 
-Both image rows are the dedicated **image codec** (`compressor/imagecodec.py`): 2D
+Both image rows are the dedicated **image codec** (`pertype/imagecodec.py`): 2D
 prediction → adaptive arithmetic coding, no LZ, no trained model (sensor/photo noise
 has no exact repeats for LZ; prediction + adaptive arithmetic is what helps). It has
 three modes, each measured on real Canon data, round-trip verified. Every plane picks
@@ -495,7 +495,7 @@ exists** — and the transform stage now exposes redundancy we previously couldn
   trained dictionary can. A genuine niche (sprite atlases, icon themes, map tiles).
 - **Flat graphics — we tie zstd and beat PNG**, thanks to large LZ-able regions.
 - **2D MED/Paeth prediction — a loss on graphics, a clear win on photographic raw.**
-  A shared intra predictor (`compressor/predictors.py`, MED + Paeth) plus two
+  A shared intra predictor (`pertype/predictors.py`, MED + Paeth) plus two
   measure-first benchmarks (`scripts/image_med_benchmark.py`, `cr2_med_benchmark.py`)
   show the data decides, exactly along the predict-vs-LZ line:
     * **Graphics (icons):** MED *hurts*. MED→full-codec beats PNG (5.94× vs 4.98×),
@@ -509,7 +509,7 @@ exists** — and the transform stage now exposes redundancy we previously couldn
       to find. Continuous-tone data is where spatial prediction was always meant to
       win, and on the real raws it does (+13% over our prior best, no model to ship).
   So the predictor earned a dedicated **raw-image path** — now built
-  (`compressor/imagecodec.py`, MED/GAP/CALIC, no LZ; see the raw table above, 2.22×
+  (`pertype/imagecodec.py`, MED/GAP/CALIC, no LZ; see the raw table above, 2.22×
   beating Canon's own lossless); on graphics the existing LZ+dictionary codec stays
   the right tool. (The video intra path uses the same MED via the shared
   `predictors.py`, where post-motion-compensation residuals suit it.)
@@ -548,7 +548,7 @@ PCM), but FLAC wins decisively — 1.16x vs 1.59x. The reason: a stride-delta is
 only a *1st-order* predictor, and audio rewards *adaptive high-order* prediction.
 A simple transform can't reach FLAC.
 
-**So we built a dedicated audio codec** (`compressor/audiocodec.py`,
+**So we built a dedicated audio codec** (`pertype/audiocodec.py`,
 `scripts/audio_codec_benchmark.py`) — Monkey's-Audio-style, all integer and
 exactly reversible: mid/side → fixed order-2 predictor → cascade of integer
 sign-sign LMS adaptive filters (16 + 256 + 512 tap) → adaptive Rice. The filters learn
@@ -571,7 +571,7 @@ chunks where our adaptive filters only partly converge (full tracks likely favou
 us more); and pure-Python, so slow — a *ratio* result, not a fast codec.
 
 A **second entropy back-end** is now selectable (`encode(..., coder="ctx")`):
-context-adaptive arithmetic coding (`compressor/ctxcoder.py`). It does *not* help
+context-adaptive arithmetic coding (`pertype/ctxcoder.py`). It does *not* help
 here (the LMS cascade already whitens the residual, so Rice's per-sample
 adaptation wins — 1.84x vs ctx 1.82x over 12 tracks), but it wins decisively on
 *weakly*-predicted signals — see the next section.
@@ -636,7 +636,7 @@ that **xz wins on LZ-friendly repetitive data, we win where prediction beats LZ*
 memoryless adaptive Rice (6.37 b/s) sat far above the residual's order-0 entropy
 (5.46 b/s), while the *order-1 context* entropy — each residual's magnitude
 conditioned on the previous one — is 5.03 b/s, **below xz's 5.39**. So the fix
-was not LZ but a **context-adaptive entropy coder** (`compressor/ctxcoder.py`):
+was not LZ but a **context-adaptive entropy coder** (`pertype/ctxcoder.py`):
 delta → zigzag → magnitude bucket coded by an adaptive arithmetic model selected
 by the previous bucket, then raw mantissa bits.
 
@@ -718,7 +718,7 @@ lossless (`4.216` has no exact float64).
 ## Lossless video — the temporal-delta hypothesis
 
 *The video pipeline below was developed as an ablation across a series of
-exploratory scripts, now consolidated into the tested `compressor/videocodec.py`
+exploratory scripts, now consolidated into the tested `pertype/videocodec.py`
 and retired to git history; `scripts/video_ffv1_benchmark.py` reproduces the
 headline FFV1 comparison.*
 
@@ -855,7 +855,7 @@ expensive, which it isn't here — a reminder that codec choices are
 entropy-coder-dependent.
 
 This whole pipeline is now a **real codec**, not just benchmark scripts:
-`compressor/videocodec.py` is a first-class `encode` / `decode` (and
+`pertype/videocodec.py` is a first-class `encode` / `decode` (and
 `encode_yuv` / `decode_yuv`) that emits a `VID1` container and reconstructs frames
 from it byte-exact — quarter-pel MC + per-block SKIP/INTER/INTRA (MED), residuals
 and MVs via `ctxcoder`, frame 0 all-intra, depends only on numpy + ctxcoder. It's
@@ -932,7 +932,7 @@ Validated end-to-end on real data across four domains (every result round-trip v
   (beats FLAC, and xz by +59%);
 - **video** — quarter-pel motion compensation + per-block SKIP/INTER/INTRA (MED
   intra) + context-adaptive residuals (beats FFV1); a real `encode`/`decode`
-  (`compressor/videocodec.py`) exposed on the CLI;
+  (`pertype/videocodec.py`) exposed on the CLI;
 - **numeric / biosignal** — per-type transform + the context-adaptive `ctxcoder`
   (beats xz on ECG; 6.27× on repetitive sensor data, beating gzip).
 
@@ -940,9 +940,9 @@ The whole compress/decompress hot path is **native** (C via ctypes, bit-identica
 with a pure-Python fallback) — ~140× on text — so the family is fast enough to use.
 
 **Shipped as a product** (see the Quickstart and License sections above): `pip install .` gives
-a `compressor` command with a unified, self-describing `compress`/`decompress`; a complete
+a `pertype` command with a unified, self-describing `compress`/`decompress`; a complete
 **Rust** crate is byte-identical to the Python/C reference for both *compress and train* (with a
-standalone `compressor` binary, cross-compatible with the Python tool); dual-licensed
+standalone `pertype` binary, cross-compatible with the Python tool); dual-licensed
 **AGPL-3.0-or-later + commercial**.
 
 The honest open frontier (full list in `TODO.md`):
@@ -980,7 +980,7 @@ The honest open frontier (full list in `TODO.md`):
   (arithmetic coder, `ctxcoder`, CALIC, columnar, float, CSV, image, audio, video, the trained
   text codec) plus model **training**, byte-identical to the Python/C reference (the two
   `zlib`-using codecs cross-decodable both directions), with `rayon` block parallelism. It
-  ships a standalone `compressor` binary (no Python), cross-compatible with the Python tool.
+  ships a standalone `pertype` binary (no Python), cross-compatible with the Python tool.
   Verified in `tests/test_rust_port.py`; speed in `scripts/rust_vs_python*benchmark.py`
   (decode 1–10×, training 11–115×). See `rust/README.md`.
 

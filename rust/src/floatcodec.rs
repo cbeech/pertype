@@ -1,4 +1,4 @@
-//! Lossless low-cardinality float codec — the Rust twin of `compressor/floatcodec.py`.
+//! Lossless low-cardinality float codec — the Rust twin of `pertype/floatcodec.py`.
 //! Maps each value's exact bit pattern to a dictionary index, delta-codes the smooth
 //! index field (raw/delta/Δ²) under the ctxcoder, and deflates the dictionary; store
 //! fallback. Round-trips and is cross-compatible with the Python version (the deflated

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import soundfile as sf
 
-from compressor import audiocodec as ac
+from pertype import audiocodec as ac
 
 MUSIC = os.environ.get("MUSIC_DIR", "data/music")
 

@@ -33,7 +33,7 @@ import zlib
 
 import numpy as np
 
-from compressor import ctxcoder, predictors
+from pertype import ctxcoder, predictors
 
 MAGIC = b"RIMG"
 VMAGIC = b"RVOL"

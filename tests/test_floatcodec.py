@@ -1,7 +1,7 @@
 """Round-trip and behaviour tests for the low-cardinality float codec."""
 import numpy as np
 
-from compressor import floatcodec as F
+from pertype import floatcodec as F
 
 
 def test_low_cardinality_float32_roundtrip_and_wins():

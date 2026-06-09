@@ -1,7 +1,7 @@
 """Round-trip tests for the raw-image codec (MED + ctxcoder)."""
 import numpy as np
 
-from compressor import imagecodec
+from pertype import imagecodec
 
 
 def _rt(img, bayer):

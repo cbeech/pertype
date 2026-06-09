@@ -1,7 +1,7 @@
-# compressor_rs — Rust port
+# pertype — Rust port
 
 A Rust port of the project's compression core — **byte-identical** to the Python reference
-(`compressor/`) and its C twin (`compressor/_native/audio.c`), so a blob produced by any of
+(`pertype/`) and its C twin (`pertype/_native/audio.c`), so a blob produced by any of
 the three decodes in the others. Built as a `cdylib` behind the same C ABI as the C native,
 a drop-in for the ctypes loader. Modules:
 
@@ -58,7 +58,7 @@ interoperable and lossless. All verified in `tests/test_rust_port.py`.
 (order-preserving, so the output bytes are unchanged) — e.g. the 34-field LiDAR record
 encodes ~4.5× faster across cores than single-threaded, byte-identical.
 
-The port is now **feature-complete**, compress *and train*: every codec in `compressor/` has
+The port is now **feature-complete**, compress *and train*: every codec in `pertype/` has
 a byte-identical (or, for the two `zlib`-using codecs, cross-decodable) Rust twin behind the
 same C ABI, and the trained text codec can build its own models without Python (byte-identical
 bar the `zlib` transform-proxy seam).
@@ -68,18 +68,18 @@ bar the `zlib` transform-proxy seam).
 ```bash
 cargo build --release
 
-# compressor: the unified tool — mirrors the Python `compressor` command, fully no-Python.
-target/release/compressor train json corpus/json/train -o json.model   # trains its own model
-target/release/compressor compress page.json -m json.model             # -> page.json.cmp (8.4x)
-target/release/compressor decompress page.json.cmp -m json.model       # -> page.json
-target/release/compressor compress data.csv                            # no model -> auto-routes
+# pertype: the unified tool — mirrors the Python `pertype` command, fully no-Python.
+target/release/pertype train json corpus/json/train -o json.model   # trains its own model
+target/release/pertype compress page.json -m json.model             # -> page.json.cmp (8.4x)
+target/release/pertype decompress page.json.cmp -m json.model       # -> page.json
+target/release/pertype compress data.csv                            # no model -> auto-routes
 
 # azc / colz: the auto-router and columnar codec directly
 target/release/azc  enc data.csv data.az          # e.g. power CSV -> 14.8x [csv->columnar]
 target/release/colz enc points.bin points.col     # auto-detects the record period (LiDAR 4.38x)
 ```
 
-Everything is **interchangeable with the Python tool**: the Rust `compressor`'s `.cmp` output
+Everything is **interchangeable with the Python tool**: the Rust `pertype`'s `.cmp` output
 (auto *or* trained-model) decompresses byte-exact in Python and vice versa, and a Rust-trained
 model is byte-identical to a Python-trained one — verified end-to-end. (`azc`'s `.az` matches
 Python `auto`; `colz`'s `.col` matches Python `columnar`.)
@@ -89,7 +89,7 @@ Python `auto`; `colz`'s `.col` matches Python `columnar`.)
 ```bash
 cd rust
 cargo test --release          # Rust round-trip unit test
-cargo build --release         # builds target/release/deps/libcompressor_rs.so
+cargo build --release         # builds target/release/deps/libpertype.so
 ```
 
 Then from the repo root, the Python parity test picks the cdylib up automatically:
