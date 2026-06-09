@@ -35,21 +35,40 @@ def cmd_train(args):
 
 
 def cmd_compress(args):
-    model = Model.load(_read(args.model))
+    """Compress a file. With ``--model`` the trained text/byte codec is tried; otherwise (or
+    if it loses) the auto-router picks the best specialist codec. The smaller, verified result
+    wins, and the output is self-describing so ``decompress`` needs no flags to route it."""
+    from compressor import auto
     data = _read(args.input)
-    out = compress(data, model)
-    dest = args.output or args.input + ".cz"
-    _write(dest, out)
-    ratio = len(data) / len(out) if out else 0.0
-    print(f"{args.input}: {len(data):,} -> {len(out):,} bytes ({ratio:.2f}x) -> {dest}")
+    best = auto.auto_compress(data, name=args.input)        # always-available, self-describing
+    tag = f"auto/{auto.method_name(best)}"
+    if args.model:
+        cz = compress(data, Model.load(_read(args.model)))
+        if len(cz) < len(best):                             # keep smaller; tie -> auto (no model needed to decode)
+            best, tag = cz, "trained-model"
+    dest = args.output or args.input + ".cmp"
+    _write(dest, best)
+    ratio = len(data) / len(best) if best else 0.0
+    print(f"{args.input}: {len(data):,} -> {len(best):,} bytes ({ratio:.2f}x) [{tag}] -> {dest}")
 
 
 def cmd_decompress(args):
-    model = Model.load(_read(args.model))
-    data = decompress(_read(args.input), model)
-    dest = args.output or (args.input[:-3] if args.input.endswith(".cz") else args.input + ".out")
-    _write(dest, data)
-    print(f"{args.input}: -> {len(data):,} bytes -> {dest}")
+    """Decompress a file produced by ``compress`` — sniffs the container so it routes itself.
+    Trained-model (``.cz``) containers need the matching ``--model``; auto (``.az``) don't."""
+    from compressor import auto
+    from compressor.codec import MAGIC as CZ_MAGIC
+    data = _read(args.input)
+    if data and data[0] == CZ_MAGIC:                        # trained-model container
+        if not args.model:
+            sys.exit("this file was compressed with a trained model — pass --model")
+        out = decompress(data, Model.load(_read(args.model)))
+    elif data[:2] == auto.AMAGIC:                           # self-describing auto container
+        out = auto.auto_decompress(data)
+    else:
+        sys.exit("unrecognized container (not a compressor .cmp/.cz/.az file)")
+    dest = args.output or (args.input[:-4] if args.input.endswith(".cmp") else args.input + ".out")
+    _write(dest, out)
+    print(f"{args.input}: -> {len(out):,} bytes -> {dest}")
 
 
 def cmd_benchmark(args):
@@ -231,16 +250,20 @@ def build_parser():
     t.add_argument("--max-patterns", type=int, default=4096, dest="max_patterns")
     t.set_defaults(func=cmd_train)
 
-    c = sub.add_parser("compress", help="compress a file with a model")
+    c = sub.add_parser("compress",
+                       help="compress a file — auto-routes to the best codec; --model adds the "
+                            "trained text/byte codec, smaller wins (self-describing .cmp)")
     c.add_argument("input")
-    c.add_argument("-m", "--model", required=True)
-    c.add_argument("-o", "--output")
+    c.add_argument("-m", "--model", help="optional trained model (from `compressor train`)")
+    c.add_argument("-o", "--output", help="output (default: <input>.cmp)")
     c.set_defaults(func=cmd_compress)
 
-    d = sub.add_parser("decompress", help="decompress a file with a model")
+    d = sub.add_parser("decompress",
+                       help="decompress a .cmp/.cz/.az file (sniffs the container; --model only "
+                            "needed for trained-model containers)")
     d.add_argument("input")
-    d.add_argument("-m", "--model", required=True)
-    d.add_argument("-o", "--output")
+    d.add_argument("-m", "--model", help="trained model (only for trained-model containers)")
+    d.add_argument("-o", "--output", help="output (default: strips .cmp)")
     d.set_defaults(func=cmd_decompress)
 
     b = sub.add_parser("benchmark", help="benchmark vs gzip/zstd on held-out data")

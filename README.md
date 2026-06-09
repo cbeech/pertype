@@ -10,14 +10,16 @@ for frequent bytes.**
 pip install .                 # core (zero-dependency); add extras for specialist codecs:
 pip install ".[all]"          # image / audio / video / scientific support (numpy, pillow, …)
 
-# 1) Compress anything — detect the type, route to the best codec, verify byte-exact:
-compressor auto-compress data.csv -o data.az
-compressor auto-decompress data.az -o restored.csv
+# Compress anything — auto-detects the type and routes to the best codec, verified byte-exact.
+# The output is self-describing, so decompress needs no flags to route it:
+compressor compress data.csv              # -> data.csv.cmp   (picks csv/columnar/…)
+compressor decompress data.csv.cmp        # -> data.csv
 
-# 2) Trained text/byte codec — learn a model from a corpus, reuse it across many files:
-compressor train json corpus/json/train -o json.model
-compressor compress page.json --model json.model -o page.cz
-compressor decompress page.cz --model json.model -o page.json
+# Have a trained model for this file type? Add --model: the trained codec is tried too and
+# the smaller result wins (on json that's ~8x vs ~2x for generic compression):
+compressor train json corpus/json/train -o json.model     # learn once, reuse across files
+compressor compress page.json --model json.model          # -> page.json.cmp  [trained-model]
+compressor decompress page.json.cmp --model json.model    # -> page.json
 
 # Not sure what a file is? Ask (like `file`, but it names the ideal codec):
 compressor identify mystery.bin
