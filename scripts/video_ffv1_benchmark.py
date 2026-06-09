@@ -62,7 +62,7 @@ def main():
     print(f"{'clip':<12}{'raw':>9}{'FFV1':>9}{'intra-JXL':>11}{'ours':>9}"
           f"{'ours/FFV1':>11}{'verdict':>8}")
     print("-" * 70)
-    for path in sorted(glob.glob("/home/user/sci_data/video/*.y4m")):
+    for path in sorted(glob.glob(os.environ.get("SCI_DATA", "data/sci") + "/video/*.y4m")):
         name = path.split("/")[-1].replace(".y4m", "")
         y4m = os.path.join(work, name + ".y4m")
         truncate_y4m(path, NF, y4m)

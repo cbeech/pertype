@@ -39,9 +39,9 @@ NF = int(sys.argv[1]) if len(sys.argv) > 1 else 16
 
 
 def main():
-    clips = sorted(glob.glob("/home/user/sci_data/video/*.y4m"))
+    clips = sorted(glob.glob(os.environ.get("SCI_DATA", "data/sci") + "/video/*.y4m"))
     if not clips:
-        print("no .y4m clips at ~/sci_data/video/ (local-only test pool)")
+        print("no .y4m clips found; set SCI_DATA to a dir containing video/*.y4m (local-only)")
         return
     print(f"{'clip':<13}{'intra%':>8}{'inter%':>8}{'skip%':>8}"
           f"{'CALIC frame':>13}{'realized(UB)':>14}")

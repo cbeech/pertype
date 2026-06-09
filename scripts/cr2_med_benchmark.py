@@ -34,7 +34,7 @@ from PIL import Image
 from compressor import codec, ctxcoder, predictors
 from compressor.model import train
 
-CR2_DIR = "/home/user/raws"          # local copy of the NAS pool (processed locally)
+CR2_DIR = os.environ.get("CR2_DIR", "data/raw")          # local data dir; set CR2_DIR to point at it
 
 
 def bayer_subplanes(P):

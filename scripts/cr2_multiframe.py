@@ -24,7 +24,7 @@ import imagecodecs
 import compressor.model as M
 from compressor.codec import compress, decompress
 
-LOCAL_DIR = "/home/user/raws"
+LOCAL_DIR = os.environ.get("CR2_DIR", "data/raw")
 M.BLOB_SPECS = (("none", 0),)  # transform + entropy only; LZ adds ~0 on raw
 
 

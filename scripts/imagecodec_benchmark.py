@@ -6,8 +6,8 @@ image, round-trip verifying both, and compares to PNG / zstd / xz and Canon's ow
 in-camera lossless `.CR2`. The codec is MED/GAP/CALIC per-plane selection — no LZ, no
 trained model.
 
-Needs `rawpy` and Pillow. CR2s default to ~/raws (copy them there from wherever
-your raws live — they are processed locally only).
+Needs `rawpy` and Pillow. Point CR2_DIR at a local folder of raws (set the env var; they are
+processed locally only) — defaults to ./data/raw.
 
 Usage: python3 scripts/imagecodec_benchmark.py [n_files] [cr2_dir]
 """
@@ -28,7 +28,7 @@ from PIL import Image
 
 from compressor import imagecodec
 
-CR2_DIR = os.path.expanduser("~/raws")
+CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 
 
 def sh(cmd, data):

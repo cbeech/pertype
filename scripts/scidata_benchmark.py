@@ -5,6 +5,7 @@ Tests the real delta-thesis claim: on decorrelated numeric data our transform +
 entropy coder should beat gzip/zstd/xz, and we separate "what delta buys" (delta
 + zstd) from "what our coder buys" (ours). Every result is round-trip verified.
 """
+import os
 import gzip
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import numpy as np
 from compressor import codec, model, transform
 
 CAP = int(sys.argv[1]) if len(sys.argv) > 1 else 0   # bytes; 0 = whole file
-ARR = "/home/user/sci_data/power_cols_i32.npy"
+ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 
 
 def sh(cmd, data):

@@ -13,6 +13,7 @@ implicit). Encoder/decoder update counts in lockstep, so nothing is transmitted.
 
 Round-trip verified, compared against xz -9, on the Apnea-ECG records.
 """
+import os
 import glob
 import subprocess
 import time
@@ -101,7 +102,7 @@ def decode(blob, n):
 
 
 def main():
-    files = sorted(glob.glob("/home/user/sci_data/ecg/*.dat"))
+    files = sorted(glob.glob(os.environ.get("SCI_DATA", "data/sci") + "/ecg/*.dat"))
     raw_total = ours_total = xz_total = 0
     t0 = time.time()
     for f in files:

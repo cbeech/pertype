@@ -12,6 +12,7 @@ Compared against gzip/zstd/xz on the raw bytes, and against delta + zstd/xz
 (which isolates how much is "delta" vs "our coder"). Every column is round-trip
 verified through encode→decode.
 """
+import os
 import subprocess
 import time
 
@@ -19,7 +20,7 @@ import numpy as np
 
 from compressor import native, transform
 
-ARR = "/home/user/sci_data/power_cols_i32.npy"
+ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 
 
 def sh(cmd, data):

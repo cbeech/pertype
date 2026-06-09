@@ -23,7 +23,7 @@ from compressor.benchmark import _zstd_dicts, _zstd_dict_size
 from compressor.codec import compress, decompress
 from compressor.model import train
 
-PATH = sys.argv[1] if len(sys.argv) > 1 else "/home/user/sci_data/enwik/enwik8"
+PATH = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SCI_DATA", "data/sci") + "/enwik/enwik8"
 BLK = (int(sys.argv[2]) if len(sys.argv) > 2 else 64) * 1024
 N_TRAIN = int(sys.argv[3]) if len(sys.argv) > 3 else 32
 N_TEST = int(sys.argv[4]) if len(sys.argv) > 4 else 16

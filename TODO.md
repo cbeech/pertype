@@ -235,8 +235,8 @@ temporal redundancy, which is usually the dominant source of compressibility.
           because it breaks the exact cross-image repetition the dictionary matches.
       So 2D intra prediction only pays off on genuinely continuous-tone, noisy data
       with no exact repeats — and on **real Canon CR2 raw it does, decisively**
-      (`scripts/cr2_med_benchmark.py`, 67 raws copied locally from the NAS to
-      ~/raws). Deinterleaving the RGGB mosaic into same-colour sub-planes,
+      (`scripts/cr2_med_benchmark.py`, 67 raws in a local data dir set via `CR2_DIR`).
+      Deinterleaving the RGGB mosaic into same-colour sub-planes,
       **MED + ctxcoder (pure prediction, NO LZ, no trained model) = 1.99x** vs our
       generic codec 1.76x, xz 1.68x, PNG-16 1.28x (held-out 256x256 crops). Routing
       MED residuals through the LZ codec drops to 1.74x — LZ hurts on noise. So:

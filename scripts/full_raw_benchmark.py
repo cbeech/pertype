@@ -28,7 +28,7 @@ from compressor.benchmark import _gzip_size, _zstd_size
 from compressor.codec import compress, decompress
 import compressor.model as M
 
-CR2_DIR = "/mnt/personal_folder/Pictures"
+CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 
 
 def main():

@@ -28,7 +28,7 @@ from compressor.benchmark import _gzip_size, _zstd_size, _zstd_dict, _zstd_dict_
 from compressor.codec import compress, decompress
 from compressor.model import train
 
-CR2_DIR = "/mnt/personal_folder/Pictures"
+CR2_DIR = os.environ.get("CR2_DIR", "data/raw")
 
 
 def collect(crop, n_files):

@@ -11,6 +11,7 @@ column-major bytes.
 
 Usage: python3 scripts/scidata_ctx_benchmark.py
 """
+import os
 import subprocess
 import time
 
@@ -18,7 +19,7 @@ import numpy as np
 
 from compressor import ctxcoder, native
 
-ARR = "/home/user/sci_data/power_cols_i32.npy"
+ARR = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 NAMES = ["G_active", "G_reactive", "Voltage", "G_intensity", "Sub_1", "Sub_2", "Sub_3"]
 
 

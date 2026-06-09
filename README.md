@@ -202,7 +202,16 @@ python3 -m compressor.cli csv-encode data.csv -o data.csvc
 python3 -m compressor.cli csv-decode data.csvc -o roundtrip.csv
 ```
 
-Cross-domain benchmark scripts (each compares ours vs the domain's standard codec):
+Cross-domain benchmark scripts (each compares ours vs the domain's standard codec). They read
+their data directories from environment variables (no machine-specific paths are baked in) —
+point them at your own local copies:
+
+```bash
+export SCI_DATA=/path/to/sci_data    # ecg, enwik8, power CSV, seismic, video/*.y4m, …
+export CR2_DIR=/path/to/raws         # Canon CR2 / photo benchmarks
+export MUSIC_DIR=/path/to/music      # audio benchmarks
+export MOVIES_DIR=/path/to/movies    # lossless-video-vs-FFV1 benchmark
+```
 
 | script | domain | competitors | needs |
 |--------|--------|-------------|-------|

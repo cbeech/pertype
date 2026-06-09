@@ -12,6 +12,7 @@ the best, verified round-trip. Compared to gzip/zstd/xz on the raw int32 bytes.
 
 Usage: python3 scripts/seismic_benchmark.py
 """
+import os
 import glob
 import subprocess
 
@@ -19,7 +20,7 @@ import numpy as np
 
 from compressor import ctxcoder, native
 
-DIR = "/home/user/sci_data/seismic"
+DIR = os.environ.get("SCI_DATA", "data/sci") + "/seismic"
 
 
 def load(path):

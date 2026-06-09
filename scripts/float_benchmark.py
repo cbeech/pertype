@@ -16,13 +16,14 @@ varying; Global_active_power — jumpy) plus a synthetic smooth float64 signal
 
 Usage: python3 scripts/float_benchmark.py
 """
+import os
 import subprocess
 
 import numpy as np
 
 from compressor import transform
 
-CSV = "/home/user/sci_data/household_power_consumption.txt"
+CSV = os.environ.get("SCI_DATA", "data/sci") + "/household_power_consumption.txt"
 MAXROWS = 1_000_000
 SPLIT8 = (("split", 8),)
 DELTA8 = (("delta", 8),)

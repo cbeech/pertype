@@ -5,11 +5,12 @@ an exact integer representation (milli-units) — the natural lossless form a
 scientific/columnar store would hold, and the clean test for the delta transform.
 Rows with missing values ('?') are dropped. Result cached column-major as .npy.
 """
+import os
 import sys
 import numpy as np
 
-SRC = "/home/user/sci_data/household_power_consumption.txt"
-OUT = "/home/user/sci_data/power_cols_i32.npy"
+SRC = os.environ.get("SCI_DATA", "data/sci") + "/household_power_consumption.txt"
+OUT = os.environ.get("SCI_DATA", "data/sci") + "/power_cols_i32.npy"
 
 rows = []
 with open(SRC, "r") as f:

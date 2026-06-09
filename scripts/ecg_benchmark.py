@@ -7,6 +7,7 @@ vs delta + zstd/xz (isolating the transform), and run our full audio codec
 (LMS cascade) directly since these are int16 waveforms. Every record round-trip
 verified.
 """
+import os
 import glob
 import subprocess
 import time
@@ -15,7 +16,7 @@ import numpy as np
 
 from compressor import audiocodec, native, transform
 
-DIR = "/home/user/sci_data/ecg"
+DIR = os.environ.get("SCI_DATA", "data/sci") + "/ecg"
 
 
 def sh(cmd, data):

@@ -22,7 +22,7 @@ import compressor.model as M
 from compressor.benchmark import _gzip_size, _zstd_size
 from compressor.codec import compress, decompress
 
-MUSIC = "/mnt/personal_folder/Music/iTunes"
+MUSIC = os.environ.get("MUSIC_DIR", "data/music")
 M.BLOB_SPECS = (("none", 0),)  # transform + entropy; LZ adds ~0 on audio residuals
 
 

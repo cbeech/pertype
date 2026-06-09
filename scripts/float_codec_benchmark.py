@@ -3,6 +3,7 @@
 Chunk a real measured float64 column into many small files, train a model on 80%,
 and compress the held-out 20% — the per-type amortized setup our codec targets.
 Compare to zstd -19 / xz -9 on the raw test bytes. Round-trip verified."""
+import os
 import subprocess
 
 import numpy as np
@@ -10,7 +11,7 @@ import numpy as np
 from compressor import codec
 from compressor.model import train
 
-CSV = "/home/user/sci_data/household_power_consumption.txt"
+CSV = os.environ.get("SCI_DATA", "data/sci") + "/household_power_consumption.txt"
 CHUNK = 4096          # floats per "file" (32 KB)
 
 

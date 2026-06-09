@@ -98,7 +98,8 @@ def bench_clip(movie, seek_s, n_frames, work):
 def sample_list():
     import glob
     print("Sample movies (probe codec with the bundled ffmpeg):")
-    pats = ["/mnt/media/Movies/*/*.mkv", "/mnt/media/Movies/*/*.mp4"]
+    movies = os.environ.get("MOVIES_DIR", "data/movies")
+    pats = [movies + "/*/*.mkv", movies + "/*/*.mp4"]
     files = []
     for p in pats:
         files += glob.glob(p)

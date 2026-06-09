@@ -25,7 +25,7 @@ import soundfile as sf
 
 from compressor import audiocodec as ac
 
-MUSIC = "/mnt/personal_folder/Music/iTunes"
+MUSIC = os.environ.get("MUSIC_DIR", "data/music")
 
 
 def flac_size(pcm, sr):
