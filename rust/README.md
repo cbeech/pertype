@@ -67,17 +67,22 @@ bar the `zlib` transform-proxy seam).
 
 ```bash
 cargo build --release
-# auto: detect/route to the best Rust codec, output decodable by Python's auto too
-target/release/azc enc data.csv data.az          # e.g. power CSV -> 14.8x [csv->columnar]
-target/release/azc dec data.az  roundtrip.csv
 
-# colz: the columnar record codec directly
-target/release/colz enc points.bin points.col    # auto-detects the record period (LiDAR 4.38x)
-target/release/colz dec points.col points.out
+# compressor: the unified tool — mirrors the Python `compressor` command, fully no-Python.
+target/release/compressor train json corpus/json/train -o json.model   # trains its own model
+target/release/compressor compress page.json -m json.model             # -> page.json.cmp (8.4x)
+target/release/compressor decompress page.json.cmp -m json.model       # -> page.json
+target/release/compressor compress data.csv                            # no model -> auto-routes
+
+# azc / colz: the auto-router and columnar codec directly
+target/release/azc  enc data.csv data.az          # e.g. power CSV -> 14.8x [csv->columnar]
+target/release/colz enc points.bin points.col     # auto-detects the record period (LiDAR 4.38x)
 ```
 
-(`azc`'s `.az` output is interchangeable with the Python `auto`; `colz`'s `.col` with the
-Python `columnar` — verified end-to-end on real LiDAR / power-CSV data.)
+Everything is **interchangeable with the Python tool**: the Rust `compressor`'s `.cmp` output
+(auto *or* trained-model) decompresses byte-exact in Python and vice versa, and a Rust-trained
+model is byte-identical to a Python-trained one — verified end-to-end. (`azc`'s `.az` matches
+Python `auto`; `colz`'s `.col` matches Python `columnar`.)
 
 ## Build & verify
 

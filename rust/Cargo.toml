@@ -2,7 +2,13 @@
 name = "compressor_rs"
 version = "0.1.0"
 edition = "2021"
-description = "Rust port of the context-adaptive arithmetic residual coder (byte-identical to the Python/C reference)"
+description = "Lossless per-file-type compressor: trained dictionary + LZ + arithmetic coding, plus specialist image/audio/video/columnar/float codecs — byte-identical to the Python/C reference, and trains its own models."
+# TODO: choose a license (MIT / Apache-2.0) before publishing to crates.io; see ../docs/productization-plan.md
+# license = "MIT"
+repository = "https://github.com/craigbeech/compression"
+readme = "README.md"
+keywords = ["compression", "lossless", "codec", "arithmetic-coding", "lz"]
+categories = ["compression"]
 
 [dependencies]
 flate2 = "1"
