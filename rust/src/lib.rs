@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Craig Beech. Dual-licensed: AGPL-3.0-or-later, or a commercial license
+// (see ../COMMERCIAL.md).
 //! Rust port of the compression codec's hot path — byte-identical to the Python reference
 //! (`compressor/`) and its C twin (`compressor/_native/audio.c`), so a blob produced by any
 //! of the three decodes in the others. Built as a `cdylib` behind the same C ABI as the C

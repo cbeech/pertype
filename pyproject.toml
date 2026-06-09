@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]  # PEP 639 SPDX license expression support
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,9 +8,10 @@ version = "0.1.0"
 description = "Per-file-type trained lossless compressor — dictionary + LZ + arithmetic coding, with specialist image/audio/video/numeric/columnar codecs"
 readme = "README.md"
 requires-python = ">=3.9"
-# TODO: choose a license (MIT / Apache-2.0) before any PyPI publish; see docs/productization-plan.md
-# license = { text = "MIT" }
-authors = [{ name = "Craig Beech" }]
+# Dual-licensed: AGPL-3.0-or-later for everyone, commercial license available (see COMMERCIAL.md).
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Craig Beech", email = "craigbeech@gmail.com" }]
 keywords = ["compression", "lossless", "arithmetic-coding", "dictionary", "lz", "codec"]
 classifiers = [
     "Programming Language :: Python :: 3",

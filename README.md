@@ -233,6 +233,17 @@ Cross-domain benchmark scripts (each compares ours vs the domain's standard code
 | `scripts/video_ffv1_benchmark.py` | video (full YUV) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
 | `scripts/movie_lossless_benchmark.py` | real movie frames (+ block-mode mix) | **FFV1**, JPEG XL | imagecodecs, imageio-ffmpeg, numpy |
 
+## License
+
+**Dual-licensed.** Free and open-source under the **GNU Affero General Public License v3.0 or
+later** ([`LICENSE`](LICENSE)) — use it, modify it, redistribute it; if you convey it or run it
+as a network service, you must offer your users the corresponding source under the AGPL.
+
+For **proprietary / closed-source / hosted-SaaS** use without the AGPL's copyleft and
+network-source obligations, a **commercial license** is available — see
+[`COMMERCIAL.md`](COMMERCIAL.md). Contributions are accepted under a lightweight CLA so the
+project can keep offering both ([`CLA.md`](CLA.md)).
+
 ## Dependencies
 
 - **Core text/byte compressor and tests: zero external dependencies** (Python 3

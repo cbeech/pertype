@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Craig Beech. Dual-licensed: AGPL-3.0-or-later, or a commercial license
+# (see COMMERCIAL.md). This program is free software under the AGPL; see LICENSE.
 """Per-file-type trained lossless compressor.
 
 A trained dictionary + LZ + arithmetic-coding pipeline for text/byte data, plus specialist

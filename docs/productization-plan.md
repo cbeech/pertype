@@ -12,8 +12,11 @@ Turning the validated research codec into an installable, runnable tool. Three p
 - README **Quickstart** (install + the handful of commands that matter).
 - Native acceleration (`_native/*.c`) shipped as package data; the lazy gcc build still works
   where the install is writable, falls back to pure Python otherwise.
-- **License: TBD** — packaging is scaffolded but the `license` field is intentionally left
-  unset (a comment marks it), which blocks any real publish until chosen.
+- **License: decided — AGPL-3.0-or-later + commercial (dual).** `LICENSE` (AGPL text),
+  `COMMERCIAL.md` (the paid offer + contact), `CLA.md` (contributor relicensing grant); SPDX
+  `license` set in `pyproject.toml` (PEP 639) and `Cargo.toml`, SPDX headers on the entry
+  points, README licensing section. Open-source for everyone; closed/SaaS use buys a commercial
+  license. Publishing is now unblocked (PyPI/crates.io accounts + the publish run remain).
 
 ## Phase 2 — Unified UX ✅
 - The routing brain already exists (`detect.identify`) and `auto` already covers most
