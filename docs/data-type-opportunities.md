@@ -4,6 +4,12 @@ New data types that fit `pertype`'s compression model but aren't covered yet. Co
 web-research sweep (Jun 2026). Ranked by fit × opportunity. Not yet validated — each entry needs
 a measure-first benchmark against the named bar before building anything.
 
+## Validated so far (measure-first)
+
+| Type | Result | vs bar | Script |
+|------|--------|--------|--------|
+| **IoT / MQTT telemetry** (Intel Lab sensor, per-message JSON) | **3.55×** (28.9 B/msg) | **beats `zstd --train` 2.09× by +41%**; generic gzip/zstd/xz are ≤1.05× (useless on ~100 B msgs). Margin grows with training data (+34% at 400 msgs → +41% at 1200). | `scripts/iot_benchmark.py` |
+
 ## The two win-modes (the screen)
 
 - **Mode A — predict-per-type, then entropy-code.** A per-type predictor (spatial 2D/3D,
@@ -57,7 +63,7 @@ basic genome/protein sequence.
 |---|------|------|-------------|-------------|------------------|
 | 11 | **Financial tick / order-book (NASDAQ ITCH, Databento DBN, LOBSTER)** | columnar + A | Fixed-layout records: monotonic ns timestamps (Δ-of-Δ→~0), sequential order IDs, tick-grid prices, low-card flags | zstd-generic at rest; FIX/FAST on wire (no entropy stage) | LOBSTER samples; NASDAQ Hist. TotalView-ITCH; Databento `dbn` repo |
 | 12 | **Automotive CAN-bus / MDF4 (MF4) logs** | columnar + A | Raw frames columnar (monotonic ts, small ID set); decoded signals are slowly-varying gauges | MDF4 native per-block deflate only | CSS Electronics CANedge samples; python-can test MF4 |
-| 13 | **IoT / MQTT telemetry** (small same-schema payloads) | **B** | Purest Mode-B: millions of tiny fixed-schema messages; overhead dominates <300 B | gzip / zstd-generic per message; zstd-`--train` at best | UCI/Kaggle IoT sets; Intel Lab sensor dataset |
+| 13 | **IoT / MQTT telemetry** (small same-schema payloads) ✅ **VALIDATED** | **B** | Purest Mode-B: millions of tiny fixed-schema messages; overhead dominates <300 B | gzip / zstd-generic per message; zstd-`--train` at best | UCI/Kaggle IoT sets; Intel Lab sensor dataset |
 
 ---
 

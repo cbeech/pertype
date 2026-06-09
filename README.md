@@ -67,6 +67,7 @@ audio codec, and a motion-compensated video codec — extends across domains.
 |--|--|--|
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **public text (enwik8)** | Wikipedia, held-out | **3.06× — beats gzip 2.60×, zstd 2.70×, xz 2.76×, bzip2 2.83×** (all standard tools); ~6% behind `zstd --train` 3.25× — the same trained-dict holdout, on a named benchmark |
+| **IoT/MQTT telemetry** | Intel Lab sensor, per-message JSON (held-out) | **trained model 3.55× — beats `zstd --train` 2.09× by +41%**; generic per-message gzip/zstd/xz are ≤1.05× (overhead sinks them on ~100 B messages). The many-small-messages Mode-B win, validated measure-first (`scripts/iot_benchmark.py`) |
 | **lossless image (Kodak)** | 24 standard photos | **beats PNG on 24/24 (+29%, 2.51× vs 1.79×)**, **matches WebP-LL** (2.51×) and within −4% of JPEG-XL — the named lossless-image benchmark |
 | **Silesia (routed)** | the modern general corpus | per-type routing: **`mr` MR-volume +21% / `x-ray` +18% vs xz**; held-out text (1 MB train) **beats every standard tool on dickens/webster/reymont/`samba`/`nci`** (trails only `zstd --train`); loses on `xml` (repetitive markup — LZ/BWT niche) and `sao` floats; binaries not our design |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
