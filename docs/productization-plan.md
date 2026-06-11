@@ -47,6 +47,24 @@ search** from a patent attorney, **scoped to the video path first**. If the init
 offering excludes the video codec, residual patent risk drops substantially and a lighter review
 suffices. The text/image/audio/arithmetic core is the lowest-priority area for paid review.
 
+## Cross-platform distribution — wired
+
+The standalone `pertype` CLI ships as a single self-contained binary per OS, built by CI:
+- **`.github/workflows/release.yml`** — on a `v*` tag, a matrix builds the binary natively on
+  Linux / Windows / macOS runners and attaches the archives (+ SHA-256) to a GitHub Release.
+  Targets: `x86_64-unknown-linux-musl` (fully static, any distro), `x86_64-pc-windows-msvc`,
+  `x86_64-apple-darwin` (Intel), `aarch64-apple-darwin` (Apple Silicon). Pure-Rust deps
+  (flate2/rayon, no system libs) → no cross toolchains needed; verified locally as a static musl
+  build that round-trips byte-exact.
+- **`.github/workflows/ci.yml`** — build + test (Rust + Python, sans the slow parity suite) on
+  every push/PR, so a release tag is never the first build.
+- The binary covers `train`/`compress`/`decompress` + auto-routing (text/byte/CSV/columnar/
+  telemetry — patent-clean, no video). The image/audio/video/scientific codecs stay in the
+  Python `pip` package. Both install paths documented in the README.
+- Remaining (optional, post-first-release): aarch64-Linux target, Homebrew tap / Scoop / winget
+  manifests, `cargo binstall` metadata, Python wheels via `cibuildwheel`.
+
 ## Out of scope (this pass)
-- Actually publishing to PyPI / crates.io (needs accounts/secrets + the real repo URL — the
-  user's call). CI pipelines. A docs site. The FTO search above (an attorney's job).
+- Actually publishing to PyPI / crates.io and cutting the first GitHub Release (needs the real
+  repo URL + accounts/secrets — the user's call; the CI/release workflows are ready and fire on
+  a `v*` tag). A docs site. The FTO search above (an attorney's job).

@@ -1,0 +1,80 @@
+name: release
+
+# Build the standalone `pertype` CLI for Linux / Windows / macOS and attach the binaries to a
+# GitHub Release. Triggered by pushing a version tag (e.g. `v0.1.0`), or run manually.
+#
+# The binary is pure-Rust (flate2/rayon, no system libs), so each runner builds natively for its
+# own OS — no cross toolchains. Linux uses musl for a fully-static, distro-independent binary.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl, ext: "" }   # static, any distro
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    ext: ".exe" }
+          - { os: macos-13,       target: x86_64-apple-darwin,       ext: "" }    # Intel Mac
+          - { os: macos-latest,   target: aarch64-apple-darwin,      ext: "" }    # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build the pertype binary
+        working-directory: rust
+        run: cargo build --release --target ${{ matrix.target }} --bin pertype
+
+      - name: Package
+        shell: bash
+        run: |
+          bin="rust/target/${{ matrix.target }}/release/pertype${{ matrix.ext }}"
+          name="pertype-${{ matrix.target }}"
+          mkdir -p dist
+          if [ -n "${{ matrix.ext }}" ]; then
+            cp "$bin" "pertype.exe"
+            7z a "dist/${name}.zip" "pertype.exe" >/dev/null
+          else
+            cp "$bin" pertype
+            strip pertype || true
+            tar czf "dist/${name}.tar.gz" pertype
+          fi
+          (cd dist && shasum -a 256 * > "${name}.sha256" 2>/dev/null || sha256sum * > "${name}.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

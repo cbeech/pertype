@@ -1,0 +1,35 @@
+name: ci
+
+# Build + test on every push / PR so the release tag is never the first time things are built.
+
+on:
+  push:
+    branches: ["master", "main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests + build the binary
+        working-directory: rust
+        run: |
+          cargo test --release
+          cargo build --release --bin pertype
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install (zero-dep core) + numpy for the codec tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install . numpy pytest
+      - name: Test the core + CLI (skip the slow Rust-parity suite)
+        run: pytest tests/ --ignore=tests/test_rust_port.py -q
