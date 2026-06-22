@@ -11,11 +11,19 @@ int16 waveforms (see ecg_benchmark.py); the lever validated here is whether a ch
 Bar to beat: FLAC per channel (libFLAC via `soundfile`). Also vs gzip/zstd/xz on the
 raw interleaved bytes and a delta transform. Every method is round-trip verified.
 
-Data: a flat int16 SpikeGLX `.bin` (sample-major interleaved — `nchans` int16 per frame).
-  EPHYS_DATA   path to the .bin            (required)
-  EPHYS_NCHANS channels per frame          (default 385)
+Data: a flat int16 SpikeGLX `.bin` (sample-major interleaved — `nchans` int16 per frame),
+or a BlackRock NSx 2.1 (`.ns5`, magic `NEURALSG`) which is auto-detected and header-parsed.
+  EPHYS_DATA   path to the .bin / .ns5     (required)
+  EPHYS_NCHANS channels per frame          (default 385; ignored for auto-parsed NSx)
   EPHYS_AP     leading AP channels to keep (default NCHANS-1, i.e. drop the sync channel)
+  EPHYS_RATE   sample rate Hz              (default 30000; AP 30 kHz, LF 2500 Hz)
   EPHYS_MAXSAMP cap samples/channel        (default 0 = all)
+
+Validated (measure-first): on a SpikeGLX Neuropixels LF band (384-ch @2.5 kHz) and a
+BlackRock Utah-array recording (96-ch @30 kHz wideband), per-channel `ours` ties FLAC and
+the cross-channel lever is below the +3% bar on both (−8.6% / −0.6%) — temporal prediction
+already removes ~100% of variance, leaving residuals whose adjacent-channel correlation is
+below the 0.5 threshold where spatial decorrelation helps. See docs/data-type-opportunities.md.
 """
 import io
 import os
@@ -89,10 +97,26 @@ def flac_channel(ch_i16):
     return size
 
 
-def main():
-    raw = np.fromfile(PATH, dtype="<i2")
+def load(path):
+    """Return (data (samples, nch), nch). Handles a flat SpikeGLX .bin and a
+    BlackRock NSx 2.1 ('NEURALSG') .ns5 (header parsed, sync-free, continuous)."""
+    with open(path, "rb") as f:
+        magic = f.read(8)
+    if magic == b"NEURALSG":
+        import struct
+        hdr = open(path, "rb").read(32)
+        nch = struct.unpack("<I", hdr[28:32])[0]
+        data_off = 32 + 4 * nch                       # channel-id table follows the header
+        raw = np.fromfile(path, dtype="<i2", offset=data_off)
+        frames = raw.size // nch
+        return raw[: frames * nch].reshape(frames, nch), nch   # all channels are data
+    raw = np.fromfile(path, dtype="<i2")              # flat interleaved (SpikeGLX)
     frames = raw.size // NCH
-    x = raw[: frames * NCH].reshape(frames, NCH)[:, :NAP]   # (samples, AP)
+    return raw[: frames * NCH].reshape(frames, NCH)[:, :NAP], NAP
+
+
+def main():
+    x, _ = load(PATH)
     if MAXS:
         x = x[:MAXS]
     samples, nap = x.shape
