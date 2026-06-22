@@ -33,7 +33,7 @@ dev = ["numpy", "pytest"]
 pertype = "pertype.cli:main"
 
 [project.urls]
-Repository = "https://github.com/craigbeech/compression"
+Repository = "https://github.com/cbeech/pertype"
 
 [tool.setuptools.packages.find]
 include = ["pertype*"]

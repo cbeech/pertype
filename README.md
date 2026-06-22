@@ -8,14 +8,14 @@ for frequent bytes.**
 
 **Standalone binary (no Python) — Linux / Windows / macOS.** The `pertype` CLI is a single
 self-contained, statically-linked executable. Grab it from the
-[Releases](https://github.com/craigbeech/compression/releases) page (a per-OS build is attached
+[Releases](https://github.com/cbeech/pertype/releases) page (a per-OS build is attached
 to each tag), or build it from source with Rust:
 
 ```bash
 # prebuilt: download + extract the archive for your platform, e.g. Linux x86_64:
 tar xzf pertype-x86_64-unknown-linux-musl.tar.gz && ./pertype --help
 # or build from source (needs the Rust toolchain) — installs `pertype` into ~/.cargo/bin:
-git clone https://github.com/craigbeech/compression && cargo install --path compression/rust --bin pertype
+git clone https://github.com/cbeech/pertype && cargo install --path pertype/rust --bin pertype
 ```
 
 The standalone binary covers `train` / `compress` / `decompress` + auto-routing (text / byte /

@@ -6,7 +6,7 @@ description = "Lossless per-file-type compressor: trained dictionary + LZ + arit
 # Dual-licensed: AGPL-3.0-or-later for everyone, commercial license available (see ../COMMERCIAL.md).
 license = "AGPL-3.0-or-later"
 authors = ["Craig Beech <craigbeech@gmail.com>"]
-repository = "https://github.com/craigbeech/compression"
+repository = "https://github.com/cbeech/pertype"
 readme = "README.md"
 keywords = ["compression", "lossless", "codec", "arithmetic-coding", "lz"]
 categories = ["compression"]
