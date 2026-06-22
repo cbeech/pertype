@@ -11,6 +11,7 @@ a measure-first benchmark against the named bar before building anything.
 | **IoT / MQTT telemetry** (Intel Lab sensor, per-message JSON) | **3.55×** (28.9 B/msg) | **beats `zstd --train` 2.09× by +41%**; generic gzip/zstd/xz are ≤1.05× (useless on ~100 B msgs). Margin grows with training data (+34% at 400 msgs → +41% at 1200). | `scripts/iot_benchmark.py` |
 | **Electrophysiology — multichannel int16** (2 real recordings: SpikeGLX Neuropixels LF 384-ch @2.5 kHz; BlackRock Utah-array 96-ch @30 kHz wideband) | per-channel **7.37×** (LFP), **3.39×** (wideband) | **ties FLAC** (7.14× / 3.40×) with *zero* ephys-specific code — and the headline **cross-channel lever is DISCONFIRMED on both bands**: best cross-channel transform is **−8.6%** (LFP) / **−0.6%** (wideband). General reason: the temporal predictor removes ~100% of variance, leaving residuals whose adjacent-channel correlation (0.10 LFP / 0.24 wideband) is **below the 0.5 threshold** where spatial differencing reduces variance. Even *optimal* cross-channel prediction of the residual has a ceiling of ~(1−corr²) ≈ **<1%** — far below the +3% bar. **Verdict: don't build cross-channel ephys.** | `scripts/ephys_benchmark.py` |
 | **Financial tick / order-book** (real Binance BTCUSDT aggTrades, 1 day; same fixed-layout tick structure as ITCH/DBN — sequential IDs, monotonic ms timestamps, tick-grid prices, bool flags) | columnar **9.8×** (5.08 B/rec) | **beats the `zstd -19` bar (5.01×) by +49%**, and beats `xz -9` (7.43×) and zstd-on-raw-CSV (6.36×). The columnar de-interleave + per-column Δ/Δ² collapses the sequential IDs (Δ²→0) and monotonic timestamps that generic LZ sees only as interleaved noise. Scale-stable (+47.8% @200k → +49.1% @500k). **Note:** validated on crypto aggTrades as the accessible real proxy; equity ITCH/DBN MBO has the same structure (ns timestamps + sequential order IDs delta *even better*) so the win should hold/grow. | `scripts/financial_benchmark.py` |
+| **Cryo-EM counting-mode movies** (real EMPIAR-10061 K2 beta-gal frames, gain-corrected float32; ~90% exact-zero, ~900 distinct count-values) | count-aware **23.7×** (0.169 B/px) | **beats the `zstd -19` bar (16.6×) by +30%**, and beats `xz -9` (17.1×). Method: map the few-hundred distinct gain-corrected count-values to symbols (<4 KB dict) → sparse small-int image → `ctxcoder` (context-adaptive arithmetic), near the 0.15 B/px entropy floor. Confirmed on 2 independent micrographs (+29.9% / +29.7%). **Spatial prediction HURTS** (imagecodec MED 21.8× < ctxcoder 23.7×) — sparse data wants pure entropy coding, not prediction (same lesson as ephys). | `scripts/cryoem_benchmark.py` |
 
 ## The two win-modes (the screen)
 
@@ -51,7 +52,7 @@ basic genome/protein sequence.
 
 | # | Type | Why it fits | Bar to beat | Public test data |
 |---|------|-------------|-------------|------------------|
-| 4 | **Cryo-EM counting-mode movies** | Sparse near-binary integer frames → count-aware arithmetic model | TIFF+LZW / EER-RLE / MRCZ-zstd | EMPIAR (e.g. 10025, EER entries) |
+| 4 | **Cryo-EM counting-mode movies** ✅ **VALIDATED** (+30% vs zstd-19; see "Validated so far") | Sparse near-binary integer frames → count-aware arithmetic model | TIFF+LZW / EER-RLE / MRCZ-zstd | EMPIAR (e.g. 10025, EER entries) |
 | 5 | **Microscopy / EM / micro-CT / 4D-STEM stacks** (uint16, spatiotemporal) | Smooth in space *and* time; incumbent has no spatial model | Blosc+ZSTD + byte-shuffle | EMPIAR; IDR; PMC9900847 benchmark corpus |
 | 6 | **Sentinel-2 / Landsat multispectral** (12–16-bit, 10+ bands) | Strong inter-band *and* spatial correlation; predict band N from N−1 + 2D term | GeoTIFF DEFLATE/LZW (distribution); CCSDS-123 (specialist) | Copernicus Data Space (Sentinel-2); USGS (Landsat 8/9) |
 | 7 | **Depth / disparity / optical-flow fields** (robotics/AR) | Piecewise-smooth (smooth interiors, sharp edges); 2-ch flow even smoother | PNG / WebP-LL / raw LZ4 in rosbags | KITTI; Middlebury Stereo; Sintel; NYU Depth V2 |
@@ -102,7 +103,12 @@ basic genome/protein sequence.
 1. ~~**Neuropixels ephys**~~ — ❌ tested, cross-channel lever ruled out (ties FLAC, no win).
 2. ~~**MQTT / IoT telemetry**~~ — ✅ validated (+41% vs `zstd --train`).
 3. ~~**Financial ITCH / DBN**~~ — ✅ validated (+49% vs zstd-19; columnar Δ/Δ²).
-4. **Cryo-EM counting movies** — sparse low-integer, easy big win over LZW. *(next un-tested lead)*
+4. ~~**Cryo-EM counting movies**~~ — ✅ validated (+30% vs zstd-19; symbol-map + ctxcoder).
+
+**Measure-first scorecard:** IoT ✅ (+41% vs `zstd --train`), Financial ✅ (+49% vs zstd-19),
+Cryo-EM ✅ (+30% vs zstd-19), Electrophysiology ❌ (cross-channel lever ruled out).
+Recurring lesson: **sparse / already-decorrelated data wants pure adaptive entropy coding, not
+prediction** (cryo-EM imagecodec < ctxcoder; ephys cross-channel < per-channel).
 
 Each is a measure-first task: grab the public data, compress with the existing codec (or a small
 predictor tweak), and compare to the named bar before committing to build.
