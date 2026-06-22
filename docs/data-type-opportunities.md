@@ -9,6 +9,7 @@ a measure-first benchmark against the named bar before building anything.
 | Type | Result | vs bar | Script |
 |------|--------|--------|--------|
 | **IoT / MQTT telemetry** (Intel Lab sensor, per-message JSON) | **3.55×** (28.9 B/msg) | **beats `zstd --train` 2.09× by +41%**; generic gzip/zstd/xz are ≤1.05× (useless on ~100 B msgs). Margin grows with training data (+34% at 400 msgs → +41% at 1200). | `scripts/iot_benchmark.py` |
+| **Neuropixels ephys — LF band** (real 384-ch LFP, 2.5 kHz, SpikeGLX `Noise4Sam`) | per-channel **7.37×** | **ties FLAC** (7.14×, libFLAC default level) with *zero* ephys-specific code — but the headline **cross-channel lever is DISCONFIRMED**: neighbour-delta / common-median-ref are **−8.6%** (worse). Why: the temporal predictor already removes 99.7% of variance (1895→6) and most adjacent-channel correlation (0.31→0.10), so spatial decorrelation competes with it and loses. **Open:** AP/spike band (30 kHz, poorly temporally-predicted, spikes span channels) — the repo's AP excerpt was a truncated flat-startup clip; needs a real recording. | `scripts/ephys_benchmark.py` |
 
 ## The two win-modes (the screen)
 
@@ -41,7 +42,7 @@ basic genome/protein sequence.
 
 | # | Type | Mode | Why it fits | Bar to beat | Public test data |
 |---|------|------|-------------|-------------|------------------|
-| 1 | **Neuropixels / large-scale electrophysiology** (int16, 100s–1000s ch @30 kHz) | A | Multichannel PCM with strong temporal + inter-electrode correlation; you already beat FLAC, just add cross-channel prediction | FLAC / WavPack (field repurposes audio codecs, ignores inter-channel) | Allen Institute for Neural Dynamics (S3); IBL; SpikeInterface examples |
+| 1 | **Neuropixels / large-scale electrophysiology** (int16, 100s–1000s ch @30 kHz) ⚠️ **lever tested — see "Validated so far"** | A | Multichannel PCM with strong temporal + inter-electrode correlation; you already beat FLAC, just add cross-channel prediction — **but on the LF band the cross-channel lever is −8.6% (temporal prediction already eats the spatial redundancy); per-channel only ties FLAC. Down-ranked. Only worth revisiting on the AP/spike band.** | FLAC / WavPack (field repurposes audio codecs, ignores inter-channel) | Allen Institute for Neural Dynamics (S3); IBL; SpikeInterface examples |
 | 2 | **EEG / iEEG / MEG** (int16/24 multichannel) | A | Band-limited autocorrelated time-series + channel correlation; ECG/biosignal predictor transfers directly | MEF3 "RED" (simple diff+range coder); much data still EDF/gzip | TUH EEG Corpus; CHB-MIT; DANDI (NWB); OpenNeuro iEEG |
 | 3 | **Multichannel / ambisonic / hydrophone audio** (24-bit, HOA ≥16 ch) | A | Extends the audio win along the axis FLAC barely models — inter-channel redundancy | FLAC / MPEG-4 ALS (weak cross-channel) | EigenScape (HOA); DCASE; NOAA passive-acoustic |
 
