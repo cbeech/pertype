@@ -1002,7 +1002,10 @@ The honest open frontier (full list in `TODO.md`):
   `zlib`-using codecs cross-decodable both directions), with `rayon` block parallelism. It
   ships a standalone `pertype` binary (no Python), cross-compatible with the Python tool.
   Verified in `tests/test_rust_port.py`; speed in `scripts/rust_vs_python*benchmark.py`
-  (decode 1–10×, training 11–115×). See `rust/README.md`.
+  (decode 1–10×, training 11–115×). See `rust/README.md`. **`v0.1.0` is released** — per-OS
+  binaries (Linux musl / Windows / macOS x86+arm) are attached to the
+  [GitHub Release](https://github.com/cbeech/pertype/releases/tag/v0.1.0). Registry installs
+  (PyPI / crates.io) are the remaining step.
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats

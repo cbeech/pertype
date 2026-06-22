@@ -1,7 +1,9 @@
 # Productization plan
 
 Turning the validated research codec into an installable, runnable tool. Three phases —
-**all shipped** (license deferred; publishing to PyPI/crates.io is gated on that choice).
+**all shipped**, and **`v0.1.0` is released** (per-OS binaries live on GitHub:
+`github.com/cbeech/pertype/releases/tag/v0.1.0`). Remaining: publish to PyPI + crates.io so
+`pip install pertype` / `cargo install pertype` work from the registries (needs accounts/tokens).
 
 ## Phase 1 — Installable & usable ✅
 - `pyproject.toml` (PEP 621): metadata, `pertype` console entry point, optional-dependency
@@ -64,7 +66,13 @@ The standalone `pertype` CLI ships as a single self-contained binary per OS, bui
 - Remaining (optional, post-first-release): aarch64-Linux target, Homebrew tap / Scoop / winget
   manifests, `cargo binstall` metadata, Python wheels via `cibuildwheel`.
 
-## Out of scope (this pass)
-- Actually publishing to PyPI / crates.io and cutting the first GitHub Release (needs the real
-  repo URL + accounts/secrets — the user's call; the CI/release workflows are ready and fire on
-  a `v*` tag). A docs site. The FTO search above (an attorney's job).
+## Done since this plan
+- **`v0.1.0` GitHub Release cut** (2026-06-22) — the release matrix produced all four per-OS
+  binaries; verified end-to-end (checksums, archive contents, lossless round-trip). Three
+  packaging bugs were found + fixed in the process (Intel-Mac runner scarcity → cross-build on
+  Apple Silicon; binary nesting in the `pertype/` package dir → clean staging dir; self-
+  referential Windows checksum → checksum by explicit name).
+
+## Still out of scope (the user's call / external)
+- Publishing to PyPI / crates.io (needs accounts + tokens; crates.io name claim is permanent).
+- A docs site. The FTO search above (an attorney's job).

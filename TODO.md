@@ -204,8 +204,10 @@ training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
       byte-identical to Python's); crates.io-ready `Cargo.toml` metadata.
 - [x] **Dual-licensed AGPL-3.0-or-later + commercial** (`LICENSE`, `COMMERCIAL.md`, `CLA.md`,
       SPDX in `pyproject.toml`/`Cargo.toml` + entry-point headers). Open for everyone;
-      closed/SaaS use buys a commercial license. **Remaining for an actual public release:** the
-      real repo URL, PyPI/crates.io accounts + the publish run (out of scope here).
+      closed/SaaS use buys a commercial license.
+- [x] **`v0.1.0` released** (2026-06-22) — per-OS binaries live at
+      `github.com/cbeech/pertype/releases/tag/v0.1.0`; release pipeline verified end-to-end.
+      **Remaining for registry installs:** PyPI + crates.io accounts/tokens + the publish run.
 
 ---
 
