@@ -1,9 +1,12 @@
 # Productization plan
 
 Turning the validated research codec into an installable, runnable tool. Three phases —
-**all shipped**, and **`v0.1.0` is released** (per-OS binaries live on GitHub:
-`github.com/cbeech/pertype/releases/tag/v0.1.0`). Remaining: publish to PyPI + crates.io so
-`pip install pertype` / `cargo install pertype` work from the registries (needs accounts/tokens).
+**all shipped**, and **`v0.1.0` is released and published on all three channels**:
+- GitHub binaries — `github.com/cbeech/pertype/releases/tag/v0.1.0`
+- PyPI — `pip install pertype` (https://pypi.org/project/pertype/0.1.0/)
+- crates.io — `cargo install pertype` (https://crates.io/crates/pertype/0.1.0)
+
+The install story is complete on every channel.
 
 ## Phase 1 — Installable & usable ✅
 - `pyproject.toml` (PEP 621): metadata, `pertype` console entry point, optional-dependency
@@ -72,7 +75,10 @@ The standalone `pertype` CLI ships as a single self-contained binary per OS, bui
   packaging bugs were found + fixed in the process (Intel-Mac runner scarcity → cross-build on
   Apple Silicon; binary nesting in the `pertype/` package dir → clean staging dir; self-
   referential Windows checksum → checksum by explicit name).
+- **Published to PyPI + crates.io** (2026-06-22) — `pip install pertype` and
+  `cargo install pertype` are live. Added `.github/workflows/publish.yml` (OIDC Trusted
+  Publishing) for tokenless future releases. The install story is complete on all three channels.
 
-## Still out of scope (the user's call / external)
-- Publishing to PyPI / crates.io (needs accounts + tokens; crates.io name claim is permanent).
-- A docs site. The FTO search above (an attorney's job).
+## Still out of scope (external / the user's call)
+- A docs site. The FTO search above (an attorney's job). Wiring up Trusted Publishing requires a
+  one-time "pending publisher" config on each registry site (the user's accounts).

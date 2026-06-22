@@ -15,7 +15,9 @@ to each tag), or build it from source with Rust:
 # prebuilt: download + extract the archive for your platform, e.g. Linux x86_64:
 tar xzf pertype-x86_64-unknown-linux-musl.tar.gz
 ./pertype compress myfile.json -o myfile.cmp   # then: ./pertype decompress myfile.cmp -o out.json
-# or build from source (needs the Rust toolchain) — installs `pertype` into ~/.cargo/bin:
+# or install from crates.io (needs the Rust toolchain) — installs `pertype` into ~/.cargo/bin:
+cargo install pertype
+# or build from a checkout:
 git clone https://github.com/cbeech/pertype && cargo install --path pertype/rust --bin pertype
 ```
 
@@ -26,8 +28,8 @@ Python package below.
 ## Quickstart
 
 ```bash
-pip install .                 # core (zero-dependency); add extras for specialist codecs:
-pip install ".[all]"          # image / audio / video / scientific support (numpy, pillow, …)
+pip install pertype           # core (zero-dependency) from PyPI; or `pip install .` from a checkout
+pip install "pertype[all]"    # image / audio / video / scientific support (numpy, pillow, …)
 
 # Compress anything — auto-detects the type and routes to the best codec, verified byte-exact.
 # The output is self-describing, so decompress needs no flags to route it:
@@ -1002,10 +1004,11 @@ The honest open frontier (full list in `TODO.md`):
   `zlib`-using codecs cross-decodable both directions), with `rayon` block parallelism. It
   ships a standalone `pertype` binary (no Python), cross-compatible with the Python tool.
   Verified in `tests/test_rust_port.py`; speed in `scripts/rust_vs_python*benchmark.py`
-  (decode 1–10×, training 11–115×). See `rust/README.md`. **`v0.1.0` is released** — per-OS
-  binaries (Linux musl / Windows / macOS x86+arm) are attached to the
-  [GitHub Release](https://github.com/cbeech/pertype/releases/tag/v0.1.0). Registry installs
-  (PyPI / crates.io) are the remaining step.
+  (decode 1–10×, training 11–115×). See `rust/README.md`. **`v0.1.0` is released and published
+  on all three channels:** per-OS binaries on the
+  [GitHub Release](https://github.com/cbeech/pertype/releases/tag/v0.1.0),
+  [`pip install pertype`](https://pypi.org/project/pertype/) (PyPI), and
+  [`cargo install pertype`](https://crates.io/crates/pertype) (crates.io).
 
 The throughline: **predict per type, then entropy-code.** It beats the
 general-purpose tools, and the domain specialists, exactly where prediction beats
