@@ -10,6 +10,7 @@ a measure-first benchmark against the named bar before building anything.
 |------|--------|--------|--------|
 | **IoT / MQTT telemetry** (Intel Lab sensor, per-message JSON) | **3.55×** (28.9 B/msg) | **beats `zstd --train` 2.09× by +41%**; generic gzip/zstd/xz are ≤1.05× (useless on ~100 B msgs). Margin grows with training data (+34% at 400 msgs → +41% at 1200). | `scripts/iot_benchmark.py` |
 | **Electrophysiology — multichannel int16** (2 real recordings: SpikeGLX Neuropixels LF 384-ch @2.5 kHz; BlackRock Utah-array 96-ch @30 kHz wideband) | per-channel **7.37×** (LFP), **3.39×** (wideband) | **ties FLAC** (7.14× / 3.40×) with *zero* ephys-specific code — and the headline **cross-channel lever is DISCONFIRMED on both bands**: best cross-channel transform is **−8.6%** (LFP) / **−0.6%** (wideband). General reason: the temporal predictor removes ~100% of variance, leaving residuals whose adjacent-channel correlation (0.10 LFP / 0.24 wideband) is **below the 0.5 threshold** where spatial differencing reduces variance. Even *optimal* cross-channel prediction of the residual has a ceiling of ~(1−corr²) ≈ **<1%** — far below the +3% bar. **Verdict: don't build cross-channel ephys.** | `scripts/ephys_benchmark.py` |
+| **Financial tick / order-book** (real Binance BTCUSDT aggTrades, 1 day; same fixed-layout tick structure as ITCH/DBN — sequential IDs, monotonic ms timestamps, tick-grid prices, bool flags) | columnar **9.8×** (5.08 B/rec) | **beats the `zstd -19` bar (5.01×) by +49%**, and beats `xz -9` (7.43×) and zstd-on-raw-CSV (6.36×). The columnar de-interleave + per-column Δ/Δ² collapses the sequential IDs (Δ²→0) and monotonic timestamps that generic LZ sees only as interleaved noise. Scale-stable (+47.8% @200k → +49.1% @500k). **Note:** validated on crypto aggTrades as the accessible real proxy; equity ITCH/DBN MBO has the same structure (ns timestamps + sequential order IDs delta *even better*) so the win should hold/grow. | `scripts/financial_benchmark.py` |
 
 ## The two win-modes (the screen)
 
@@ -62,7 +63,7 @@ basic genome/protein sequence.
 
 | # | Type | Mode | Why it fits | Bar to beat | Public test data |
 |---|------|------|-------------|-------------|------------------|
-| 11 | **Financial tick / order-book (NASDAQ ITCH, Databento DBN, LOBSTER)** | columnar + A | Fixed-layout records: monotonic ns timestamps (Δ-of-Δ→~0), sequential order IDs, tick-grid prices, low-card flags | zstd-generic at rest; FIX/FAST on wire (no entropy stage) | LOBSTER samples; NASDAQ Hist. TotalView-ITCH; Databento `dbn` repo |
+| 11 | **Financial tick / order-book (NASDAQ ITCH, Databento DBN, LOBSTER)** ✅ **VALIDATED** (+49% vs zstd-19; see "Validated so far") | columnar + A | Fixed-layout records: monotonic ns timestamps (Δ-of-Δ→~0), sequential order IDs, tick-grid prices, low-card flags | zstd-generic at rest; FIX/FAST on wire (no entropy stage) | LOBSTER samples; NASDAQ Hist. TotalView-ITCH; Databento `dbn` repo |
 | 12 | **Automotive CAN-bus / MDF4 (MF4) logs** | columnar + A | Raw frames columnar (monotonic ts, small ID set); decoded signals are slowly-varying gauges | MDF4 native per-block deflate only | CSS Electronics CANedge samples; python-can test MF4 |
 | 13 | **IoT / MQTT telemetry** (small same-schema payloads) ✅ **VALIDATED** | **B** | Purest Mode-B: millions of tiny fixed-schema messages; overhead dominates <300 B | gzip / zstd-generic per message; zstd-`--train` at best | UCI/Kaggle IoT sets; Intel Lab sensor dataset |
 
@@ -98,10 +99,10 @@ basic genome/protein sequence.
 
 ## Recommended first to prototype (public data ready, generic incumbent, low risk)
 
-1. **Neuropixels ephys** — already beat FLAC; just add cross-channel prediction.
-2. **MQTT / IoT telemetry** — directly substantiates the headline "beats `zstd --train`" claim.
-3. **Financial ITCH / DBN** — clean columnar + Δ win over zstd-generic; LOBSTER data is public.
-4. **Cryo-EM counting movies** — sparse low-integer, easy big win over LZW.
+1. ~~**Neuropixels ephys**~~ — ❌ tested, cross-channel lever ruled out (ties FLAC, no win).
+2. ~~**MQTT / IoT telemetry**~~ — ✅ validated (+41% vs `zstd --train`).
+3. ~~**Financial ITCH / DBN**~~ — ✅ validated (+49% vs zstd-19; columnar Δ/Δ²).
+4. **Cryo-EM counting movies** — sparse low-integer, easy big win over LZW. *(next un-tested lead)*
 
 Each is a measure-first task: grab the public data, compress with the existing codec (or a small
 predictor tweak), and compare to the named bar before committing to build.
