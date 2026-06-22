@@ -46,14 +46,16 @@ jobs:
         run: |
           bin="rust/target/${{ matrix.target }}/release/pertype${{ matrix.ext }}"
           name="pertype-${{ matrix.target }}"
-          mkdir -p dist
+          # Stage the binary in its own dir: the repo root has a `pertype/` *directory*
+          # (the Python package), so copying to a bare `pertype` here would nest the binary
+          # inside it. Stage + archive from the staging dir to ship just the executable.
+          mkdir -p dist stage
+          cp "$bin" "stage/pertype${{ matrix.ext }}"
           if [ -n "${{ matrix.ext }}" ]; then
-            cp "$bin" "pertype.exe"
-            7z a "dist/${name}.zip" "pertype.exe" >/dev/null
+            (cd stage && 7z a "../dist/${name}.zip" "pertype.exe" >/dev/null)
           else
-            cp "$bin" pertype
-            strip pertype || true
-            tar czf "dist/${name}.tar.gz" pertype
+            strip "stage/pertype" || true
+            tar czf "dist/${name}.tar.gz" -C stage pertype
           fi
           (cd dist && shasum -a 256 * > "${name}.sha256" 2>/dev/null || sha256sum * > "${name}.sha256")
 
