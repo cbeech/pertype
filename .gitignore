@@ -26,5 +26,21 @@ venv/
 # Local harness state
 /.claude/
 
+# Session handoff notes (kept locally, not published — may contain machine-specific paths)
+/HANDOFF.md
+
+# Credentials / secrets — never commit (defense-in-depth; tokens normally live in ~/)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+id_rsa
+id_ed25519
+.pypirc
+**/credentials.toml
+.netrc
+secrets.*
+
 # Native build artifacts
 *.so
