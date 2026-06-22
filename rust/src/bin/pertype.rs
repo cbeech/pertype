@@ -54,7 +54,7 @@ fn write(path: &str, data: &[u8]) {
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() < 2 {
-        die("usage: pertype <train|compress|decompress> …  (see --help in the README)");
+        die("usage: pertype <train|compress|decompress> <in> [-m <model>] [-o <out>]");
     }
     let rest = &argv[2..];
     match argv[1].as_str() {

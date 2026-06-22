@@ -52,12 +52,16 @@ jobs:
           mkdir -p dist stage
           cp "$bin" "stage/pertype${{ matrix.ext }}"
           if [ -n "${{ matrix.ext }}" ]; then
-            (cd stage && 7z a "../dist/${name}.zip" "pertype.exe" >/dev/null)
+            archive="${name}.zip"
+            (cd stage && 7z a "../dist/${archive}" "pertype.exe" >/dev/null)
           else
+            archive="${name}.tar.gz"
             strip "stage/pertype" || true
-            tar czf "dist/${name}.tar.gz" -C stage pertype
+            tar czf "dist/${archive}" -C stage pertype
           fi
-          (cd dist && shasum -a 256 * > "${name}.sha256" 2>/dev/null || sha256sum * > "${name}.sha256")
+          # Checksum the archive by explicit name — globbing `*` here captures the freshly
+          # created (still-empty) .sha256 on some runners, producing a self-referential entry.
+          (cd dist && { shasum -a 256 "$archive" 2>/dev/null || sha256sum "$archive"; } > "${name}.sha256")
 
       - uses: actions/upload-artifact@v4
         with:

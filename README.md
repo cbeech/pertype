@@ -13,7 +13,8 @@ to each tag), or build it from source with Rust:
 
 ```bash
 # prebuilt: download + extract the archive for your platform, e.g. Linux x86_64:
-tar xzf pertype-x86_64-unknown-linux-musl.tar.gz && ./pertype --help
+tar xzf pertype-x86_64-unknown-linux-musl.tar.gz
+./pertype compress myfile.json -o myfile.cmp   # then: ./pertype decompress myfile.cmp -o out.json
 # or build from source (needs the Rust toolchain) — installs `pertype` into ~/.cargo/bin:
 git clone https://github.com/cbeech/pertype && cargo install --path pertype/rust --bin pertype
 ```
