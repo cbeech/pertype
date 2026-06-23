@@ -127,6 +127,42 @@ pure-Python reference with a fallback: `compress` of a 0.8 MB text file went
 111 s → 0.78 s (~140×), so the whole family — text, audio, video, numeric — is
 fast enough to use, not just a ratio demo.
 
+## Where this fits in practice
+
+This is a **ratio-over-speed, lossless** codec: it wins wherever data has exploitable
+structure (smooth/correlated numeric, sparse, or schema-repetitive records) and the
+incumbent is a *generic* codec with no domain model (gzip / zstd / PNG / GeoTIFF-DEFLATE /
+blosc). The economic sweet spot is **cold/warm archival of large-volume, lossless-required
+data** — compress once, store for years, read occasionally — plus **constrained-link
+telemetry**. Each use case below is anchored to a measured result in the table above.
+
+- **Scientific data archives** — petabyte-scale repositories where lossless is mandatory and
+  data is cold: cryo-EM (EMPIAR, **+30%** vs zstd), genomics FASTQ quality (ENA/SRA, +12% with
+  a small codec), neurophysiology (DANDI/EEG, **+25%** vs EDF/gzip). A 25–50% cut on a PB
+  archive is real storage + egress savings; slow compression is fine for write-once data.
+- **Earth observation** — Sentinel-2 / Landsat, **+48%** vs GeoTIFF-DEFLATE. Both ground
+  archives (Copernicus/USGS hold exabytes) and bandwidth-constrained satellite downlink.
+- **Financial market-data archives** — nanosecond tick / order-book (ITCH/DBN), **+49%** vs
+  zstd. Firms retain years of it for backtesting and compliance; the columnar Δ/Δ² fits.
+- **Constrained-link IoT/telemetry** — **+41%** vs `zstd --train` per message. The one
+  real-time fit: tiny messages over expensive cellular/LoRa/satellite links, with a trained
+  model shipped to the device once and amortized over millions of messages.
+- **Robotics / AV / medical data lakes** — depth & disparity maps (**+23%** vs PNG), CAN-bus
+  logs (+18% vs MDF4/gzip), DICOM CT/MR (**+44%** vs PNG-16), LiDAR. Petabytes of sensor and
+  imaging data archived for training, replay, and regulatory retention.
+
+**Deployment shape:** not a drop-in `gzip` replacement, but an at-rest codec slotted in where it
+fits — a cold-tier / object-store backend, or a format plugin (HDF5/Zarr filter, DICOM transfer
+syntax, Parquet column codec). One engine beats many domain specialists (FLAC + GeoTIFF + fqzcomp
++ blosc) with little domain-specific code.
+
+**Where it would *not* be used** (the honest other half): real-time hot paths needing GB/s
+throughput (zstd wins on speed); already-compressed / encrypted / high-entropy data; float data
+with noisy low mantissa bits (raw EM tomograms, MRI k-space — ~1.2× for everyone); and
+repetition-dominated text/blobs (`zstd --train` / LZMA's niche). The measure-first sweep in
+[`docs/data-type-opportunities.md`](docs/data-type-opportunities.md) is essentially a map of
+which data types pay off and which don't.
+
 ## How it works
 
 ```
