@@ -89,6 +89,10 @@ audio codec, and a motion-compensated video codec — extends across domains.
 | **text** | JSON / logs / HTML / XML / code (held-out) | beats plain gzip/zstd 29–62%; **beats `zstd --train`** (best dict) on logs +7%, html +6%, XML +6%; ~6–7% behind on json & Python source (cross-file-repetitive — zstd's COVER+FSE niche) |
 | **public text (enwik8)** | Wikipedia, held-out | **3.06× — beats gzip 2.60×, zstd 2.70×, xz 2.76×, bzip2 2.83×** (all standard tools); ~6% behind `zstd --train` 3.25× — the same trained-dict holdout, on a named benchmark |
 | **IoT/MQTT telemetry** | Intel Lab sensor, per-message JSON (held-out) | **trained model 3.55× — beats `zstd --train` 2.09× by +41%**; generic per-message gzip/zstd/xz are ≤1.05× (overhead sinks them on ~100 B messages). The many-small-messages Mode-B win, validated measure-first (`scripts/iot_benchmark.py`) |
+| **financial tick / order-book** | real Binance aggTrades (fixed-layout records, ITCH/DBN-shaped) | **columnar Δ/Δ² 9.8× — beats `zstd -19` 5.0× by +49%**, beats xz too. De-interleaving records + per-column Δ² collapses sequential IDs and monotonic timestamps (`scripts/financial_benchmark.py`) |
+| **cryo-EM counting movies** | real EMPIAR-10061 K2 frames (sparse, ~90% zero) | **count-aware 23.7× — beats `zstd -19` 16.6× by +30%**; value→symbol dict + ctxcoder near the entropy floor. Sparse data wants pure entropy coding, not prediction (`scripts/cryoem_benchmark.py`) |
+| **multispectral (Sentinel-2)** | real 10-band L2A uint16 (public AWS COGs) | **per-band 2D 4.6× — beats GeoTIFF-DEFLATE 2.4× by +48%**, beats xz/zstd/LZW. Our MED/CALIC 2D predictor crushes per-band deflate (`scripts/multispectral_benchmark.py`) |
+| **depth / disparity** | real Middlebury stereo disparity (14 maps) | **edge-aware 2D 14.8× — beats PNG 11.4× by +23%, WebP-lossless by +10%**, beats xz/zstd. Piecewise-smooth interiors + sharp edges (`scripts/depth_benchmark.py`) |
 | **lossless image (Kodak)** | 24 standard photos | **beats PNG on 24/24 (+29%, 2.51× vs 1.79×)**, **matches WebP-LL** (2.51×) and within −4% of JPEG-XL — the named lossless-image benchmark |
 | **Silesia (routed)** | the modern general corpus | per-type routing: **`mr` MR-volume +21% / `x-ray` +18% vs xz**; held-out text (1 MB train) **beats every standard tool on dickens/webster/reymont/`samba`/`nci`** (trails only `zstd --train`); loses on `xml` (repetitive markup — LZ/BWT niche) and `sao` floats; binaries not our design |
 | **raw image** | Canon CR2 Bayer / RGB photo | dedicated MED/GAP/CALIC codec: **Bayer 2.22× (beats Canon's own lossless +41%)**, **RGB photo 2.64× (beats PNG +13%)** |
@@ -966,6 +970,16 @@ a `pertype` command with a unified, self-describing `compress`/`decompress`; a c
 **Rust** crate is byte-identical to the Python/C reference for both *compress and train* (with a
 standalone `pertype` binary, cross-compatible with the Python tool); dual-licensed
 **AGPL-3.0-or-later + commercial**.
+
+**Measure-first data-type sweep** (each probed on real public data, reproducible benchmark in
+`scripts/`, full log in [`docs/data-type-opportunities.md`](docs/data-type-opportunities.md)) —
+new wins beyond the table above: **financial tick/order-book** +49% vs zstd-19,
+**Sentinel-2 multispectral** +48% vs GeoTIFF-DEFLATE, **cryo-EM counting movies** +30% vs zstd-19,
+**depth/disparity** +23% vs PNG, **IoT telemetry** +41% vs `zstd --train`. Two probes returned
+honest negatives and are recorded as such: **electrophysiology** (the cross-channel lever was
+disconfirmed — temporal prediction already captures the redundancy) and **microscopy/4D-STEM**
+(down-ranked — real data is photon- or float-mantissa-noisy). The recurring principle: predict
+along strongly-correlated axes; for sparse / decorrelated data, pure adaptive entropy coding wins.
 
 The honest open frontier (full list in `TODO.md`):
 

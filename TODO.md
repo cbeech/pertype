@@ -408,10 +408,14 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
 
 > **Opportunity backlog: [`docs/data-type-opportunities.md`](docs/data-type-opportunities.md)** —
 > a ranked, web-researched list of *uncovered* data types that fit the model (bars-to-beat +
-> public test data). Top untapped veins: multichannel int16/uint16 scientific time-series &
-> imaging (Mode A), and schema-repetitive telemetry / record streams (Mode B / columnar).
-> Best first measure-first targets: Neuropixels ephys, MQTT/IoT telemetry, financial ITCH/DBN,
-> cryo-EM counting movies.
+> public test data), with the **measure-first results log** at the top.
+>
+> **Validated so far (real data, reproducible `scripts/`):** IoT/MQTT +41% vs `zstd --train`;
+> financial ITCH/DBN-shaped tick +49% vs zstd-19; cryo-EM counting movies +30% vs zstd-19;
+> Sentinel-2 multispectral +48% vs GeoTIFF-DEFLATE; depth/disparity +23% vs PNG (+10% vs WebP-LL).
+> **Ruled out:** Neuropixels ephys (cross-channel lever disconfirmed). **Down-ranked:**
+> microscopy/4D-STEM (noisy/float real data). Next untested leads: FASTQ quality streams,
+> CAN-bus/MDF4, mass-spec, MRI k-space.
 
 - [x] **Auto-detect + dispatch (the `file`-command idea)** — `pertype/detect.py`
       + a `cli identify` subcommand sniffs a file's type (magic bytes for PNG/JPEG/GIF/
