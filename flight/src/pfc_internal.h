@@ -27,6 +27,9 @@
 struct pfc_ctx {
     uint16_t freq[PFC_NCTX][PFC_NSYM];   /* adaptive category frequencies, per context */
     uint32_t tot[PFC_NCTX];              /* per-context totals */
+    int16_t  bias_c[PFC_NCTX];           /* image: per-context bias correction (LOCO-I C) */
+    int32_t  bias_b[PFC_NCTX];           /* image: accumulated error (LOCO-I B) */
+    int32_t  bias_n[PFC_NCTX];           /* image: context occurrence count (LOCO-I N) */
     uint8_t  scratch[PFC_SCRATCH_BYTES]; /* one block's range-coded / store-raw payload */
     uint8_t  xform[PFC_BLOCK_BYTES];     /* de-interleave / delta workspace (non-image codecs) */
 };
@@ -65,7 +68,13 @@ uint32_t pfc_rc_decode_bits(pfc_rc_dec *d, unsigned nbits);
 void     pfc_model_reset(pfc_ctx *w);
 void     pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, int32_t resid);
 int32_t  pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned ctx);
+void     pfc_uint_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, uint32_t u);  /* raw count, no zigzag */
+uint32_t pfc_uint_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned ctx);
 unsigned pfc_cat(int32_t resid);   /* clamped magnitude category, for 1-D/columnar contexts */
+
+/* image run-mode entropy contexts (reserved high indices; emc<=18 and seq<=32 never reach them) */
+#define PFC_CTX_RUNLEN (PFC_NCTX - 2u)
+#define PFC_CTX_RUNINT (PFC_NCTX - 1u)
 
 /* ---- CRC-32 (IEEE 802.3, reflected) ---- */
 uint32_t pfc_crc32(const uint8_t *buf, size_t len);

@@ -48,6 +48,28 @@ static void *make_random(uint32_t w, uint32_t h, uint8_t bd, uint32_t seed)
     return p;
 }
 
+/* Constant background + flat objects + sparse spikes -> exercises run mode (exact-flat runs). */
+static void *make_flat(uint32_t w, uint32_t h, uint8_t bd, uint32_t seed)
+{
+    size_t n = (size_t)w * h;
+    uint32_t mask = (bd > 8u) ? 0xFFFFu : 0xFFu;
+    uint32_t s = seed ? seed : 3u;
+    size_t i;
+    void *p = malloc(n * elem(bd));
+    uint32_t bg = 1000u & mask;
+    for (i = 0; i < n; i++) {
+        uint32_t x = (uint32_t)(i % w), y = (uint32_t)(i / w);
+        uint32_t v = ((y > (h / 4u)) && (y < (h / 2u)) && (x > 5u) && (x < (w - 5u))) ? (5000u & mask) : bg;
+        if (bd > 8u) { ((uint16_t *)p)[i] = (uint16_t)v; } else { ((uint8_t *)p)[i] = (uint8_t)v; }
+    }
+    for (i = 0; i < (n / 200u); i++) {            /* sparse spikes (run interruptions) */
+        s = s * 1664525u + 1013904223u;
+        if (bd > 8u) { ((uint16_t *)p)[s % n] = (uint16_t)((s >> 8) & mask); }
+        else { ((uint8_t *)p)[s % n] = (uint8_t)((s >> 8) & mask); }
+    }
+    return p;
+}
+
 static void roundtrip(const char *name, uint32_t w, uint32_t h, uint8_t bd, void *img, int expect_small)
 {
     pfc_params p; size_t n_in = (size_t)w * h * elem(bd);
@@ -323,6 +345,8 @@ int main(void)
     roundtrip("width1",     1u,   500u, 16u, make_gradient(1u, 500u, 16u), 1);
     roundtrip("random16",   128u, 128u, 16u, make_random(128u, 128u, 16u, 12345u), 0);
     roundtrip("random8",    100u, 100u, 8u,  make_random(100u, 100u, 8u, 999u), 0);
+    roundtrip("flat16(run)", 300u, 240u, 16u, make_flat(300u, 240u, 16u, 7u), 1);
+    roundtrip("flat8(run)",  256u, 256u, 8u,  make_flat(256u, 256u, 8u, 11u), 1);
     test_seq();
     test_float();
     test_columnar();

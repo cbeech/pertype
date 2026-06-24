@@ -4,8 +4,14 @@
  * The plane is coded in horizontal bands; each band predicts only from samples within the band, so
  * bands are independently decodable (R6). MED prediction is refined by LOCO-I-style per-context
  * bias correction, and residuals are entropy-coded with TWO decoupled contexts: a fine magnitude
- * context (carries the compression) and a coarse directional context (drives bias only). This
- * closed most of the gap to JPEG-LS. Integer-only, deterministic.
+ * context (carries the compression) and a coarse directional context (drives bias only).
+ *
+ * A run mode (JPEG-LS-style) triggers on an exactly-flat neighbourhood (a==b==c): it codes the
+ * length of the run of pixels equal to the left value, then a single interruption sample. The
+ * decoder infers interruption-vs-band-end from the run length, so no flag is needed; on corruption
+ * the run is clamped to the band so it never writes out of bounds (R6). Huge on flat-scene data
+ * (star fields, masks, label maps); a no-op on photon-noisy imagery (no exact-flat runs).
+ * Integer-only, deterministic.
  *
  * Stream header (20 bytes): 'P''F''C''1' | ver | codec | bitdepth | rsvd | width | height | band.
  */
@@ -142,30 +148,61 @@ static void bias_update(pfc_ctx *w, unsigned q, int err)
     }
 }
 
+/* Run-mode trigger: interior pixel whose causal neighbours a(left)=b(up)=c(up-left). */
+static int run_trigger(const void *p, uint8_t bd, uint32_t width, size_t base, size_t i,
+                       uint32_t y, uint32_t x, uint32_t y0, uint32_t *runval)
+{
+    uint32_t a, b, c;
+    if ((y <= y0) || (x == 0u)) { return 0; }
+    a = px_get(p, bd, base + i - 1u);
+    b = px_get(p, bd, base + i - width);
+    c = px_get(p, bd, base + i - width - 1u);
+    if ((a == b) && (b == c)) { *runval = a; return 1; }
+    return 0;
+}
+
 void pfc_image_encode_band(pfc_rc_enc *e, pfc_ctx *w, const void *src,
                            uint32_t width, uint8_t bitdepth, uint32_t y0, uint32_t y1)
 {
     uint32_t mid = (uint32_t)1u << (bitdepth - 1u);
     int maxval = (int)((1u << bitdepth) - 1u);
+    size_t base = (size_t)y0 * width;
+    size_t N = (size_t)(y1 - y0) * width;
+    size_t i = 0u;
     int t1, t2;
-    uint32_t x, y;
     grad_thresholds(bitdepth, &t1, &t2);
     pfc_model_reset(w);
     bias_reset(w);
     (void)t2;
-    for (y = y0; y < y1; y++) {
-        for (x = 0u; x < width; x++) {
+    while (i < N) {
+        uint32_t y = y0 + (uint32_t)(i / width);
+        uint32_t x = (uint32_t)(i % width);
+        uint32_t runval;
+        if (run_trigger(src, bitdepth, width, base, i, y, x, y0, &runval) != 0) {
+            size_t run = 0u;
+            while (((i + run) < N) && (px_get(src, bitdepth, base + i + run) == runval)) {
+                run++;
+            }
+            pfc_uint_encode(e, w, PFC_CTX_RUNLEN, (uint32_t)run);
+            i += run;
+            if (i < N) {   /* run interruption: this pixel differs from runval */
+                int ix = (int)px_get(src, bitdepth, base + i);
+                pfc_resid_encode(e, w, PFC_CTX_RUNINT, ix - (int)runval);
+                i++;
+            }
+        } else {
             unsigned emc, bq; int sign;
-            int px, ix, err;
+            int px = (int)med_predict(src, bitdepth, width, x, y, y0, mid);
+            int ix = (int)px_get(src, bitdepth, base + i);
+            int err;
             image_ctx(src, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
-            px = (int)med_predict(src, bitdepth, width, x, y, y0, mid);
-            ix = (int)px_get(src, bitdepth, (size_t)y * width + x);
             px += sign * (int)w->bias_c[bq];
             if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
             err = ix - px;
             if (sign < 0) { err = -err; }
             pfc_resid_encode(e, w, emc, err);
             bias_update(w, bq, err);
+            i++;
         }
     }
     pfc_rc_enc_flush(e);
@@ -176,25 +213,44 @@ void pfc_image_decode_band(pfc_rc_dec *d, pfc_ctx *w, void *dst,
 {
     uint32_t mid = (uint32_t)1u << (bitdepth - 1u);
     int maxval = (int)((1u << bitdepth) - 1u);
+    size_t base = (size_t)y0 * width;
+    size_t N = (size_t)(y1 - y0) * width;
+    size_t i = 0u;
     int t1, t2;
-    uint32_t x, y;
     grad_thresholds(bitdepth, &t1, &t2);
     pfc_model_reset(w);
     bias_reset(w);
     (void)t2;
-    for (y = y0; y < y1; y++) {
-        for (x = 0u; x < width; x++) {
+    while (i < N) {
+        uint32_t y = y0 + (uint32_t)(i / width);
+        uint32_t x = (uint32_t)(i % width);
+        uint32_t runval;
+        if (run_trigger(dst, bitdepth, width, base, i, y, x, y0, &runval) != 0) {
+            size_t run = (size_t)pfc_uint_decode(d, w, PFC_CTX_RUNLEN);
+            size_t j;
+            if (run > (N - i)) { run = N - i; }      /* clamp: never write OOB on corruption (R6) */
+            for (j = 0u; j < run; j++) {
+                px_set(dst, bitdepth, base + i + j, runval);
+            }
+            i += run;
+            if (i < N) {   /* interruption */
+                int resid = pfc_resid_decode(d, w, PFC_CTX_RUNINT);
+                px_set(dst, bitdepth, base + i, (uint32_t)((int)runval + resid));
+                i++;
+            }
+        } else {
             unsigned emc, bq; int sign;
-            int px, errf, err, ix;
+            int px = (int)med_predict(dst, bitdepth, width, x, y, y0, mid);
+            int errf, err, ix;
             image_ctx(dst, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
-            px = (int)med_predict(dst, bitdepth, width, x, y, y0, mid);
             px += sign * (int)w->bias_c[bq];
             if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
             errf = pfc_resid_decode(d, w, emc);
             bias_update(w, bq, errf);
             err = (sign < 0) ? -errf : errf;
             ix = px + err;
-            px_set(dst, bitdepth, (size_t)y * width + x, (uint32_t)ix);
+            px_set(dst, bitdepth, base + i, (uint32_t)ix);
+            i++;
         }
     }
 }

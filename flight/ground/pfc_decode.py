@@ -111,7 +111,7 @@ class _Model:
                 t += row[s]
             self.tot[ctx] = t
 
-    def decode(self, rc, ctx):
+    def decode_uint(self, rc, ctx):
         target = rc.getfreq(self.tot[ctx])
         cum = 0
         k = 0
@@ -127,7 +127,10 @@ class _Model:
         else:
             u = (1 << (k - 1)) | rc.bits(k - 1)
         self._update(ctx, k)
-        return _unzigzag(u)
+        return u
+
+    def decode(self, rc, ctx):
+        return _unzigzag(self.decode_uint(rc, ctx))
 
 
 def _crc32(buf):
@@ -240,15 +243,31 @@ def _decode_image(stream):
                     px[(y0 + i) * w + x] = int.from_bytes(payload[off:off + es], "little")
         else:
             rc, m, bias = _RC(payload), _Model(), _Bias()
-            for y in range(y0, y1):
-                for x in range(w):
+            runlen, runint = NCTX - 2, NCTX - 1
+            base, n, i = y0 * w, (y1 - y0) * w, 0
+            while i < n:
+                y, x = y0 + i // w, i % w
+                runval = None
+                if y > y0 and x > 0 and px[base + i - 1] == px[base + i - w] == px[base + i - w - 1]:
+                    runval = px[base + i - 1]
+                if runval is not None:                       # run mode
+                    run = m.decode_uint(rc, runlen)
+                    if run > n - i:
+                        run = n - i                          # clamp (mirror C; OOB guard)
+                    for j in range(run):
+                        px[base + i + j] = runval
+                    i += run
+                    if i < n:                                # interruption
+                        px[base + i] = runval + m.decode(rc, runint)
+                        i += 1
+                else:                                        # normal mode
                     emc, bq, sign = _image_ctx(px, w, x, y, y0, t1)
                     pred = _med(px, w, x, y, y0, mid) + sign * bias.c[bq]
                     pred = 0 if pred < 0 else (maxval if pred > maxval else pred)
                     errf = m.decode(rc, emc)
                     bias.update(bq, errf)
-                    err = -errf if sign < 0 else errf
-                    px[y * w + x] = pred + err
+                    px[base + i] = pred + (-errf if sign < 0 else errf)
+                    i += 1
         y0 = y1
     return b"".join(int(v).to_bytes(es, "little") for v in px)
 

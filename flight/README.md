@@ -65,8 +65,11 @@ CCSDS-121 flight standard** (block-adaptive Rice on the same MED predictor) and 
 JPEG-LS** — LOCO-I-style bias correction on a decoupled directional context closed most of the
 original −2.7% gap. All with a tiny freestanding core that also gives bounded memory, error
 containment, and independent-decoder verification (which the JPEG libraries do not). On smooth
-gradients ~160× (bias nails linear ramps); the 1-D, float, and columnar codecs reach 15×, 1.9×,
-and 11× on their fixtures.
+gradients ~160× (bias nails linear ramps); a JPEG-LS-style **run mode** reaches **38–49×** on
+flat-scene data (star fields, masks, label maps — common in space imagery), while being a no-op on
+photon-noisy imagery like CyCIF (0% exact-flat runs, so its residual −1.6% vs JPEG-LS is context
+modelling, not runs). The 1-D, float, and columnar codecs reach 15×, 1.9×, and 11× on their
+fixtures.
 
 ## Licensing
 

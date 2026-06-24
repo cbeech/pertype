@@ -68,6 +68,14 @@ def main():
     img8 = (np.fromfunction(lambda y, x: ((x + y) & 0xFF), (120, 200), dtype=np.int64)).astype(np.uint8)
     check("image8-gradient", IMAGE, Params(200, 120, 0, 8, 0, 0), img8.tobytes())
 
+    # flat image with objects + spikes -> exercises run mode + interruptions (R7 over runs)
+    flat = np.full((240, 300), 1000, np.uint16)
+    flat[60:120, 5:295] = 5000
+    rng = np.random.default_rng(7)
+    for _ in range(360):
+        flat[rng.integers(0, 240), rng.integers(0, 300)] = rng.integers(0, 65536)
+    check("image16-flat-runs", IMAGE, Params(300, 240, 0, 16, 0, 0), flat.tobytes())
+
     # seq int16 ramp
     n = 9000
     seq = ((np.arange(n) % 600) - 300).astype("<i2")

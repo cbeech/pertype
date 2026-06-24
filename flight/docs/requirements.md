@@ -19,7 +19,7 @@ and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` a
 
 | Codec | Front-end | Status |
 |-------|-----------|--------|
-| `PFC_CODEC_IMAGE` | 2-D MED/LOCO-I predictor + gradient context | ✅ |
+| `PFC_CODEC_IMAGE` | 2-D MED/LOCO-I predictor + bias correction + gradient context + run mode | ✅ |
 | `PFC_CODEC_SEQ` | 1-D order-1 delta (int8/16/32, signed/unsigned) | ✅ |
 | `PFC_CODEC_FLOAT` | float32/64 byte-plane split | ✅ |
 | `PFC_CODEC_COLUMNAR` | record de-interleave + per-plane delta | ✅ |
@@ -36,13 +36,13 @@ All four share one integer range coder, one adaptive category model, and one blo
 | R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; BE-hardware run pending (no toolchain in env) |
 | R5 No expansion | `test_pfc.c` random inputs (all codecs) stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
 | R6 Error containment | `test_pfc.c::test_fault_injection`/`::test_truncation`; `make asan` clean; **`fuzz_decode.py` 20 000 random/mutated inputs, no crash/OOB** | ✅ verified |
-| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **7/7** incl. real CyCIF, all 4 codecs | ✅ verified |
+| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **8/8** incl. real CyCIF + flat run-mode, all 4 codecs | ✅ verified |
 
 ## Verification environment (this build)
 
-- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **70/70, zero warnings**.
-- `make asan` — ASan + UBSan: **70/70, no diagnostics**.
-- `test_crosscheck.py` — C encoder vs independent Python decoder: **7/7 byte-exact** (incl. real CyCIF).
+- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **116/116, zero warnings**.
+- `make asan` — ASan + UBSan: **116/116, no diagnostics**.
+- `test_crosscheck.py` — C encoder vs independent Python decoder: **8/8 byte-exact** (incl. real CyCIF).
 - `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
 - `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.75× beats CCSDS-121-class Rice (1.71×) by +2.5%** on the same MED predictor; within **−1.6%** of JPEG-LS (LOCO-I bias correction closed most of the original −2.7% gap).
 - `make stress` — randomised property + edge + negative + fuzz under ASan/UBSan: **15 063 cases
@@ -61,7 +61,7 @@ All four share one integer range coder, one adaptive category model, and one blo
 | pfc_model.c | 100% | 100% |
 | pfc_crc.c / pfc_frame.c | 100% | 100% |
 | pfc.c (dispatch) | 98.6% | 84% |
-| pfc_image.c | 98.8% | 93% |
+| pfc_image.c (incl. bias + run mode) | 99.2% | 93% |
 | pfc_seq.c | 97.2% | 86% |
 | pfc_columnar.c | 96.8% | 88% |
 
@@ -81,6 +81,7 @@ See `docs/mission-safety.md` for the gap between this evidence and formal flight
   + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. Cross-build invocation is
   documented in the Makefile/README; the wire format is already proven canonical.
 - **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
-- **Richer context** (JPEG-LS bias correction / sign-aware gradients) to close the remaining −2.7%
-  vs JPEG-LS and approach the research-measured pertype wins.
+- **Finer context modelling** to close the residual −1.6% vs JPEG-LS on photon-noisy imagery
+  (bias correction + run mode are done; the remainder is JPEG-LS's larger gradient-context set —
+  run mode does *not* help here because such data has ~0% exact-flat runs).
 - **CCSDS-123** predictive comparison (full hyperspectral standard) beyond the CCSDS-121 baseline.
