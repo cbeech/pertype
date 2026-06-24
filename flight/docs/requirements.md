@@ -1,40 +1,59 @@
 # libpfc — requirements & traceability
 
 Flight-software requirements for the pertype-flight lossless core, each with a verification method
-and the test(s) that exercise it. IDs are stable; tests live in `flight/test/`.
+and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` and `flight/ground/`.
 
 ## Requirements
 
 | ID | Requirement | Verification |
 |----|-------------|--------------|
-| **R1** | **Lossless.** For every valid input, `decode(encode(x)) == x` byte-for-byte. | Test (round-trip on synthetic + real data) |
-| **R2** | **No dynamic allocation.** The library calls no `malloc`/`free` and uses no recursion. All working memory is a caller-supplied `pfc_ctx`. | Inspection (no libc alloc symbols) + test (caller owns `pfc_ctx`) |
-| **R3** | **Bounded memory.** Working set ≤ compile-time maxima (`PFC_MAX_COLS`, `PFC_BAND_ROWS`); footprint reported by `pfc_workmem_bytes()`. | Inspection + test (fixed `pfc_ctx` size) |
-| **R4** | **Deterministic & portable.** Integer-only (no floating point); the wire format is canonical little-endian so a big-endian encoder and little-endian decoder interoperate. | Inspection (no FP types in `src/`) + analysis |
-| **R5** | **No expansion.** Output never exceeds `pfc_bound()`; incompressible bands fall back to store-raw. | Test (random data within bound + store-raw path) |
-| **R6** | **Error containment.** Each block is independently decodable with a CRC-32; a corrupted/truncated frame loses one block, is reported, and never reads out of bounds or crashes. | Test (bit-flip + truncation) + ASan/UBSan |
-| **R7** | **Bit-exact reference.** The C core round-trips byte-identically with the Python/Rust pertype reference. | Bridge (`test/bench_real.py`) — losslessness verified; cross-codec parity is phase 3 |
+| **R1** | **Lossless.** For every valid input, `decode(encode(x)) == x` byte-for-byte. | Test (round-trip, all 4 codecs, synthetic + real) |
+| **R2** | **No dynamic allocation.** No `malloc`/`free`/recursion. Working memory is a caller-supplied `pfc_ctx`. | Inspection (no alloc symbols in the `.so`) + test |
+| **R3** | **Bounded memory.** Working set ≤ compile-time maxima; footprint = `pfc_workmem_bytes()`. | Inspection + test |
+| **R4** | **Deterministic & portable.** Integer-only; canonical little-endian wire format (big-endian encoder ⇄ little-endian decoder). | Inspection (no FP in `src/`) + independent LE decoder |
+| **R5** | **No expansion.** Output never exceeds `pfc_bound()`; incompressible blocks store raw. | Test (random data within bound, all codecs) |
+| **R6** | **Error containment.** Each block independently CRC-protected; a corrupt/truncated frame loses one block, is reported, never reads OOB or crashes. | Test (bit-flip + truncation) + ASan/UBSan + fuzz |
+| **R7** | **Independent reference.** An independent implementation decodes the C encoder's output byte-for-byte. | Cross-check (pure-Python ground decoder vs C encoder) |
+
+## Codec coverage (broad scope)
+
+| Codec | Front-end | Status |
+|-------|-----------|--------|
+| `PFC_CODEC_IMAGE` | 2-D MED/LOCO-I predictor + gradient context | ✅ |
+| `PFC_CODEC_SEQ` | 1-D order-1 delta (int8/16/32, signed/unsigned) | ✅ |
+| `PFC_CODEC_FLOAT` | float32/64 byte-plane split | ✅ |
+| `PFC_CODEC_COLUMNAR` | record de-interleave + per-plane delta | ✅ |
+
+All four share one integer range coder, one adaptive category model, and one block-framing layer.
 
 ## Traceability matrix
 
 | Requirement | Test / evidence | Status |
 |-------------|-----------------|--------|
-| R1 Lossless | `test_pfc.c::roundtrip` (gradient8/16, odd-size, width-1); `bench_real.py` (real CyCIF 16-bit, 4/4 byte-exact) | ✅ verified |
-| R2 No malloc | `src/` uses only `stddef/stdint`; no `malloc`/recursion. `test_pfc.c` allocates `pfc_ctx` on the host; the library never does | ✅ verified (host); flight: link without libc-alloc |
-| R3 Bounded memory | `pfc_workmem_bytes()` = `sizeof(struct pfc_ctx)` = 262 960 B at defaults; tune via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` | ✅ verified |
-| R4 Deterministic/portable | No `float`/`double` in `src/` (grep-clean); `pfc_put_u32`/`pfc_get_u32` canonical LE; range coder integer-only | ✅ verified (single-endian host); cross-endian: phase 3 |
-| R5 No expansion | `test_pfc.c::roundtrip` random16/random8 stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
-| R6 Error containment | `test_pfc.c::test_fault_injection` (CRC catch + undamaged bands intact), `::test_truncation`; `make asan` clean | ✅ verified |
-| R7 Bit-exact reference | `bench_real.py` round-trips real imagery losslessly through the C core | ⏳ partial — byte-identical cross-check vs Python/Rust encoder is phase 3 |
+| R1 Lossless | `test_pfc.c` (image8/16, seq, float, columnar, odd sizes); `bench_real.py` (real CyCIF 4/4 byte-exact) | ✅ verified |
+| R2 No malloc | `src/` uses only `stddef/stdint`; `nm -uD build/libpfc.so` shows **no alloc imports** | ✅ verified |
+| R3 Bounded memory | `pfc_workmem_bytes()` = 329 096 B at defaults; tune via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` | ✅ verified |
+| R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; BE-hardware run pending (no toolchain in env) |
+| R5 No expansion | `test_pfc.c` random inputs (all codecs) stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
+| R6 Error containment | `test_pfc.c::test_fault_injection`/`::test_truncation`; `make asan` clean; **`fuzz_decode.py` 20 000 random/mutated inputs, no crash/OOB** | ✅ verified |
+| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **7/7** incl. real CyCIF, all 4 codecs | ✅ verified |
 
-## Verification environment
+## Verification environment (this build)
 
-- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **47/47 pass, zero warnings**.
-- `make asan` — AddressSanitizer + UndefinedBehaviorSanitizer: **47/47 pass, no diagnostics** (decoder is memory-safe on corrupt/truncated input).
-- `make misra` — `cppcheck --addon=misra` MISRA-C:2012 gate (run in CI where cppcheck is installed; not available in this build environment).
-- `bench_real.py` — real CyCIF 16-bit: **1.72× lossless, within −3.3% of JPEG-LS** (the CCSDS-123-class bar).
+- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **70/70, zero warnings**.
+- `make asan` — ASan + UBSan: **70/70, no diagnostics**.
+- `test_crosscheck.py` — C encoder vs independent Python decoder: **7/7 byte-exact** (incl. real CyCIF).
+- `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
+- `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.73× beats CCSDS-121-class Rice (1.71×) by +1.5%** on the same MED predictor; within −2.7% of JPEG-LS.
+- `make misra` — `cppcheck --addon=misra` gate (CI; cppcheck absent in this env).
+- `fuzz_pfc.c` — libFuzzer harness (CI; clang absent in this env).
 
-## Open items (phase 2 / 3)
+## Open items (toolchain-gated / future)
 
-- Phase 2: `pfc_seq` (1-D), `pfc_float` (byte-plane), `pfc_columnar` front-ends on the same backend; richer JPEG-LS-style gradient context to close the −3.3% and reach the research-measured wins.
-- Phase 3: byte-identical cross-check vs the Python/Rust reference (R7 full); MISRA report; libFuzzer on the decoder; cross-compile validation (big-endian PowerPC / SPARC-LEON / RISC-V); CCSDS-121/123 head-to-head.
+- **Big-endian hardware run** of the test suite (validates R4 end-to-end) — needs a cross toolchain
+  + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. Cross-build invocation is
+  documented in the Makefile/README; the wire format is already proven canonical.
+- **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
+- **Richer context** (JPEG-LS bias correction / sign-aware gradients) to close the remaining −2.7%
+  vs JPEG-LS and approach the research-measured pertype wins.
+- **CCSDS-123** predictive comparison (full hyperspectral standard) beyond the CCSDS-121 baseline.

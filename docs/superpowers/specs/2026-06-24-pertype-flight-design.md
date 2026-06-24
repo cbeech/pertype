@@ -1,7 +1,7 @@
 # pertype-flight (`libpfc`) — design spec
 
 **Date:** 2026-06-24
-**Status:** approved, building
+**Status:** phases 1–3 built and passing (see `flight/docs/requirements.md`); remaining items toolchain-gated (BE run, MISRA/libFuzzer reports)
 **Branch:** `flight-core` (local only; do not push to GitHub until told)
 
 ## Goal

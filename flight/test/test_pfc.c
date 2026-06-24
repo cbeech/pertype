@@ -80,6 +80,76 @@ static void roundtrip(const char *name, uint32_t w, uint32_t h, uint8_t bd, void
     free(enc); free(dec); free(img);
 }
 
+static void check_rt(const char *name, pfc_codec codec, pfc_params *p,
+                     const void *src, size_t n_in, int expect_small)
+{
+    size_t cap = pfc_bound(codec, n_in);
+    uint8_t *enc = malloc(cap);
+    void *dec = malloc(n_in);
+    size_t out = 0, dout = 0;
+    pfc_status se = pfc_encode(codec, p, src, n_in, enc, cap, &out, g_work);
+    pfc_status sd;
+    CHECK(se == PFC_OK, name);
+    CHECK(out <= cap, "within pfc_bound");
+    sd = pfc_decode(enc, out, dec, n_in, &dout, g_work);
+    CHECK(sd == PFC_OK, "decode OK");
+    CHECK(dout == n_in, "size matches");
+    CHECK(memcmp(src, dec, n_in) == 0, "lossless round-trip (R1)");
+    if (expect_small) { CHECK(out < n_in, "compressed"); }
+    printf("    %s: %zu -> %zu  (%.2fx)%s\n", name, n_in, out, (double)n_in / (double)out,
+           expect_small ? "" : "  [store-raw]");
+    free(enc); free(dec);
+}
+
+static void test_seq(void)
+{
+    uint32_t n = 20000u;
+    int16_t *ramp = malloc(n * sizeof(int16_t));
+    int32_t *rnd = malloc(n * sizeof(int32_t));
+    pfc_params p; uint32_t i; uint32_t s = 7u;
+    memset(&p, 0, sizeof p);
+    for (i = 0; i < n; i++) { ramp[i] = (int16_t)((int)(i % 600u) - 300); }   /* smooth */
+    for (i = 0; i < n; i++) { s = s * 1664525u + 1013904223u; rnd[i] = (int32_t)s; }
+    p.count = n; p.elem = 2; p.is_signed = 1;
+    check_rt("seq-int16-ramp", PFC_CODEC_SEQ, &p, ramp, n * 2u, 1);
+    p.count = n; p.elem = 4; p.is_signed = 1;
+    check_rt("seq-int32-random", PFC_CODEC_SEQ, &p, rnd, n * 4u, 0);
+    free(ramp); free(rnd);
+}
+
+static void test_float(void)
+{
+    uint32_t n = 8000u;
+    float *sm = malloc(n * sizeof(float));
+    pfc_params p; uint32_t i;
+    memset(&p, 0, sizeof p);
+    for (i = 0; i < n; i++) { sm[i] = (float)(i % 500u) * 0.25f; }   /* shared exponents */
+    p.count = n; p.elem = 4;
+    check_rt("float32-smooth", PFC_CODEC_FLOAT, &p, sm, n * 4u, 1);
+    free(sm);
+}
+
+static void test_columnar(void)
+{
+    uint32_t n = 12000u, rw = 6u;          /* record = u32 ascending counter + u16 low-card flag */
+    uint8_t *recs = malloc((size_t)n * rw);
+    pfc_params p; uint32_t i;
+    memset(&p, 0, sizeof p);
+    for (i = 0; i < n; i++) {
+        uint32_t ctr = i * 4u + 1000u;
+        uint16_t flag = (uint16_t)(i % 3u);
+        recs[i * rw + 0] = (uint8_t)(ctr & 0xFFu);
+        recs[i * rw + 1] = (uint8_t)((ctr >> 8) & 0xFFu);
+        recs[i * rw + 2] = (uint8_t)((ctr >> 16) & 0xFFu);
+        recs[i * rw + 3] = (uint8_t)((ctr >> 24) & 0xFFu);
+        recs[i * rw + 4] = (uint8_t)(flag & 0xFFu);
+        recs[i * rw + 5] = (uint8_t)((flag >> 8) & 0xFFu);
+    }
+    p.width = rw; p.count = n;
+    check_rt("columnar-records", PFC_CODEC_COLUMNAR, &p, recs, (size_t)n * rw, 1);
+    free(recs);
+}
+
 static void test_fault_injection(void)
 {
     uint32_t w = 200u, h = 120u; uint8_t bd = 16u;
@@ -141,6 +211,9 @@ int main(void)
     roundtrip("width1",     1u,   500u, 16u, make_gradient(1u, 500u, 16u), 1);
     roundtrip("random16",   128u, 128u, 16u, make_random(128u, 128u, 16u, 12345u), 0);
     roundtrip("random8",    100u, 100u, 8u,  make_random(100u, 100u, 8u, 999u), 0);
+    test_seq();
+    test_float();
+    test_columnar();
     test_fault_injection();
     test_truncation();
 

@@ -19,7 +19,8 @@ PFC_CODEC_IMAGE = 1
 
 
 class Params(C.Structure):
-    _fields_ = [("width", C.c_uint32), ("height", C.c_uint32), ("bitdepth", C.c_uint8)]
+    _fields_ = [("width", C.c_uint32), ("height", C.c_uint32), ("count", C.c_uint32),
+                ("bitdepth", C.c_uint8), ("elem", C.c_uint8), ("is_signed", C.c_uint8)]
 
 
 def load_lib():
@@ -44,7 +45,7 @@ def pfc_image(lib, plane):
     cap = lib.pfc_bound(PFC_CODEC_IMAGE, n_in)
     enc = (C.c_uint8 * cap)()
     work = (C.c_uint8 * lib.pfc_workmem_bytes())()
-    p = Params(w, h, 16)
+    p = Params(w, h, 0, 16, 0, 0)
     out = C.c_size_t(0)
     st = lib.pfc_encode(PFC_CODEC_IMAGE, C.byref(p), src.ctypes.data, n_in,
                         enc, cap, C.byref(out), work)

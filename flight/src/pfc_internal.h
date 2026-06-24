@@ -16,11 +16,19 @@
 #define PFC_MODEL_INC 24u
 #define PFC_MODEL_MAX ((uint32_t)1u << 13)
 
+/* Block size for the 1-D / float / columnar codecs (raw bytes per independently-coded block). */
+#define PFC_BLOCK_BYTES 65536u
+
+/* Block-record framing overhead: payload_len(4) | flags(1) | crc32(4). */
+#define PFC_BLKHDR 9u
+#define PFC_BLK_FLAG_RAW 1u
+
 /* Opaque working-memory layout (caller allocates one, statically). */
 struct pfc_ctx {
     uint16_t freq[PFC_NCTX][PFC_NSYM];   /* adaptive category frequencies, per context */
     uint32_t tot[PFC_NCTX];              /* per-context totals */
-    uint8_t  scratch[PFC_SCRATCH_BYTES]; /* one band's range-coded / store-raw payload */
+    uint8_t  scratch[PFC_SCRATCH_BYTES]; /* one block's range-coded / store-raw payload */
+    uint8_t  xform[PFC_BLOCK_BYTES];     /* de-interleave / delta workspace (non-image codecs) */
 };
 
 /* ---- range encoder ---- */
@@ -53,26 +61,49 @@ uint32_t pfc_rc_getfreq(pfc_rc_dec *d, uint32_t tot);
 void     pfc_rc_decode_update(pfc_rc_dec *d, uint32_t cum, uint32_t freq, uint32_t tot);
 uint32_t pfc_rc_decode_bits(pfc_rc_dec *d, unsigned nbits);
 
-/* ---- adaptive category model + residual coding ---- */
+/* ---- adaptive category model + residual coding (caller supplies the context) ---- */
 void     pfc_model_reset(pfc_ctx *w);
-void     pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned *prev_k, int32_t resid);
-int32_t  pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned *prev_k);
+void     pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, int32_t resid);
+int32_t  pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned ctx);
+unsigned pfc_cat(int32_t resid);   /* clamped magnitude category, for 1-D/columnar contexts */
 
 /* ---- CRC-32 (IEEE 802.3, reflected) ---- */
 uint32_t pfc_crc32(const uint8_t *buf, size_t len);
 
+/* ---- block framing helpers (shared by all codecs) ----
+ * Write one block record (len|flags|crc|payload) into dst at *pos; bumps *pos. */
+pfc_status pfc_block_write(uint8_t *dst, size_t cap, size_t *pos,
+                           const uint8_t *payload, size_t plen, uint8_t flags);
+/* Read one block record from src at pos; on success sets payload, plen, flags and bumps pos.
+ * Returns PFC_E_CORRUPT (without advancing OOB) on truncation or CRC mismatch. */
+pfc_status pfc_block_read(const uint8_t *src, size_t len, size_t *pos,
+                          const uint8_t **payload, size_t *plen, uint8_t *flags);
+
 /* ---- image (MED) band codec ---- */
-/* Encode rows [y0,y1) of a width*height plane into e; returns nothing (check e->overflow). */
 void     pfc_image_encode_band(pfc_rc_enc *e, pfc_ctx *w, const void *src,
                                uint32_t width, uint8_t bitdepth, uint32_t y0, uint32_t y1);
-/* Decode one band from d into dst rows [y0,y1). */
 void     pfc_image_decode_band(pfc_rc_dec *d, pfc_ctx *w, void *dst,
                                uint32_t width, uint8_t bitdepth, uint32_t y0, uint32_t y1);
-/* Store-raw helpers (canonical little-endian samples), used for the no-expansion fallback. */
 void     pfc_image_store_raw(uint8_t *out, const void *src, uint32_t width, uint8_t bitdepth,
                              uint32_t y0, uint32_t y1);
 void     pfc_image_load_raw(const uint8_t *in, void *dst, uint32_t width, uint8_t bitdepth,
                             uint32_t y0, uint32_t y1);
+
+/* ---- per-codec encode/decode (each writes/reads its own stream after the shared header) ---- */
+pfc_status pfc_image_encode(const pfc_params *p, const void *src, uint8_t *dst, size_t cap,
+                            size_t *pos, pfc_ctx *w);
+pfc_status pfc_image_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
+                            size_t *out, pfc_ctx *w, int *corrupt);
+
+pfc_status pfc_seq_encode(const pfc_params *p, const void *src, uint8_t *dst, size_t cap,
+                          size_t *pos, pfc_ctx *w);
+pfc_status pfc_seq_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
+                          size_t *out, pfc_ctx *w, int *corrupt);
+
+pfc_status pfc_columnar_encode(uint8_t codec, const pfc_params *p, const void *src,
+                               uint8_t *dst, size_t cap, size_t *pos, pfc_ctx *w);
+pfc_status pfc_columnar_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
+                               size_t *out, pfc_ctx *w, int *corrupt);
 
 /* ---- little-endian serialisation helpers (endianness-neutral wire format, R4) ---- */
 static inline void pfc_put_u32(uint8_t *p, uint32_t v) {
@@ -85,5 +116,8 @@ static inline uint32_t pfc_get_u32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
+
+/* shared stream header size: magic(4) ver(1) codec(1) + 14 codec-param bytes */
+#define PFC_HDR 20u
 
 #endif /* PFC_INTERNAL_H */

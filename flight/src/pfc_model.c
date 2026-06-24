@@ -60,11 +60,16 @@ static unsigned pfc_bitlen(uint32_t u)
     return k;
 }
 
-void pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned *prev_k, int32_t resid)
+unsigned pfc_cat(int32_t resid)
+{
+    unsigned k = pfc_bitlen(pfc_zigzag(resid));
+    return (k < PFC_NCTX) ? k : (PFC_NCTX - 1u);
+}
+
+void pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, int32_t resid)
 {
     uint32_t u = pfc_zigzag(resid);
     unsigned k = pfc_bitlen(u);             /* 0..PFC_KMAX */
-    unsigned ctx = *prev_k;                 /* causal context */
     uint32_t cum = 0u;
     unsigned s;
 
@@ -76,12 +81,10 @@ void pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned *prev_k, int32_t resid
         pfc_rc_encode_bits(e, u & (((uint32_t)1u << (k - 1u)) - 1u), k - 1u);
     }
     pfc_model_update(w, ctx, k);
-    *prev_k = k;
 }
 
-int32_t pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned *prev_k)
+int32_t pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned ctx)
 {
-    unsigned ctx = *prev_k;
     uint32_t target = pfc_rc_getfreq(d, w->tot[ctx]);
     uint32_t cum = 0u;
     unsigned k = 0u;
@@ -102,6 +105,5 @@ int32_t pfc_resid_decode(pfc_rc_dec *d, pfc_ctx *w, unsigned *prev_k)
         u = ((uint32_t)1u << (k - 1u)) | low;
     }
     pfc_model_update(w, ctx, k);
-    *prev_k = k;
     return pfc_unzigzag(u);
 }

@@ -30,9 +30,9 @@ extern "C" {
 #define PFC_BAND_ROWS 16u         /* rows per independently-decodable block (R6) */
 #endif
 
-#define PFC_KMAX  18u             /* max residual magnitude category (covers 16-bit residuals) */
+#define PFC_KMAX  32u             /* max residual magnitude category (covers 32-bit residuals) */
 #define PFC_NSYM  (PFC_KMAX + 1u) /* category alphabet 0..KMAX */
-#define PFC_NCTX  PFC_NSYM        /* context = clamped previous category */
+#define PFC_NCTX  20u             /* coding contexts (image gradient buckets / seq prev-category) */
 
 /* Per-band scratch must hold a worst-case (store-raw) band payload. */
 #define PFC_SCRATCH_BYTES ((size_t)PFC_MAX_COLS * PFC_BAND_ROWS * 2u + 16u)
@@ -54,12 +54,18 @@ typedef enum {
     PFC_CODEC_COLUMNAR = 4   /* phase 2: de-interleave */
 } pfc_codec;
 
-/* Codec parameters. For PFC_CODEC_IMAGE: width*height pixels, bitdepth in {8,16}.
- * src points at width*height native-order samples (uint8 if bitdepth<=8 else uint16). */
+/* Codec parameters. Only the fields named for the chosen codec are read.
+ *  IMAGE:    width*height samples, bitdepth in {8,16}; src is native uint8/uint16.
+ *  SEQ:      count integers of elem bytes (1/2/4), is_signed; src is native ints. 1-D delta.
+ *  FLOAT:    count floats of elem bytes (4/8); src is raw float bytes. Byte-plane split (lossless).
+ *  COLUMNAR: count records of width bytes each (row-major); de-interleave + per-plane delta. */
 typedef struct {
-    uint32_t width;
-    uint32_t height;
-    uint8_t  bitdepth;   /* 8 or 16 */
+    uint32_t width;       /* IMAGE: pixels/row.  COLUMNAR: bytes/record. */
+    uint32_t height;      /* IMAGE: rows. */
+    uint32_t count;       /* SEQ/FLOAT: #elements.  COLUMNAR: #records. */
+    uint8_t  bitdepth;    /* IMAGE: 8 or 16. */
+    uint8_t  elem;        /* SEQ: 1/2/4.  FLOAT: 4/8. */
+    uint8_t  is_signed;   /* SEQ: 1 if samples are signed. */
 } pfc_params;
 
 /* ---- working memory (caller-owned, no malloc) ----------------------------------------- */

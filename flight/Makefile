@@ -13,8 +13,22 @@ INC     := -Iinclude
 SRC     := $(wildcard src/*.c)
 OBJ     := $(SRC:.c=.o)
 
-.PHONY: all test strict asan sharedlib clean
+# Big-endian / cross validation (needs the target toolchain + qemu, e.g.):
+#   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
+#   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
+
+.PHONY: all test strict asan sharedlib crosscheck fuzz check clean
 all: test
+
+# Independent-decoder cross-check (R7) and decoder robustness fuzz (R6) — Python harnesses.
+crosscheck: sharedlib
+	python3 test/test_crosscheck.py
+fuzz: sharedlib
+	python3 test/fuzz_decode.py
+
+# Full local gate: C tests + warnings-as-errors + sanitizers + cross-check + fuzz.
+check: strict asan crosscheck fuzz
+	@echo "ALL CHECKS PASSED"
 
 # Shared library for the host-side bit-exactness / benchmark bridge (test/bench_real.py).
 sharedlib: build/libpfc.so
