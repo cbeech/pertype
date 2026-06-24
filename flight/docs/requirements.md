@@ -53,6 +53,26 @@ All four share one integer range coder, one adaptive category model, and one blo
 - `make misra` — `cppcheck --addon=misra` gate (CI; cppcheck absent in this env).
 - `fuzz_pfc.c` — libFuzzer harness (CI; clang absent in this env).
 
+### Structural coverage (gcov, full corpus = test_pfc + stress)
+
+| File | Lines | Branches taken |
+|------|-------|----------------|
+| pfc_arith.c (range coder) | 100% | 95% |
+| pfc_model.c | 100% | 100% |
+| pfc_crc.c / pfc_frame.c | 100% | 100% |
+| pfc.c (dispatch) | 98.6% | 84% |
+| pfc_image.c | 98.8% | 93% |
+| pfc_seq.c | 97.2% | 86% |
+| pfc_columnar.c | 96.8% | 88% |
+
+Driving coverage exposed that the `seq`/`float`/`columnar` **error-containment paths had no direct
+tests** (only `image` did); targeted bit-flip + truncation + malformed-header + invalid-param tests
+were added for every codec (`test_validation`, `test_corruption_all`, `test_more_guards`). The
+residual ~9 uncovered lines are **defensive guards verified by inspection**: (a) internal
+re-validation the dispatcher already enforces; (b) the raw-block plen-mismatch repair, reachable
+only with a CRC-valid-but-length-inconsistent block (negligible from real corruption) and
+structurally identical to the tested CRC-mismatch repair. MC/DC measurement is a future step.
+
 See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 
 ## Open items (toolchain-gated / future)
