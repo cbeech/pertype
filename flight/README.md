@@ -1,0 +1,66 @@
+# pertype-flight (`libpfc`)
+
+A lossless, **flight-deployable** compression core derived from pertype — built for the asymmetric
+spacecraft→ground link: the **encoder runs on the probe** (radiation-hardened CPU, no operating
+system guarantees, no dynamic memory), the **decoder runs on the ground**, and the compressed
+stream is byte-identical across both.
+
+> Status: **slice 1 complete** — the 2-D image codec (MED predictor + integer range coder), block
+> framing with error containment, and the full host test + qualification scaffolding are built and
+> passing. Phase 2 adds the 1-D / float / columnar front-ends; phase 3 is full reference parity +
+> cross-compile + MISRA report. See `docs/requirements.md`.
+
+## Why a separate core
+
+`pertype` (the main library) is Python + Rust and uses dynamic memory — fine on the ground, a
+non-starter on flight hardware. `libpfc` is the freestanding C99 subset that *can* fly:
+
+- **No dynamic allocation** — never calls `malloc`; all working memory is one caller-supplied
+  `pfc_ctx` of compile-time-known size (262 960 B at defaults; retune with `-DPFC_MAX_COLS` /
+  `-DPFC_BAND_ROWS`). The compiled library imports **zero** alloc symbols.
+- **Integer-only & deterministic** — no floating point; canonical little-endian wire format, so a
+  big-endian RAD750 encoder and a little-endian RISC-V/LEON/x86 ground decoder interoperate.
+- **Error containment** — every block is independently decodable and CRC-32 protected. A corrupted
+  or truncated downlink frame loses exactly one block, is reported, and never reads out of bounds
+  (verified under AddressSanitizer/UBSan).
+- **No expansion** — `pfc_bound()` is a hard ceiling; incompressible bands fall back to store-raw.
+- **Lossless** — bit-exact round-trip, verified on synthetic and real 16-bit instrument imagery.
+
+## Build & test
+
+```sh
+make            # build + run the host test suite (47 checks)
+make strict     # same, warnings-as-errors (-Werror -Wconversion ...)  — MISRA/JPL discipline gate
+make asan       # AddressSanitizer + UndefinedBehaviorSanitizer
+make misra      # cppcheck MISRA-C:2012 gate (CI; needs cppcheck)
+make sharedlib  # build/libpfc.so for the host bridge
+python3 test/bench_real.py img.tif    # run the flight core on real 16-bit data vs JPEG-LS/JPEG-XL
+```
+
+Flight builds cross-compile the same `src/` with the target toolchain — e.g.
+`powerpc-linux-gnu-gcc` (big-endian, RAD750-class), `sparc-gaisler-elf-gcc` (LEON), or a RISC-V
+toolchain (HPSC). The code is plain C99 with only `<stddef.h>`/`<stdint.h>`.
+
+## API (see `include/pfc.h`)
+
+```c
+size_t     pfc_bound(pfc_codec, size_t n_in);                 /* worst-case output size */
+pfc_status pfc_encode(pfc_codec, const pfc_params*, const void* src, size_t n,
+                      void* dst, size_t cap, size_t* out, pfc_ctx* work);
+pfc_status pfc_decode(const void* src, size_t n, void* dst, size_t cap,
+                      size_t* out, pfc_ctx* work);
+```
+
+The caller owns every buffer, including the `pfc_ctx` working memory — allocate it once, statically.
+
+## Performance (slice 1)
+
+On real CyCIF 16-bit microscopy: **1.72× lossless, within −3.3% of JPEG-LS** (the CCSDS-123-class
+bar) — competitive today with a tiny freestanding core, and the −3.3% is the simple slice-1 context
+model vs JPEG-LS's gradient contexts; the richer phase-2 context closes it. On smooth gradients the
+core reaches 7.7×.
+
+## Licensing
+
+`flight/` is **Apache-2.0** (permissive — deployable by government/NASA), separate from the AGPL-3.0
+main `pertype` library. The copyright holder relicenses their own algorithms for the flight core.
