@@ -60,11 +60,13 @@ The caller owns every buffer, including the `pfc_ctx` working memory — allocat
 
 ## Performance
 
-On real CyCIF 16-bit microscopy the image codec is **1.73× lossless, +1.5% better than the
-CCSDS-121 flight standard** (block-adaptive Rice on the same MED predictor) and within −2.7% of
-JPEG-LS — competitive with a tiny freestanding core that also gives bounded memory, error
+On real CyCIF 16-bit microscopy the image codec is **1.75× lossless, +2.5% better than the
+CCSDS-121 flight standard** (block-adaptive Rice on the same MED predictor) and within **−1.6% of
+JPEG-LS** — LOCO-I-style bias correction on a decoupled directional context closed most of the
+original −2.7% gap. All with a tiny freestanding core that also gives bounded memory, error
 containment, and independent-decoder verification (which the JPEG libraries do not). On smooth
-gradients ~7.7×; the 1-D, float, and columnar codecs reach 15×, 1.9×, and 11× on their fixtures.
+gradients ~160× (bias nails linear ramps); the 1-D, float, and columnar codecs reach 15×, 1.9×,
+and 11× on their fixtures.
 
 ## Licensing
 

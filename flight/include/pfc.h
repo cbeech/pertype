@@ -32,7 +32,7 @@ extern "C" {
 
 #define PFC_KMAX  32u             /* max residual magnitude category (covers 32-bit residuals) */
 #define PFC_NSYM  (PFC_KMAX + 1u) /* category alphabet 0..KMAX */
-#define PFC_NCTX  20u             /* coding contexts (image gradient buckets / seq prev-category) */
+#define PFC_NCTX  34u             /* coding contexts (image: 63 LOCO-I gradient contexts; seq: <=33) */
 
 /* Per-band scratch must hold a worst-case (store-raw) band payload. */
 #define PFC_SCRATCH_BYTES ((size_t)PFC_MAX_COLS * PFC_BAND_ROWS * 2u + 16u)

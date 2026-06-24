@@ -44,7 +44,7 @@ All four share one integer range coder, one adaptive category model, and one blo
 - `make asan` — ASan + UBSan: **70/70, no diagnostics**.
 - `test_crosscheck.py` — C encoder vs independent Python decoder: **7/7 byte-exact** (incl. real CyCIF).
 - `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
-- `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.73× beats CCSDS-121-class Rice (1.71×) by +1.5%** on the same MED predictor; within −2.7% of JPEG-LS.
+- `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.75× beats CCSDS-121-class Rice (1.71×) by +2.5%** on the same MED predictor; within **−1.6%** of JPEG-LS (LOCO-I bias correction closed most of the original −2.7% gap).
 - `make stress` — randomised property + edge + negative + fuzz under ASan/UBSan: **15 063 cases
   (5000 random round-trips across all codecs + adversarial edges + 150 000 decode-fuzz), 0 failures**.
   *This run found and fixed a real defect:* `pfc_bound()` under-estimated the per-block framing

@@ -10,12 +10,18 @@
 
 void pfc_model_reset(pfc_ctx *w)
 {
+    /* Geometric prior: residual categories are roughly geometric, so a freshly-reset context
+     * (each band resets for error-containment) codes well from the first sample instead of paying
+     * a uniform-distribution cold-start. This is what makes many fine contexts viable per band. */
     unsigned c, s;
     for (c = 0u; c < PFC_NCTX; c++) {
+        uint32_t t = 0u;
         for (s = 0u; s < PFC_NSYM; s++) {
-            w->freq[c][s] = 1u;     /* Laplace start: every category possible */
+            uint16_t f = (uint16_t)((s < 6u) ? (64u >> s) : 1u);   /* 64,32,16,8,4,2,1,1,... */
+            w->freq[c][s] = f;
+            t += f;
         }
-        w->tot[c] = PFC_NSYM;
+        w->tot[c] = t;
     }
 }
 

@@ -13,10 +13,11 @@ import struct
 MASK = 0xFFFFFFFF
 TOP = 1 << 24
 BOT = 1 << 16
-KMAX, NSYM, NCTX = 32, 33, 20
+KMAX, NSYM, NCTX = 32, 33, 34
 INC, MODEL_MAX = 24, 1 << 13
 HDR, BLKHDR = 20, 9
 RAW = 1
+BIAS_RESET, C_MIN, C_MAX = 64, -128, 127
 
 IMAGE, SEQ, FLOAT, COLUMNAR = 1, 2, 3, 4
 
@@ -95,8 +96,9 @@ class _Model:
         self.reset()
 
     def reset(self):
-        self.freq = [[1] * NSYM for _ in range(NCTX)]
-        self.tot = [NSYM] * NCTX
+        row = [(64 >> s) if s < 6 else 1 for s in range(NSYM)]   # geometric prior (mirror C)
+        self.freq = [row[:] for _ in range(NCTX)]
+        self.tot = [sum(row)] * NCTX
 
     def _update(self, ctx, k):
         self.freq[ctx][k] += INC
@@ -170,12 +172,52 @@ def _med(px, w, x, y, y0, mid):
     return a + b - c
 
 
-def _grad_ctx(px, w, x, y, y0):
+def _quant(dlt, t1):
+    lvl = 0 if abs(dlt) < t1 else 1
+    return -lvl if dlt < 0 else lvl
+
+
+def _image_ctx(px, w, x, y, y0, t1):
+    """Mirror C image_ctx: fine magnitude entropy-context emc, coarse directional bias-context bq, sign."""
     if y == y0 or x == 0:
-        return 0
+        return 0, 0, 1
     a, b, c = px[y * w + x - 1], px[(y - 1) * w + x], px[(y - 1) * w + x - 1]
-    g = abs(a - c) + abs(b - c)
-    return min(_bitlen(g), NCTX - 1)
+    d = px[(y - 1) * w + x + 1] if (x + 1) < w else b
+    emc = min(_bitlen(abs(a - c) + abs(b - c)), NCTX - 1)
+    q1, q2, q3 = _quant(d - b, t1), _quant(b - c, t1), _quant(c - a, t1)
+    if q1 < 0 or (q1 == 0 and q2 < 0) or (q1 == 0 and q2 == 0 and q3 < 0):
+        sign = -1; q1, q2, q3 = -q1, -q2, -q3
+    else:
+        sign = 1
+    bq = ((q1 + 1) * 3 + (q2 + 1)) * 3 + (q3 + 1) - 13
+    return emc, bq, sign
+
+
+class _Bias:
+    def __init__(self):
+        self.c = [0] * NCTX
+        self.b = [0] * NCTX
+        self.n = [1] * NCTX
+
+    def update(self, q, err):
+        self.b[q] += err
+        if self.n[q] >= BIAS_RESET:
+            b = self.b[q]
+            self.b[q] = b // 2 if b >= 0 else -((-b) // 2)   # truncate toward zero (mirror C '/')
+            self.n[q] = self.n[q] // 2
+        self.n[q] += 1
+        if self.b[q] <= -self.n[q]:
+            if self.c[q] > C_MIN:
+                self.c[q] -= 1
+            self.b[q] += self.n[q]
+            if self.b[q] <= -self.n[q]:
+                self.b[q] = -self.n[q] + 1
+        elif self.b[q] > 0:
+            if self.c[q] < C_MAX:
+                self.c[q] += 1
+            self.b[q] -= self.n[q]
+            if self.b[q] > 0:
+                self.b[q] = 0
 
 
 def _decode_image(stream):
@@ -183,6 +225,8 @@ def _decode_image(stream):
     w, h, band = struct.unpack_from("<III", stream, 8)
     es = 2 if bd > 8 else 1
     mid = 1 << (bd - 1)
+    maxval = (1 << bd) - 1
+    t1 = 32 if bd > 8 else 3
     px = [0] * (w * h)
     blocks = _blocks(stream)
     y0 = 0
@@ -195,12 +239,16 @@ def _decode_image(stream):
                     off = (i * w + x) * es
                     px[(y0 + i) * w + x] = int.from_bytes(payload[off:off + es], "little")
         else:
-            rc, m = _RC(payload), _Model()
+            rc, m, bias = _RC(payload), _Model(), _Bias()
             for y in range(y0, y1):
                 for x in range(w):
-                    pred = _med(px, w, x, y, y0, mid)
-                    resid = m.decode(rc, _grad_ctx(px, w, x, y, y0))
-                    px[y * w + x] = (pred + resid) & ((1 << (bd if bd > 8 else 8)) - 1)
+                    emc, bq, sign = _image_ctx(px, w, x, y, y0, t1)
+                    pred = _med(px, w, x, y, y0, mid) + sign * bias.c[bq]
+                    pred = 0 if pred < 0 else (maxval if pred > maxval else pred)
+                    errf = m.decode(rc, emc)
+                    bias.update(bq, errf)
+                    err = -errf if sign < 0 else errf
+                    px[y * w + x] = pred + err
         y0 = y1
     return b"".join(int(v).to_bytes(es, "little") for v in px)
 

@@ -2,8 +2,10 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * The plane is coded in horizontal bands; each band predicts only from samples within the band, so
- * bands are independently decodable (R6). Residuals are coded with a JPEG-LS-style local-gradient
- * context (texture/activity), which conditions the entropy model. Integer-only, deterministic.
+ * bands are independently decodable (R6). MED prediction is refined by LOCO-I-style per-context
+ * bias correction, and residuals are entropy-coded with TWO decoupled contexts: a fine magnitude
+ * context (carries the compression) and a coarse directional context (drives bias only). This
+ * closed most of the gap to JPEG-LS. Integer-only, deterministic.
  *
  * Stream header (20 bytes): 'P''F''C''1' | ver | codec | bitdepth | rsvd | width | height | band.
  */
@@ -24,19 +26,9 @@ static void px_set(void *p, uint8_t bd, size_t i, uint32_t v)
     }
 }
 
-static uint32_t absdiff(uint32_t a, uint32_t b)
+static int iabs_i(int v)
 {
-    return (a > b) ? (a - b) : (b - a);
-}
-
-static unsigned bitlen32(uint32_t u)
-{
-    unsigned k = 0u;
-    while (u != 0u) {
-        k++;
-        u >>= 1;
-    }
-    return k;
+    return (v < 0) ? -v : v;
 }
 
 /* MED predictor over neighbours available within band rows [y0,y1). */
@@ -67,35 +59,113 @@ static uint32_t med_predict(const void *p, uint8_t bd, uint32_t width,
     return a + b - c;
 }
 
-/* Local-gradient context: bucket the activity |a-c|+|b-c| by bit-length. Edges -> ctx 0. */
-static unsigned grad_ctx(const void *p, uint8_t bd, uint32_t width,
-                         uint32_t x, uint32_t y, uint32_t y0)
+/* LOCO-I context + bias correction (the JPEG-LS levers our scalar context lacked). */
+#define PFC_BIAS_RESET 64
+#define PFC_C_MIN (-128)
+#define PFC_C_MAX 127
+
+/* Quantise a gradient into a signed level. 3 levels {-1,0,1} keeps the context count low (14) so
+ * each per-band-reset context adapts well, while still giving bias correction a directional signal. */
+static int quantize_grad(int dlt, int t1, int t2)
 {
-    uint32_t a, b, c, g;
-    unsigned ctx;
-    if ((y == y0) || (x == 0u)) {
-        return 0u;
+    int a = iabs_i(dlt);
+    int lvl = (a < t1) ? 0 : 1;
+    (void)t2;
+    return (dlt < 0) ? -lvl : lvl;
+}
+
+static void grad_thresholds(uint8_t bd, int *t1, int *t2)
+{
+    if (bd > 8u) { *t1 = 32; *t2 = 64; } else { *t1 = 3; *t2 = 16; }
+}
+
+static unsigned bl32(uint32_t u)
+{
+    unsigned k = 0u;
+    while (u != 0u) { k++; u >>= 1; }
+    return k;
+}
+
+/* Two decoupled contexts from causal neighbours a(left) b(up) c(up-left) d(up-right):
+ *  - emc: a FINE magnitude context (bit-length of |a-c|+|b-c|) for the entropy model — this
+ *    carries most of the compression and adapts well even with per-band resets.
+ *  - bq + sign: a COARSE directional context (3 sign-folded gradients -> 14) used ONLY for bias
+ *    correction, which needs a signed/directional signal but little magnitude resolution. */
+static void image_ctx(const void *p, uint8_t bd, uint32_t width,
+                      uint32_t x, uint32_t y, uint32_t y0, int t1,
+                      unsigned *emc, unsigned *bq, int *sign)
+{
+    int a, b, c, d, q1, q2, q3, idx;
+    uint32_t g;
+    if ((y == y0) || (x == 0u)) { *sign = 1; *bq = 0u; *emc = 0u; return; }
+    a = (int)px_get(p, bd, (size_t)y * width + (x - 1u));
+    b = (int)px_get(p, bd, (size_t)(y - 1u) * width + x);
+    c = (int)px_get(p, bd, (size_t)(y - 1u) * width + (x - 1u));
+    d = ((x + 1u) < width) ? (int)px_get(p, bd, (size_t)(y - 1u) * width + (x + 1u)) : b;
+    g = (uint32_t)(iabs_i(a - c) + iabs_i(b - c));
+    *emc = bl32(g);
+    if (*emc >= PFC_NCTX) { *emc = PFC_NCTX - 1u; }
+    q1 = quantize_grad(d - b, t1, 0);
+    q2 = quantize_grad(b - c, t1, 0);
+    q3 = quantize_grad(c - a, t1, 0);
+    if ((q1 < 0) || ((q1 == 0) && (q2 < 0)) || ((q1 == 0) && (q2 == 0) && (q3 < 0))) {
+        *sign = -1; q1 = -q1; q2 = -q2; q3 = -q3;
+    } else {
+        *sign = 1;
     }
-    a = px_get(p, bd, (size_t)y * width + (x - 1u));
-    b = px_get(p, bd, (size_t)(y - 1u) * width + x);
-    c = px_get(p, bd, (size_t)(y - 1u) * width + (x - 1u));
-    g = absdiff(a, c) + absdiff(b, c);
-    ctx = bitlen32(g);
-    return (ctx < PFC_NCTX) ? ctx : (PFC_NCTX - 1u);
+    idx = ((q1 + 1) * 3 + (q2 + 1)) * 3 + (q3 + 1);   /* folded -> [13,26] */
+    *bq = (unsigned)(idx - 13);                        /* -> [0,13] */
+}
+
+static void bias_reset(pfc_ctx *w)
+{
+    unsigned q;
+    for (q = 0u; q < PFC_NCTX; q++) { w->bias_c[q] = 0; w->bias_b[q] = 0; w->bias_n[q] = 1; }
+}
+
+/* Update the per-context bias estimate (LOCO-I), using the sign-folded error. */
+static void bias_update(pfc_ctx *w, unsigned q, int err)
+{
+    w->bias_b[q] += err;
+    if (w->bias_n[q] >= PFC_BIAS_RESET) { w->bias_b[q] /= 2; w->bias_n[q] /= 2; }
+    w->bias_n[q] += 1;
+    if (w->bias_b[q] <= -w->bias_n[q]) {
+        if (w->bias_c[q] > PFC_C_MIN) { w->bias_c[q] = (int16_t)(w->bias_c[q] - 1); }
+        w->bias_b[q] += w->bias_n[q];
+        if (w->bias_b[q] <= -w->bias_n[q]) { w->bias_b[q] = -w->bias_n[q] + 1; }
+    } else if (w->bias_b[q] > 0) {
+        if (w->bias_c[q] < PFC_C_MAX) { w->bias_c[q] = (int16_t)(w->bias_c[q] + 1); }
+        w->bias_b[q] -= w->bias_n[q];
+        if (w->bias_b[q] > 0) { w->bias_b[q] = 0; }
+    } else {
+        /* bias within tolerance — no change */
+    }
 }
 
 void pfc_image_encode_band(pfc_rc_enc *e, pfc_ctx *w, const void *src,
                            uint32_t width, uint8_t bitdepth, uint32_t y0, uint32_t y1)
 {
     uint32_t mid = (uint32_t)1u << (bitdepth - 1u);
+    int maxval = (int)((1u << bitdepth) - 1u);
+    int t1, t2;
     uint32_t x, y;
+    grad_thresholds(bitdepth, &t1, &t2);
     pfc_model_reset(w);
+    bias_reset(w);
+    (void)t2;
     for (y = y0; y < y1; y++) {
         for (x = 0u; x < width; x++) {
-            uint32_t pred = med_predict(src, bitdepth, width, x, y, y0, mid);
-            unsigned ctx = grad_ctx(src, bitdepth, width, x, y, y0);
-            int32_t v = (int32_t)px_get(src, bitdepth, (size_t)y * width + x);
-            pfc_resid_encode(e, w, ctx, v - (int32_t)pred);
+            unsigned emc, bq; int sign;
+            int px, ix, err;
+            image_ctx(src, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
+            px = (int)med_predict(src, bitdepth, width, x, y, y0, mid);
+            ix = (int)px_get(src, bitdepth, (size_t)y * width + x);
+            px += sign * (int)w->bias_c[bq];
+            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
+            err = ix - px;
+            if (sign < 0) { err = -err; }
+            pfc_resid_encode(e, w, emc, err);
+            bias_update(w, bq, err);
         }
     }
     pfc_rc_enc_flush(e);
@@ -105,14 +175,26 @@ void pfc_image_decode_band(pfc_rc_dec *d, pfc_ctx *w, void *dst,
                            uint32_t width, uint8_t bitdepth, uint32_t y0, uint32_t y1)
 {
     uint32_t mid = (uint32_t)1u << (bitdepth - 1u);
+    int maxval = (int)((1u << bitdepth) - 1u);
+    int t1, t2;
     uint32_t x, y;
+    grad_thresholds(bitdepth, &t1, &t2);
     pfc_model_reset(w);
+    bias_reset(w);
+    (void)t2;
     for (y = y0; y < y1; y++) {
         for (x = 0u; x < width; x++) {
-            uint32_t pred = med_predict(dst, bitdepth, width, x, y, y0, mid);
-            unsigned ctx = grad_ctx(dst, bitdepth, width, x, y, y0);
-            int32_t resid = pfc_resid_decode(d, w, ctx);
-            px_set(dst, bitdepth, (size_t)y * width + x, (uint32_t)((int32_t)pred + resid));
+            unsigned emc, bq; int sign;
+            int px, errf, err, ix;
+            image_ctx(dst, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
+            px = (int)med_predict(dst, bitdepth, width, x, y, y0, mid);
+            px += sign * (int)w->bias_c[bq];
+            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
+            errf = pfc_resid_decode(d, w, emc);
+            bias_update(w, bq, errf);
+            err = (sign < 0) ? -errf : errf;
+            ix = px + err;
+            px_set(dst, bitdepth, (size_t)y * width + x, (uint32_t)ix);
         }
     }
 }
