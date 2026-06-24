@@ -15,6 +15,7 @@ Data: AVIRIS Indian Pines (public; EHU GIC hyperspectral scenes repository), exp
 Build first:  make sharedlib
 Run:          PYTHONPATH=<repo> python3 test/ccsds123_compare.py
 """
+import ctypes as C
 import os
 import sys
 
@@ -22,8 +23,29 @@ import numpy as np
 import scipy.io as sio
 
 sys.path.insert(0, os.path.dirname(__file__))
-from bench_real import load_lib, pfc_image            # noqa: E402
+from bench_real import load_lib, pfc_image, Params    # noqa: E402
 from ccsds_compare import rice_bits, med_residuals    # noqa: E402
+
+PFC_CODEC_SPECTRAL = 5
+
+
+def pfc_spectral(lib, cube):
+    """Encode the whole cube with the pfc SPECTRAL codec; verify lossless; return bytes."""
+    Z, H, W = cube.shape
+    src = np.ascontiguousarray(cube, dtype="<u2")
+    n = src.nbytes
+    cap = lib.pfc_bound(PFC_CODEC_SPECTRAL, n)
+    enc = (C.c_uint8 * cap)()
+    work = (C.c_uint8 * lib.pfc_workmem_bytes())()
+    out = C.c_size_t(0)
+    st = lib.pfc_encode(PFC_CODEC_SPECTRAL, C.byref(Params(W, H, Z, 16, 0, 0)),
+                        src.ctypes.data, n, enc, cap, C.byref(out), work)
+    assert st == 0, f"spectral encode status {st}"
+    dec = np.empty(Z * H * W, dtype="<u2")
+    dout = C.c_size_t(0)
+    st = lib.pfc_decode(enc, out.value, dec.ctypes.data, n, C.byref(dout), work)
+    assert st == 0 and np.array_equal(dec.reshape(Z, H, W), src), "spectral not lossless"
+    return out.value
 
 MAT = os.path.expanduser("~/sci_data/hyperspectral/Indian_pines_corrected.mat")
 
@@ -108,12 +130,15 @@ def main():
     print(f"   (entropy-only floors: MED {raw/entropy_bits(med):.2f}x, "
           f"interband {raw/entropy_bits(ib):.2f}x, ccsds123 {raw/entropy_bits(c123):.2f}x)")
 
-    print("\n-- real per-band codecs (spatial only) --")
-    print(f"   pfc per-band (arithmetic)                      {raw/pfc_sz:6.2f}x  ({pfc_sz/1e6:.2f} MB)")
+    spec_sz = pfc_spectral(lib, cube)        # NEW: pfc spectral codec (lossless verified)
+    print("\n-- real codecs --")
+    print(f"   pfc per-band (spatial, arithmetic)             {raw/pfc_sz:6.2f}x  ({pfc_sz/1e6:.2f} MB)")
     if jls_sz:
-        print(f"   JPEG-LS per-band                               {raw/jls_sz:6.2f}x  ({jls_sz/1e6:.2f} MB)")
-    print(f"\n   pfc(per-band) vs CCSDS-123-class: {(1 - pfc_sz/rows[2][1])*100:+.1f}%  "
-          f"(spectral prediction is the gap)")
+        print(f"   JPEG-LS per-band (spatial)                     {raw/jls_sz:6.2f}x  ({jls_sz/1e6:.2f} MB)")
+    print(f"   pfc SPECTRAL (inter-band MED-of-diff)          {raw/spec_sz:6.2f}x  ({spec_sz/1e6:.2f} MB)")
+    print(f"\n   pfc per-band  vs CCSDS-123-class: {(1 - pfc_sz/rows[2][1])*100:+.1f}%")
+    print(f"   pfc SPECTRAL  vs CCSDS-123-class: {(1 - spec_sz/rows[2][1])*100:+.1f}%  "
+          f"(was the gap; now?)")
 
 
 if __name__ == "__main__":

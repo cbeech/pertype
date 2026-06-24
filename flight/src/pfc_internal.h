@@ -118,6 +118,11 @@ pfc_status pfc_columnar_encode(uint8_t codec, const pfc_params *p, const void *s
 pfc_status pfc_columnar_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
                                size_t *out, pfc_ctx *w, int *corrupt);
 
+pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *dst, size_t cap,
+                               size_t *pos, pfc_ctx *w);
+pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
+                               size_t *out, pfc_ctx *w, int *corrupt);
+
 /* ---- little-endian serialisation helpers (endianness-neutral wire format, R4) ---- */
 static inline void pfc_put_u32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v & 0xFFu);

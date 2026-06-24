@@ -15,11 +15,11 @@ size_t pfc_workmem_bytes(void)
 size_t pfc_bound(pfc_codec codec, size_t n_in)
 {
     /* Worst case: every block stores raw (payload bytes == n_in) plus per-block framing overhead.
-     * The densest framing is the image path with the smallest band — width 1, 8-bit — i.e. one
-     * block per PFC_BAND_ROWS input bytes, each costing PFC_BLKHDR. Other codecs use far larger
-     * blocks (PFC_BLOCK_BYTES), so this bounds them too. */
-    size_t max_blocks = (n_in / PFC_BAND_ROWS) + 1u;
-    (void)codec;
+     * SPECTRAL frames one block per (band, row-group): a cube of many tiny bands can reach ~1 block
+     * per sample, so its bound is conservative (a caller with known dims can size far tighter). All
+     * other codecs cap blocks at one per PFC_BAND_ROWS input bytes. */
+    size_t max_blocks = (codec == PFC_CODEC_SPECTRAL) ? (n_in + 1u)
+                                                      : ((n_in / PFC_BAND_ROWS) + 1u);
     return n_in + (max_blocks * PFC_BLKHDR) + PFC_HDR + 64u;
 }
 
@@ -74,6 +74,14 @@ pfc_status pfc_encode(pfc_codec codec, const pfc_params *p,
         st = pfc_columnar_encode((uint8_t)codec, p, src, d, cap, &pos, work);
         break;
     }
+    case PFC_CODEC_SPECTRAL: {
+        uint8_t es = (p->bitdepth > 8u) ? 2u : 1u;
+        if (src_len != ((size_t)p->width * p->height * p->count * es)) {
+            return PFC_E_PARAM;
+        }
+        st = pfc_spectral_encode(p, src, d, cap, &pos, work);
+        break;
+    }
     default:
         return PFC_E_UNSUPPORTED;
     }
@@ -114,6 +122,9 @@ pfc_status pfc_decode(const void *src, size_t src_len,
     case PFC_CODEC_FLOAT:
     case PFC_CODEC_COLUMNAR:
         st = pfc_columnar_decode(s, src_len, dst, cap, out, work, &corrupt);
+        break;
+    case PFC_CODEC_SPECTRAL:
+        st = pfc_spectral_decode(s, src_len, dst, cap, out, work, &corrupt);
         break;
     default:
         return PFC_E_UNSUPPORTED;

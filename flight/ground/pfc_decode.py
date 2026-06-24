@@ -346,6 +346,64 @@ def _decode_columnar(stream):
     return bytes(out)
 
 
+def _med_s(a, b, c):                       # signed MED (LOCO-I)
+    lo, hi = (a, b) if a < b else (b, a)
+    if c >= hi:
+        return lo
+    if c <= lo:
+        return hi
+    return a + b - c
+
+
+def _decode_spectral(stream):
+    """Mirror pfc_spectral.c: BSQ cube, inter-band MED-of-difference prediction. 24-byte header."""
+    bd = stream[6]
+    W, H, Z, band = struct.unpack_from("<IIII", stream, 8)
+    es = 2 if bd > 8 else 1
+    cube = [0] * (Z * H * W)
+    n = len(stream)
+    pos = 24
+    for z in range(Z):
+        bz, bzp, has_prev = z * H * W, (z - 1) * H * W if z > 0 else 0, z > 0
+        y0 = 0
+        while y0 < H:
+            y1 = min(y0 + band, H)
+            plen, flags, crc = struct.unpack_from("<IBI", stream, pos)
+            payload = stream[pos + 9:pos + 9 + plen]
+            if pos + 9 + plen > n:
+                raise ValueError("truncated block")
+            if _crc32(payload) != crc:
+                raise ValueError("CRC mismatch")
+            pos += 9 + plen
+            if flags & RAW:
+                base = bz + y0 * W
+                for i in range((y1 - y0) * W):
+                    cube[base + i] = int.from_bytes(payload[i * es:(i + 1) * es], "little")
+            else:
+                rc, m = _RC(payload), _Model()
+                for y in range(y0, y1):
+                    for x in range(W):
+                        def df(yy, xx):
+                            sp = cube[bzp + yy * W + xx] if has_prev else 0
+                            return cube[bz + yy * W + xx] - sp
+                        haveW, haveN = x > 0, y > y0
+                        dW = df(y, x - 1) if haveW else 0
+                        dN = df(y - 1, x) if haveN else 0
+                        dNW = df(y - 1, x - 1) if (haveW and haveN) else 0
+                        if haveW and haveN:
+                            ctx = min(_bitlen(abs(dW - dNW) + abs(dN - dNW)), NCTX - 1)
+                            pred = _med_s(dW, dN, dNW)
+                        else:
+                            ctx = 0
+                            pred = 0 if (not haveW and not haveN) else (dN if haveN else dW)
+                        diff = pred + m.decode(rc, ctx)
+                        sp = cube[bzp + y * W + x] if has_prev else 0
+                        cube[bz + y * W + x] = sp + diff
+            y0 = y1
+    mask = (1 << (8 * es)) - 1
+    return b"".join(int(v & mask).to_bytes(es, "little") for v in cube)
+
+
 def decode(stream):
     """Decode a PFC1 byte stream to the original sample bytes (x86-native little-endian layout)."""
     if stream[:4] != b"PFC1":
@@ -359,4 +417,6 @@ def decode(stream):
         return _decode_seq(stream)
     if codec in (FLOAT, COLUMNAR):
         return _decode_columnar(stream)
+    if codec == 5:
+        return _decode_spectral(stream)
     raise ValueError(f"unsupported codec {codec}")

@@ -172,6 +172,69 @@ static void test_columnar(void)
     free(recs);
 }
 
+/* Spectrally-correlated cube: each band is the previous one shifted + small spatial variation. */
+static void *make_cube(uint32_t w, uint32_t h, uint32_t z, uint8_t bd)
+{
+    size_t n = (size_t)w * h * z;
+    uint32_t mask = (bd > 8u) ? 0xFFFFu : 0xFFu;
+    size_t i;
+    void *p = malloc(n * elem(bd));
+    for (i = 0; i < n; i++) {
+        uint32_t b = (uint32_t)(i / ((size_t)w * h));
+        uint32_t r = (uint32_t)(i % ((size_t)w * h));
+        uint32_t x = r % w, y = r / w;
+        uint32_t v = ((x * 5u + y * 3u + b * 40u) + ((x + y + b) & 7u)) & mask;  /* spectral + spatial */
+        if (bd > 8u) { ((uint16_t *)p)[i] = (uint16_t)v; } else { ((uint8_t *)p)[i] = (uint8_t)v; }
+    }
+    return p;
+}
+
+static void test_spectral(void)
+{
+    pfc_params p;
+    memset(&p, 0, sizeof p); p.width = 120; p.height = 100; p.count = 32; p.bitdepth = 16;
+    check_rt("spectral-cube16", PFC_CODEC_SPECTRAL, &p, make_cube(120, 100, 32, 16),
+             (size_t)120 * 100 * 32 * 2, 1);
+    memset(&p, 0, sizeof p); p.width = 64; p.height = 48; p.count = 16; p.bitdepth = 8;
+    check_rt("spectral-cube8", PFC_CODEC_SPECTRAL, &p, make_cube(64, 48, 16, 8),
+             (size_t)64 * 48 * 16, 1);
+    memset(&p, 0, sizeof p); p.width = 40; p.height = 40; p.count = 3; p.bitdepth = 16;  /* odd/small */
+    check_rt("spectral-small", PFC_CODEC_SPECTRAL, &p, make_cube(40, 40, 3, 16),
+             (size_t)40 * 40 * 3 * 2, 1);
+}
+
+static void test_spectral_corruption(void)
+{
+    pfc_params q;
+    size_t n, cap, out = 0, dout = 0, i;
+    uint8_t *src, *enc, *e2, *dec, buf[64], d2[64];
+    memset(&q, 0, sizeof q); q.width = 40; q.height = 40; q.count = 8; q.bitdepth = 16;
+    n = (size_t)40 * 40 * 8 * 2; cap = pfc_bound(PFC_CODEC_SPECTRAL, n);
+    src = malloc(n); for (i = 0; i < n; i++) { src[i] = (uint8_t)(i & 0x3Fu); }
+    enc = malloc(cap); dec = malloc(n);
+    pfc_encode(PFC_CODEC_SPECTRAL, &q, src, n, enc, cap, &out, g_work);
+    e2 = malloc(out); memcpy(e2, enc, out);
+    e2[24u + 9u + 1u] ^= 0x55u;                       /* flip in block 0 payload (24-byte header) */
+    CHECK((pfc_decode(e2, out, dec, n, &dout, g_work) == PFC_E_CORRUPT) && (dout == n),
+          "spectral corruption contained");
+    CHECK((pfc_decode(enc, out - 4u, dec, n, &dout, g_work) == PFC_E_CORRUPT) && (dout == n),
+          "spectral truncation contained");
+    free(src); free(enc); free(e2); free(dec);
+    /* validation: bad bitdepth, src_len mismatch, malformed decode header */
+    for (i = 0; i < 64u; i++) { buf[i] = (uint8_t)i; }
+    memset(&q, 0, sizeof q); q.width = 4; q.height = 4; q.count = 1; q.bitdepth = 7;
+    CHECK(pfc_encode(PFC_CODEC_SPECTRAL, &q, buf, 32, d2, 64, &out, g_work) == PFC_E_PARAM,
+          "spectral bad bitdepth");
+    q.bitdepth = 16;
+    CHECK(pfc_encode(PFC_CODEC_SPECTRAL, &q, buf, 31, d2, 64, &out, g_work) == PFC_E_PARAM,
+          "spectral src_len mismatch");
+    {
+        uint8_t s[28]; memset(s, 0, sizeof s); s[0] = 'P'; s[1] = 'F'; s[2] = 'C'; s[3] = '1';
+        s[4] = 1; s[5] = 5; s[6] = 16; s[8] = 0;     /* width 0 -> corrupt */
+        CHECK(pfc_decode(s, 28, d2, 64, &out, g_work) == PFC_E_CORRUPT, "spectral decode bad dims");
+    }
+}
+
 static void test_fault_injection(void)
 {
     uint32_t w = 200u, h = 120u; uint8_t bd = 16u;
@@ -350,6 +413,8 @@ int main(void)
     test_seq();
     test_float();
     test_columnar();
+    test_spectral();
+    test_spectral_corruption();
     test_fault_injection();
     test_truncation();
     test_validation();

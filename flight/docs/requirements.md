@@ -23,8 +23,9 @@ and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` a
 | `PFC_CODEC_SEQ` | 1-D order-1 delta (int8/16/32, signed/unsigned) | ✅ |
 | `PFC_CODEC_FLOAT` | float32/64 byte-plane split | ✅ |
 | `PFC_CODEC_COLUMNAR` | record de-interleave + per-plane delta | ✅ |
+| `PFC_CODEC_SPECTRAL` | multi/hyperspectral cube: inter-band MED-of-difference prediction | ✅ |
 
-All four share one integer range coder, one adaptive category model, and one block-framing layer.
+All five share one integer range coder, one adaptive category model, and one block-framing layer.
 
 ## Traceability matrix
 
@@ -36,13 +37,13 @@ All four share one integer range coder, one adaptive category model, and one blo
 | R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; BE-hardware run pending (no toolchain in env) |
 | R5 No expansion | `test_pfc.c` random inputs (all codecs) stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
 | R6 Error containment | `test_pfc.c::test_fault_injection`/`::test_truncation`; `make asan` clean; **`fuzz_decode.py` 20 000 random/mutated inputs, no crash/OOB** | ✅ verified |
-| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **8/8** incl. real CyCIF + flat run-mode, all 4 codecs | ✅ verified |
+| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **10/10** incl. real CyCIF, AVIRIS spectral, flat run-mode, all 4 codecs | ✅ verified |
 
 ## Verification environment (this build)
 
-- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **116/116, zero warnings**.
-- `make asan` — ASan + UBSan: **116/116, no diagnostics**.
-- `test_crosscheck.py` — C encoder vs independent Python decoder: **8/8 byte-exact** (incl. real CyCIF).
+- `make strict` — `-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror`: **139/139, zero warnings**.
+- `make asan` — ASan + UBSan: **139/139, no diagnostics**.
+- `test_crosscheck.py` — C encoder vs independent Python decoder: **10/10 byte-exact** (incl. real CyCIF).
 - `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
 - `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.76× beats CCSDS-121-class Rice (1.71×) by +2.8%** on the same MED predictor; within **−1.3%** of JPEG-LS at the default band (−0.5% at band=64).
 
@@ -83,6 +84,7 @@ residual sub-percent floor is finer context modelling that only pays off with bi
 | pfc_image.c (incl. bias + run mode) | 99.2% | 93% |
 | pfc_seq.c | 97.2% | 86% |
 | pfc_columnar.c | 96.8% | 88% |
+| pfc_spectral.c | 96.1% | — |
 
 Driving coverage exposed that the `seq`/`float`/`columnar` **error-containment paths had no direct
 tests** (only `image` did); targeted bit-flip + truncation + malformed-header + invalid-param tests
@@ -105,16 +107,17 @@ constant (block-adaptive Rice):
 | inter-band delta (naive spectral) | 1.88× — *worse* |
 | CCSDS-123-class (spectral+spatial least-squares) | **2.37×** |
 
-Real per-band codecs: pfc 2.03×, JPEG-LS 2.02×. **pfc loses −16.9% to CCSDS-123-class** — the gap is
-*entirely* spectral prediction, which the per-band image codec doesn't do. Findings: (1) on
-hyperspectral, exploiting inter-band correlation is the whole game; (2) **naive inter-band delta
-hurts** (bands have a scale/offset) — a *fitted* spectral predictor (a·prev-band + spatial + offset,
-adaptive in the real standard) is required; (3) pfc's arithmetic coder ≈ Rice on this data (2.03 vs
-2.03), so here the predictor is everything. (The CCSDS-123-class bar is a per-band least-squares
-rendition of the standard's adaptive spectral+spatial predictor — class-faithful, not bit-exact.)
+Real codecs: pfc per-band 2.03×, JPEG-LS 2.02×, **pfc SPECTRAL 2.35× (−1.2% vs CCSDS-123-class)**.
 
-**Implication:** a pfc *spectral mode* (adaptive band predictor feeding the existing arithmetic +
-mantissa coder) would close this and likely match/beat CCSDS-123 — a clear next codec.
+The `PFC_CODEC_SPECTRAL` codec **closed the gap from −16.9% to −1.2%** — near parity with the
+CCSDS-123-class predictor — using a simple integer MED-of-difference predictor (predict the
+inter-band difference image spatially) feeding the existing arithmetic + mantissa coder. Findings:
+(1) on hyperspectral, exploiting inter-band correlation is the whole game; (2) **naive inter-band
+delta hurts** (bands have a scale/offset) — but MED on the *difference image* captures the
+gain-induced spatial structure that naive delta misses; (3) pfc's arithmetic coder ≈ Rice on this
+data, so the predictor is everything. (The CCSDS-123-class bar is a per-band least-squares rendition
+of the standard's adaptive spectral+spatial predictor — class-faithful, not bit-exact. Lossless
+round-trip and C↔Python cross-check verified on real AVIRIS bands.)
 
 ## Open items (toolchain-gated / future)
 
@@ -123,5 +126,4 @@ mantissa coder) would close this and likely match/beat CCSDS-123 — a clear nex
 - **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
 - **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (−0.5% at band 64) — finer context modelling
   that only pays off with bigger bands (memory/containment tradeoff); a directional entropy context regressed.
-- **pfc spectral mode** for hyperspectral — close the −16.9% CCSDS-123 gap (adaptive band predictor
   feeding the existing arithmetic + mantissa coder).

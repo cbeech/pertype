@@ -139,10 +139,15 @@ static void random_cases(uint32_t n)
 {
     uint32_t it;
     for (it = 0; it < n; it++) {
-        pfc_params p; size_t n_in; pfc_codec codec = (pfc_codec)(1u + rr(4u));
+        pfc_params p; size_t n_in; pfc_codec codec = (pfc_codec)(1u + rr(5u));
         int dist = (int)rr(N_DIST);
         memset(&p, 0, sizeof p);
-        if (codec == PFC_CODEC_IMAGE) {
+        if (codec == PFC_CODEC_SPECTRAL) {
+            uint8_t bd = (rr(2u) != 0u) ? 16u : 8u; uint8_t es = (bd > 8u) ? 2u : 1u;
+            p.bitdepth = bd;
+            p.width = 1u + rr(60u); p.height = 1u + rr(60u); p.count = 1u + rr(40u);
+            n_in = (size_t)p.width * p.height * p.count * es;
+        } else if (codec == PFC_CODEC_IMAGE) {
             uint8_t bd = (rr(2u) != 0u) ? 16u : 8u; uint8_t es = (bd > 8u) ? 2u : 1u;
             p.bitdepth = bd;
             if (rr(8u) == 0u) { p.width = 1u; p.height = 1u + rr(2000u); }   /* skinny */

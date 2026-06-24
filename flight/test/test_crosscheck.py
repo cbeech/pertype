@@ -93,6 +93,23 @@ def main():
     rec[:, 4] = (np.arange(nr) % 3).astype(np.uint8)
     check("columnar", COLUMNAR, Params(rw, 0, nr, 0, 0, 0), rec.tobytes())
 
+    # spectral cube (BSQ): synthetic spectrally-correlated + real AVIRIS slice if present
+    Z, H, W = 24, 60, 50
+    cube = np.zeros((Z, H, W), np.uint16)
+    base = np.fromfunction(lambda y, x: ((x * 5 + y * 3) & 0xFFF), (H, W), dtype=np.int64)
+    for z in range(Z):
+        cube[z] = (base + z * 40 + ((np.arange(H)[:, None] + np.arange(W)[None, :] + z) & 7)).astype(np.uint16)
+    check("spectral-cube16", 5, Params(W, H, Z, 16, 0, 0), cube.tobytes())
+    try:
+        import scipy.io as sio
+        mat = os.path.expanduser("~/sci_data/hyperspectral/Indian_pines_corrected.mat")
+        a = np.asarray(sio.loadmat(mat)["indian_pines_corrected"]).transpose(2, 0, 1).astype("<u2")
+        a = np.ascontiguousarray(a[:20])     # first 20 bands, full 145x145
+        zz, hh, ww = a.shape
+        check("spectral-aviris", 5, Params(ww, hh, zz, 16, 0, 0), a.tobytes())
+    except Exception as e:
+        print(f"  (skip real AVIRIS spectral cross-check: {e})")
+
     # real CyCIF 16-bit (if present)
     pool = "/tmp/claude-1000/-home-craig-Dev-compression/d3fc84dc-5a79-47c9-8f87-528364411598/scratchpad/spatialomics"
     tifs = sorted(glob.glob(os.path.join(pool, "*.tif*")))

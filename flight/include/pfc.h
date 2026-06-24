@@ -48,22 +48,24 @@ typedef enum {
 
 /* ---- codecs (slice 1 implements IMAGE) ------------------------------------------------ */
 typedef enum {
-    PFC_CODEC_IMAGE    = 1,  /* 2-D MED predictor + range coder; 8- or 16-bit gray plane */
-    PFC_CODEC_SEQ      = 2,  /* phase 2: 1-D delta/fixed/LMS */
-    PFC_CODEC_FLOAT    = 3,  /* phase 2: float byte-plane split */
-    PFC_CODEC_COLUMNAR = 4   /* phase 2: de-interleave */
+    PFC_CODEC_IMAGE    = 1,  /* 2-D MED + bias + run mode + range coder; 8/16-bit gray plane */
+    PFC_CODEC_SEQ      = 2,  /* 1-D order-1 delta */
+    PFC_CODEC_FLOAT    = 3,  /* float byte-plane split */
+    PFC_CODEC_COLUMNAR = 4,  /* record de-interleave */
+    PFC_CODEC_SPECTRAL = 5   /* multi/hyperspectral cube: inter-band MED-of-difference prediction */
 } pfc_codec;
 
 /* Codec parameters. Only the fields named for the chosen codec are read.
  *  IMAGE:    width*height samples, bitdepth in {8,16}; src is native uint8/uint16.
  *  SEQ:      count integers of elem bytes (1/2/4), is_signed; src is native ints. 1-D delta.
  *  FLOAT:    count floats of elem bytes (4/8); src is raw float bytes. Byte-plane split (lossless).
- *  COLUMNAR: count records of width bytes each (row-major); de-interleave + per-plane delta. */
+ *  COLUMNAR: count records of width bytes each (row-major); de-interleave + per-plane delta.
+ *  SPECTRAL: count bands, each height*width samples (BSQ), bitdepth in {8,16}; native uint8/uint16. */
 typedef struct {
-    uint32_t width;       /* IMAGE: pixels/row.  COLUMNAR: bytes/record. */
-    uint32_t height;      /* IMAGE: rows. */
-    uint32_t count;       /* SEQ/FLOAT: #elements.  COLUMNAR: #records. */
-    uint8_t  bitdepth;    /* IMAGE: 8 or 16. */
+    uint32_t width;       /* IMAGE/SPECTRAL: pixels/row.  COLUMNAR: bytes/record. */
+    uint32_t height;      /* IMAGE/SPECTRAL: rows per band. */
+    uint32_t count;       /* SEQ/FLOAT: #elements.  COLUMNAR: #records.  SPECTRAL: #bands. */
+    uint8_t  bitdepth;    /* IMAGE/SPECTRAL: 8 or 16. */
     uint8_t  elem;        /* SEQ: 1/2/4.  FLOAT: 4/8. */
     uint8_t  is_signed;   /* SEQ: 1 if samples are signed. */
 } pfc_params;

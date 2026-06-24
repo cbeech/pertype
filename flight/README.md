@@ -5,11 +5,12 @@ spacecraft→ground link: the **encoder runs on the probe** (radiation-hardened 
 system guarantees, no dynamic memory), the **decoder runs on the ground**, and the compressed
 stream is byte-identical across both.
 
-> Status: **phases 1–3 built and passing.** Four codecs (image / 1-D seq / float / columnar) on a
+> Status: **built and passing.** Five codecs (image / 1-D seq / float / columnar / spectral) on a
 > shared integer range coder + block framing; an independent pure-Python ground decoder validated
-> byte-for-byte against the C encoder; CCSDS-121 comparison; 20 000-iteration decoder fuzz. The
-> remaining items are toolchain-gated (big-endian run, MISRA/libFuzzer reports) — see
-> `docs/requirements.md`.
+> byte-for-byte against the C encoder (incl. real CyCIF + AVIRIS); beats CCSDS-121, within −1.3% of
+> JPEG-LS, and the spectral codec is within −1.2% of CCSDS-123 on hyperspectral. 20 000-iteration
+> decoder fuzz + 15 000 randomised stress cases, all ASan/UBSan clean. Remaining items are
+> toolchain-gated (big-endian run, MISRA/libFuzzer reports) — see `docs/requirements.md`.
 
 ## Why a separate core
 
@@ -73,6 +74,11 @@ independent-decoder verification (which the JPEG libraries do not). On smooth gr
 JPEG-LS-style **run mode** reaches **38–49×** on flat-scene data (star fields, masks, label maps —
 common in space), a no-op on noisy imagery. The 1-D, float, and columnar codecs reach **261×, 2.0×,
 and 14×** on their fixtures (the mantissa-bit model is especially strong on prediction residuals).
+
+The **spectral codec** (`PFC_CODEC_SPECTRAL`) handles multi/hyperspectral cubes by predicting each
+band's inter-band difference image spatially (MED) — exploiting the inter-band correlation that
+per-band codecs miss. On real AVIRIS Indian Pines (200 bands) it reaches **2.35×, within −1.2% of
+the CCSDS-123 hyperspectral standard** (vs −16.9% for per-band), feeding the same arithmetic coder.
 
 ## Licensing
 
