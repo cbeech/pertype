@@ -94,14 +94,34 @@ structurally identical to the tested CRC-mismatch repair. MC/DC measurement is a
 
 See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 
+## CCSDS-123 comparison (hyperspectral) — `ccsds123_compare.py`
+
+On real AVIRIS Indian Pines (200 contiguous bands, 145×145, 16-bit), with the entropy coder held
+constant (block-adaptive Rice):
+
+| predictor | ratio |
+|-----------|-------|
+| per-band MED (spatial only) | 2.03× |
+| inter-band delta (naive spectral) | 1.88× — *worse* |
+| CCSDS-123-class (spectral+spatial least-squares) | **2.37×** |
+
+Real per-band codecs: pfc 2.03×, JPEG-LS 2.02×. **pfc loses −16.9% to CCSDS-123-class** — the gap is
+*entirely* spectral prediction, which the per-band image codec doesn't do. Findings: (1) on
+hyperspectral, exploiting inter-band correlation is the whole game; (2) **naive inter-band delta
+hurts** (bands have a scale/offset) — a *fitted* spectral predictor (a·prev-band + spatial + offset,
+adaptive in the real standard) is required; (3) pfc's arithmetic coder ≈ Rice on this data (2.03 vs
+2.03), so here the predictor is everything. (The CCSDS-123-class bar is a per-band least-squares
+rendition of the standard's adaptive spectral+spatial predictor — class-faithful, not bit-exact.)
+
+**Implication:** a pfc *spectral mode* (adaptive band predictor feeding the existing arithmetic +
+mantissa coder) would close this and likely match/beat CCSDS-123 — a clear next codec.
+
 ## Open items (toolchain-gated / future)
 
 - **Big-endian hardware run** of the test suite (validates R4 end-to-end) — needs a cross toolchain
-  + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. Cross-build invocation is
-  documented in the Makefile/README; the wire format is already proven canonical.
+  + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. The wire format is already proven canonical.
 - **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
-- **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (at the default band; −0.5% at band 64).
-  The context-adaptation study above closed it from −2.7% via bias correction, mantissa-bit
-  modelling, and band size; the remainder is finer context modelling that only pays off with bigger
-  bands (memory/containment tradeoff). A directional entropy context was tried and regressed.
-- **CCSDS-123** predictive comparison (full hyperspectral standard) beyond the CCSDS-121 baseline.
+- **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (−0.5% at band 64) — finer context modelling
+  that only pays off with bigger bands (memory/containment tradeoff); a directional entropy context regressed.
+- **pfc spectral mode** for hyperspectral — close the −16.9% CCSDS-123 gap (adaptive band predictor
+  feeding the existing arithmetic + mantissa coder).
