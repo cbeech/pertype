@@ -15,6 +15,9 @@
 /* Adaptive model tuning. MODEL_MAX keeps the total below PFC_RC_BOT for coder correctness. */
 #define PFC_MODEL_INC 24u
 #define PFC_MODEL_MAX ((uint32_t)1u << 13)
+/* Adaptive model for the top mantissa bit per category (residuals within a bin aren't uniform). */
+#define PFC_MANT_INC 24u
+#define PFC_MANT_MAX ((uint32_t)1u << 12)
 
 /* Block size for the 1-D / float / columnar codecs (raw bytes per independently-coded block). */
 #define PFC_BLOCK_BYTES 65536u
@@ -27,6 +30,7 @@
 struct pfc_ctx {
     uint16_t freq[PFC_NCTX][PFC_NSYM];   /* adaptive category frequencies, per context */
     uint32_t tot[PFC_NCTX];              /* per-context totals */
+    uint16_t mant[PFC_NSYM][2];          /* adaptive top-mantissa-bit model, per category */
     int16_t  bias_c[PFC_NCTX];           /* image: per-context bias correction (LOCO-I C) */
     int32_t  bias_b[PFC_NCTX];           /* image: accumulated error (LOCO-I B) */
     int32_t  bias_n[PFC_NCTX];           /* image: context occurrence count (LOCO-I N) */

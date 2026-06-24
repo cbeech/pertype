@@ -44,7 +44,26 @@ All four share one integer range coder, one adaptive category model, and one blo
 - `make asan` — ASan + UBSan: **116/116, no diagnostics**.
 - `test_crosscheck.py` — C encoder vs independent Python decoder: **8/8 byte-exact** (incl. real CyCIF).
 - `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
-- `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.75× beats CCSDS-121-class Rice (1.71×) by +2.5%** on the same MED predictor; within **−1.6%** of JPEG-LS (LOCO-I bias correction closed most of the original −2.7% gap).
+- `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.76× beats CCSDS-121-class Rice (1.71×) by +2.8%** on the same MED predictor; within **−1.3%** of JPEG-LS at the default band (−0.5% at band=64).
+
+### Context-adaptation study (closing the JPEG-LS gap)
+
+Sweeping band size (the `-DPFC_BAND_ROWS` knob) on real CyCIF separated two effects:
+
+| band | workmem (MAX_COLS=8192) | vs JPEG-LS |
+|------|-------------------------|------------|
+| 16 (default) | 322 KB | −1.3% |
+| 32 | 578 KB | −0.9% |
+| 64 | 1.0 MB | −0.5% |
+| whole-image | 17 MB | ≈ −0.3% |
+
+Findings: (1) **per-band model resets** (needed for error-containment) cost ~1% via adaptation
+dilution — recoverable by larger bands, a memory/containment tradeoff (with instrument-matched
+`MAX_COLS` the cost is far lower, e.g. ~160 KB for a 1280-wide sensor at band 64). (2) **Modelling
+the top mantissa bit** adaptively per category is a general win (−0.3 to −0.4% here, and large on
+prediction-residual codecs: seq-ramp 15×→261×, columnar 11×→14×). (3) A directional *entropy*
+context **regressed** on photon-noisy data (dilution, no directional payoff) and was dropped — the
+residual sub-percent floor is finer context modelling that only pays off with bigger bands.
 - `make stress` — randomised property + edge + negative + fuzz under ASan/UBSan: **15 063 cases
   (5000 random round-trips across all codecs + adversarial edges + 150 000 decode-fuzz), 0 failures**.
   *This run found and fixed a real defect:* `pfc_bound()` under-estimated the per-block framing
@@ -81,7 +100,8 @@ See `docs/mission-safety.md` for the gap between this evidence and formal flight
   + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. Cross-build invocation is
   documented in the Makefile/README; the wire format is already proven canonical.
 - **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
-- **Finer context modelling** to close the residual −1.6% vs JPEG-LS on photon-noisy imagery
-  (bias correction + run mode are done; the remainder is JPEG-LS's larger gradient-context set —
-  run mode does *not* help here because such data has ~0% exact-flat runs).
+- **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (at the default band; −0.5% at band 64).
+  The context-adaptation study above closed it from −2.7% via bias correction, mantissa-bit
+  modelling, and band size; the remainder is finer context modelling that only pays off with bigger
+  bands (memory/containment tradeoff). A directional entropy context was tried and regressed.
 - **CCSDS-123** predictive comparison (full hyperspectral standard) beyond the CCSDS-121 baseline.

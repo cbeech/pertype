@@ -102,15 +102,19 @@ static void image_ctx(const void *p, uint8_t bd, uint32_t width,
                       unsigned *emc, unsigned *bq, int *sign)
 {
     int a, b, c, d, q1, q2, q3, idx;
-    uint32_t g;
+    uint32_t th, tv;
+    unsigned mag, dir;
     if ((y == y0) || (x == 0u)) { *sign = 1; *bq = 0u; *emc = 0u; return; }
     a = (int)px_get(p, bd, (size_t)y * width + (x - 1u));
     b = (int)px_get(p, bd, (size_t)(y - 1u) * width + x);
     c = (int)px_get(p, bd, (size_t)(y - 1u) * width + (x - 1u));
     d = ((x + 1u) < width) ? (int)px_get(p, bd, (size_t)(y - 1u) * width + (x + 1u)) : b;
-    g = (uint32_t)(iabs_i(a - c) + iabs_i(b - c));
-    *emc = bl32(g);
-    if (*emc >= PFC_NCTX) { *emc = PFC_NCTX - 1u; }
+    th = (uint32_t)iabs_i(a - c);                 /* horizontal-ish activity */
+    tv = (uint32_t)iabs_i(b - c);                 /* vertical-ish activity */
+    mag = bl32(th + tv);
+    dir = 0u; (void)dir;                          /* directional split regressed on noisy data */
+    *emc = mag;                                    /* fine magnitude context */
+    if (*emc >= PFC_CTX_RUNLEN) { *emc = PFC_CTX_RUNLEN - 1u; }
     q1 = quantize_grad(d - b, t1, 0);
     q2 = quantize_grad(b - c, t1, 0);
     q3 = quantize_grad(c - a, t1, 0);

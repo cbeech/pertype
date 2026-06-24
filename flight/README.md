@@ -60,16 +60,19 @@ The caller owns every buffer, including the `pfc_ctx` working memory — allocat
 
 ## Performance
 
-On real CyCIF 16-bit microscopy the image codec is **1.75× lossless, +2.5% better than the
-CCSDS-121 flight standard** (block-adaptive Rice on the same MED predictor) and within **−1.6% of
-JPEG-LS** — LOCO-I-style bias correction on a decoupled directional context closed most of the
-original −2.7% gap. All with a tiny freestanding core that also gives bounded memory, error
-containment, and independent-decoder verification (which the JPEG libraries do not). On smooth
-gradients ~160× (bias nails linear ramps); a JPEG-LS-style **run mode** reaches **38–49×** on
-flat-scene data (star fields, masks, label maps — common in space imagery), while being a no-op on
-photon-noisy imagery like CyCIF (0% exact-flat runs, so its residual −1.6% vs JPEG-LS is context
-modelling, not runs). The 1-D, float, and columnar codecs reach 15×, 1.9×, and 11× on their
-fixtures.
+On real CyCIF 16-bit microscopy the image codec is **1.76× lossless, +2.8% better than the
+CCSDS-121 flight standard** (block-adaptive Rice on the same MED predictor) and within **−1.3% of
+JPEG-LS** at the default 16-row band — **−0.5% at a 64-row band**. Three levers got here from the
+original −2.7%: LOCO-I bias correction (decoupled directional context), adaptive modelling of the
+top mantissa bit (residuals within a magnitude bin aren't uniform — a general win across *all*
+codecs), and band size (a measured memory/error-containment tradeoff; see `docs/requirements.md`).
+A directional *entropy* context was tried and **regressed** on photon-noisy data, so it was dropped.
+
+All with a tiny freestanding core that also gives bounded memory, error containment, and
+independent-decoder verification (which the JPEG libraries do not). On smooth gradients ~166×; a
+JPEG-LS-style **run mode** reaches **38–49×** on flat-scene data (star fields, masks, label maps —
+common in space), a no-op on noisy imagery. The 1-D, float, and columnar codecs reach **261×, 2.0×,
+and 14×** on their fixtures (the mantissa-bit model is especially strong on prediction residuals).
 
 ## Licensing
 

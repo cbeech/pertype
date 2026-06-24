@@ -15,6 +15,7 @@ TOP = 1 << 24
 BOT = 1 << 16
 KMAX, NSYM, NCTX = 32, 33, 34
 INC, MODEL_MAX = 24, 1 << 13
+MANT_INC, MANT_MAX = 24, 1 << 12
 HDR, BLKHDR = 20, 9
 RAW = 1
 BIAS_RESET, C_MIN, C_MAX = 64, -128, 127
@@ -99,6 +100,18 @@ class _Model:
         row = [(64 >> s) if s < 6 else 1 for s in range(NSYM)]   # geometric prior (mirror C)
         self.freq = [row[:] for _ in range(NCTX)]
         self.tot = [sum(row)] * NCTX
+        self.mant = [[1, 1] for _ in range(NSYM)]                # top-mantissa-bit model per category
+
+    def _mant_decode(self, rc, k):
+        f0, f1 = self.mant[k]
+        tot = f0 + f1
+        bit = 0 if rc.getfreq(tot) < f0 else 1
+        rc.update(0, f0) if bit == 0 else rc.update(f0, f1)
+        self.mant[k][bit] += MANT_INC
+        if tot + MANT_INC >= MANT_MAX:
+            self.mant[k][0] = (self.mant[k][0] + 1) >> 1
+            self.mant[k][1] = (self.mant[k][1] + 1) >> 1
+        return bit
 
     def _update(self, ctx, k):
         self.freq[ctx][k] += INC
@@ -125,7 +138,9 @@ class _Model:
         elif k == 1:
             u = 1
         else:
-            u = (1 << (k - 1)) | rc.bits(k - 1)
+            topbit = self._mant_decode(rc, k)
+            low = rc.bits(k - 2) if k > 2 else 0
+            u = (1 << (k - 1)) | (topbit << (k - 2)) | low
         self._update(ctx, k)
         return u
 
