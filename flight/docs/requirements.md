@@ -45,8 +45,15 @@ All four share one integer range coder, one adaptive category model, and one blo
 - `test_crosscheck.py` — C encoder vs independent Python decoder: **7/7 byte-exact** (incl. real CyCIF).
 - `fuzz_decode.py` — **20 000 iterations**, decoder survived all random/mutated input.
 - `ccsds_compare.py` — real CyCIF 16-bit: **pfc 1.73× beats CCSDS-121-class Rice (1.71×) by +1.5%** on the same MED predictor; within −2.7% of JPEG-LS.
+- `make stress` — randomised property + edge + negative + fuzz under ASan/UBSan: **15 063 cases
+  (5000 random round-trips across all codecs + adversarial edges + 150 000 decode-fuzz), 0 failures**.
+  *This run found and fixed a real defect:* `pfc_bound()` under-estimated the per-block framing
+  overhead for skinny incompressible images (e.g. 1×30000 8-bit), so a caller sizing to `pfc_bound`
+  could get a spurious `PFC_E_BOUND`. Fixed to account for the worst-case block count; re-verified.
 - `make misra` — `cppcheck --addon=misra` gate (CI; cppcheck absent in this env).
 - `fuzz_pfc.c` — libFuzzer harness (CI; clang absent in this env).
+
+See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 
 ## Open items (toolchain-gated / future)
 

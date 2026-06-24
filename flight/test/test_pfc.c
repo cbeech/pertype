@@ -61,7 +61,7 @@ static void roundtrip(const char *name, uint32_t w, uint32_t h, uint8_t bd, void
     se = pfc_encode(PFC_CODEC_IMAGE, &p, img, n_in, enc, cap, &out, g_work);
     CHECK(se == PFC_OK, name);
     CHECK(out <= cap, "output within pfc_bound (R5)");
-    CHECK(out <= n_in + (n_in / 2u) + 1024u, "no pathological expansion");
+    CHECK(out <= pfc_bound(PFC_CODEC_IMAGE, n_in), "no pathological expansion");
 
     sd = pfc_decode(enc, out, dec, n_in, &dout, g_work);
     CHECK(sd == PFC_OK, "decode status OK");
@@ -73,7 +73,7 @@ static void roundtrip(const char *name, uint32_t w, uint32_t h, uint8_t bd, void
         printf("    %s: %u x %u @%u-bit  %zu -> %zu  (%.2fx)\n",
                name, w, h, bd, n_in, out, (double)n_in / (double)out);
     } else {
-        CHECK(out <= n_in + (n_in / 2u) + 1024u, "incompressible stays bounded (store-raw)");
+        CHECK(out <= pfc_bound(PFC_CODEC_IMAGE, n_in), "incompressible stays bounded (store-raw)");
         printf("    %s: %u x %u @%u-bit  %zu -> %zu  (store-raw path)\n",
                name, w, h, bd, n_in, out);
     }

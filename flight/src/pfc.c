@@ -14,8 +14,13 @@ size_t pfc_workmem_bytes(void)
 
 size_t pfc_bound(pfc_codec codec, size_t n_in)
 {
+    /* Worst case: every block stores raw (payload bytes == n_in) plus per-block framing overhead.
+     * The densest framing is the image path with the smallest band — width 1, 8-bit — i.e. one
+     * block per PFC_BAND_ROWS input bytes, each costing PFC_BLKHDR. Other codecs use far larger
+     * blocks (PFC_BLOCK_BYTES), so this bounds them too. */
+    size_t max_blocks = (n_in / PFC_BAND_ROWS) + 1u;
     (void)codec;
-    return n_in + (n_in / 2u) + 1024u;
+    return n_in + (max_blocks * PFC_BLKHDR) + PFC_HDR + 64u;
 }
 
 pfc_status pfc_encode(pfc_codec codec, const pfc_params *p,

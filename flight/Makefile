@@ -17,8 +17,15 @@ OBJ     := $(SRC:.c=.o)
 #   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
-.PHONY: all test strict asan sharedlib crosscheck fuzz check clean
+.PHONY: all test strict asan sharedlib crosscheck fuzz stress check clean
 all: test
+
+# Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
+stress:
+	@mkdir -p build
+	$(CC) $(CSTD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+		$(INC) $(SRC) test/stress.c -o build/stress
+	./build/stress 5000 150000
 
 # Independent-decoder cross-check (R7) and decoder robustness fuzz (R6) — Python harnesses.
 crosscheck: sharedlib
@@ -26,8 +33,8 @@ crosscheck: sharedlib
 fuzz: sharedlib
 	python3 test/fuzz_decode.py
 
-# Full local gate: C tests + warnings-as-errors + sanitizers + cross-check + fuzz.
-check: strict asan crosscheck fuzz
+# Full local gate: warnings-as-errors + sanitizers + cross-check + fuzz + randomised stress.
+check: strict asan crosscheck fuzz stress
 	@echo "ALL CHECKS PASSED"
 
 # Shared library for the host-side bit-exactness / benchmark bridge (test/bench_real.py).
