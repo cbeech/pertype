@@ -9,14 +9,15 @@ coverage) still demands.
 
 | Property | Evidence |
 |----------|----------|
-| Lossless round-trip | 70 unit + **15 063 randomised/edge cases** across all 4 codecs + real CyCIF; 0 failures |
-| No expansion (`pfc_bound`) | property-checked on adversarial inputs — **a real under-estimate bug was found and fixed** here |
+| Lossless round-trip | 139 unit + **15 063 randomised/edge cases** across all 5 codecs (image/seq/float/columnar/spectral) + real CyCIF + real AVIRIS hyperspectral; 0 failures |
+| No expansion (`pfc_bound`) | property-checked on adversarial inputs — **two real under-estimate bugs found and fixed** (a skinny-image case, then a many-small-blocks spectral-cube case, both caught by the stress harness) |
 | Error containment | bit-flip + truncation tests, **170 000 fuzz iterations**, all under **ASan + UBSan**, no OOB/crash |
 | No dynamic allocation | compiled `.so` imports **zero** alloc symbols; no recursion |
-| Bounded memory | single caller-owned `pfc_ctx` (329 KB at defaults), compile-time sized |
+| Bounded memory | single caller-owned `pfc_ctx` (~330 KB at defaults), compile-time sized |
 | Determinism | encode-twice byte-identical (checked every stress case) |
-| Independent reference | pure-Python ground decoder reproduces C-encoder output byte-for-byte (R7) |
-| Standard-relative perf | beats CCSDS-121-class Rice +1.5% on real 16-bit data |
+| Independent reference | pure-Python ground decoder reproduces C-encoder output byte-for-byte (R7), **10/10** cross-check incl. real CyCIF and real AVIRIS |
+| Standard-relative perf | beats CCSDS-121-class Rice **+2.8%** (spatial) and is within **−1.2%** of CCSDS-123-class (hyperspectral, via the spectral codec) on real 16-bit data |
+| Structural coverage | gcov: entropy core (range coder/model/CRC/framing) **100%** lines; all five codecs 96–99% lines |
 
 This is a high-quality, well-tested core — a credible *foundation*. It is not yet flight-qualified.
 
@@ -27,7 +28,10 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   then satisfy the required activities — plans, reviews, audits, configuration management.
 - **Coding-standard compliance report**: MISRA-C:2012 + JPL *Power of Ten*, run with a qualified
   analyzer (Coverity / LDRA / Polyspace / cppcheck-MISRA), every finding resolved or formally
-  deviated. Wired as `make misra`; **not yet run** (no analyzer in this environment).
+  deviated. Wired as `make misra` and now automated in CI (`.github/workflows/flight-ci.yml`,
+  `misra` job, installs cppcheck from the Ubuntu archive) — **authored, not yet executed**; a
+  from-source cppcheck build was attempted on a dev machine and abandoned mid-build after
+  contributing to a crash, which is exactly why this now runs on a CI runner instead.
 - **Bidirectional requirements traceability**: requirement → design → code → test → result, with
   test *procedures* and review records. We have a starter matrix (`requirements.md`); flight needs
   the full, audited chain.
@@ -48,8 +52,13 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 ### 2.4 Target & timing
 - **Cross-compile and run on the flight CPU/RTOS**: RAD750 (big-endian PowerPC), LEON/SPARC, or
   RISC-V HPSC, under RTEMS/VxWorks. We proved the wire format canonical via the explicit-LE Python
-  decoder, but have **not run on big-endian hardware** (no cross toolchain/qemu here). Validate R4
-  end-to-end there.
+  decoder; a genuine **big-endian *execution*** run (not just a format proof) is now automated in
+  CI (`flight-ci.yml`, `bigendian` job): the full 139-check test suite runs on emulated big-endian
+  PowerPC via `qemu-user`, plus a byte-comparison of a deterministic fixture built once natively
+  (LE) and once cross-compiled (BE) — **authored, not yet executed; results pending its first
+  run**. qemu-user emulation is real BE *execution*, a meaningfully stronger check than static
+  analysis, but it is still not the actual RAD750/LEON/RISC-V target hardware or RTOS — that
+  remains a real gap even once this CI job goes green.
 - **WCET and stack-depth analysis**: bound worst-case execution time per block on the target and
   prove maximum stack usage (no recursion → tractable). Encode throughput must clear the instrument
   data rate with margin.
@@ -65,26 +74,39 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
-  on every finding. 170 k iterations is a good smoke test, not a campaign.
+  on every finding. 170k Python-harness iterations plus a proper libFuzzer+ASan+UBSan run are now
+  wired into CI (`flight-ci.yml`, `libfuzzer` job — bounded to 120s per run for now, a smoke test,
+  not a campaign) — **authored, not yet executed**. Raising the bound and persisting a corpus
+  across runs (rather than starting fresh each CI run) is the natural next step once it's green.
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
-1. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
-2. **MISRA + coverage**: run `make misra`; add gcov, drive branch coverage to ~100% and MC/DC on the
-   range coder + framing + predictor-edge functions.
-3. **Target bring-up**: cross-compile (BE PowerPC / LEON / RISC-V), run the full suite under qemu and
-   on a dev board; WCET + stack analysis.
-4. **Sustained fuzzing** with a persisted corpus; wire into CI.
-5. **Formal pfc_bound sufficiency + small-input round-trip proofs** (CBMC).
-6. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
+1. **Push `flight-core` and review the first `flight-ci.yml` run** — the `native`/`misra`/
+   `libfuzzer`/`bigendian` jobs are authored but unexecuted; this is the immediate unblock for
+   items 2–4 below and for closing out several "authored, not yet executed" statuses in this doc.
+2. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
+3. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
+   framing + predictor-edge functions (MISRA itself is now automated — see #1).
+4. **Target bring-up on real hardware**: qemu-user emulation (once CI confirms it) is real BE
+   *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap;
+   WCET + stack analysis need the real target, not an emulator.
+5. **Sustained fuzzing**: raise `libfuzzer`'s 120s bound and persist a corpus across CI runs
+   (currently starts fresh each run).
+6. **Formal `pfc_bound` sufficiency + small-input round-trip proofs** (CBMC).
+7. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
    NPR 7150.2 for the assigned software class.
 
 ## 4. Bottom line
 
 libpfc is a small, freestanding, integer-only, no-malloc, error-contained, independently-verified
-lossless core that already beats the CCSDS-121 flight standard and survives heavy randomised/fuzz
-testing under sanitizers — and the testing process itself has already caught and fixed a real
-contract bug. That makes it a strong *candidate* for flight. "Mission-safe" is then earned through
-the items above: static-analysis compliance, structural coverage, formal memory-safety proofs,
-on-target/WCET validation, an SEU fault model, and the NPR 7150.2 assurance process with independent
-review — none of which are blocked by the design, but all of which are real work beyond writing code.
+lossless core that beats the CCSDS-121 flight standard by +2.8% and sits within a percent of both
+JPEG-LS (spatial) and CCSDS-123-class (hyperspectral, via the spectral codec), and survives heavy
+randomised/fuzz testing under sanitizers — and the testing process itself has caught and fixed two
+real contract bugs (both `pfc_bound` under-estimates). That makes it a strong *candidate* for
+flight. A CI workflow (`.github/workflows/flight-ci.yml`) now automates MISRA, libFuzzer, and a
+genuine big-endian execution run — authored and reasoned correct, but unexecuted as of this
+writing; its first real run is the next concrete step, not a formality. "Mission-safe" beyond that
+is earned through the remaining items above: structural/MC/DC coverage, formal memory-safety
+proofs, real-target (not emulated) hardware validation with WCET analysis, an SEU fault model, and
+the NPR 7150.2 assurance process with independent review — none blocked by the design, but all
+real work beyond writing code.

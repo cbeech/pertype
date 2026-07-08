@@ -103,3 +103,34 @@ the gates pass; a green run of it is.
 
 File: `.github/workflows/flight-ci.yml` (new).
 
+## Task 4: Update `requirements.md` + `mission-safety.md` — DONE
+
+Updated both docs to honestly reflect the new CI workflow: every gate it covers (MISRA,
+libFuzzer, big-endian) is now marked **"authored, not yet executed"** rather than left as a bare
+"absent here" note or, worse, implied done. Added a new "CI: automating the toolchain-gated
+gates" section to `requirements.md` explaining what each job does and why `crosscheck`/
+`fuzz_decode.py`/`stress.c` deliberately stay native-only (documented reasoning, not just a
+decision).
+
+**Also found and fixed while reading closely:** `requirements.md` had a stray orphaned line
+(`  feeding the existing arithmetic + mantissa coder).`) left over from an earlier edit, with no
+matching opening text — dangling markdown fragment. Removed it.
+
+**Also found `mission-safety.md` had drifted stale** relative to later work already reflected in
+`requirements.md` — still said "4 codecs," "70 unit tests," "+1.5% vs CCSDS-121" (all superseded
+by the spectral-codec work: 5 codecs, 139 unit tests, +2.8%). Freshened the evidence table and
+bottom-line summary to match `requirements.md`'s current numbers, since I was already in the file
+for the CI update and the drift was directly visible. Added an explicit honesty check I don't
+think existed before: qemu-user emulation is real BE *execution* and a meaningfully stronger
+check than static analysis, but it is **not** the actual RAD750/LEON/RISC-V target hardware or
+RTOS — flagged that this remains a real gap even after the CI job goes green, rather than letting
+"big-endian run: done" imply more than it will.
+
+Renumbered "Prioritised next steps" to put "push flight-core and review the first CI run" at #1,
+since that's now the literal unblock for several other items in the list.
+
+**Verification status:** documentation-only changes, self-consistent by careful re-read (quoted
+above). No execution involved or claimed.
+
+Files: `flight/docs/requirements.md`, `flight/docs/mission-safety.md`.
+

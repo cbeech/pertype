@@ -34,7 +34,7 @@ All five share one integer range coder, one adaptive category model, and one blo
 | R1 Lossless | `test_pfc.c` (image8/16, seq, float, columnar, odd sizes); `bench_real.py` (real CyCIF 4/4 byte-exact) | ✅ verified |
 | R2 No malloc | `src/` uses only `stddef/stdint`; `nm -uD build/libpfc.so` shows **no alloc imports** | ✅ verified |
 | R3 Bounded memory | `pfc_workmem_bytes()` = 329 096 B at defaults; tune via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` | ✅ verified |
-| R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; BE-hardware run pending (no toolchain in env) |
+| R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; **BE-hardware run: CI workflow authored (`.github/workflows/flight-ci.yml`, `bigendian` job), not yet executed** |
 | R5 No expansion | `test_pfc.c` random inputs (all codecs) stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
 | R6 Error containment | `test_pfc.c::test_fault_injection`/`::test_truncation`; `make asan` clean; **`fuzz_decode.py` 20 000 random/mutated inputs, no crash/OOB** | ✅ verified |
 | R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **10/10** incl. real CyCIF, AVIRIS spectral, flat run-mode, all 4 codecs | ✅ verified |
@@ -70,8 +70,12 @@ residual sub-percent floor is finer context modelling that only pays off with bi
   *This run found and fixed a real defect:* `pfc_bound()` under-estimated the per-block framing
   overhead for skinny incompressible images (e.g. 1×30000 8-bit), so a caller sizing to `pfc_bound`
   could get a spurious `PFC_E_BOUND`. Fixed to account for the worst-case block count; re-verified.
-- `make misra` — `cppcheck --addon=misra` gate (CI; cppcheck absent in this env).
-- `fuzz_pfc.c` — libFuzzer harness (CI; clang absent in this env).
+- `make misra` — `cppcheck --addon=misra` gate. Not run locally (cppcheck absent, and a from-source
+  build was deliberately abandoned mid-run after it contributed to a machine crash — see the
+  `misra` job in `flight-ci.yml`, which installs cppcheck from the Ubuntu archive instead of
+  building it). **Authored, not yet executed.**
+- `fuzz_pfc.c` — libFuzzer harness. Not run locally (no clang in this environment). Wired into the
+  `libfuzzer` job in `flight-ci.yml` (bounded to 120s wall-clock). **Authored, not yet executed.**
 
 ### Structural coverage (gcov, full corpus = test_pfc + stress)
 
@@ -119,11 +123,35 @@ data, so the predictor is everything. (The CCSDS-123-class bar is a per-band lea
 of the standard's adaptive spectral+spatial predictor — class-faithful, not bit-exact. Lossless
 round-trip and C↔Python cross-check verified on real AVIRIS bands.)
 
-## Open items (toolchain-gated / future)
+## CI: automating the toolchain-gated gates — `.github/workflows/flight-ci.yml`
 
-- **Big-endian hardware run** of the test suite (validates R4 end-to-end) — needs a cross toolchain
-  + qemu (e.g. `powerpc-linux-gnu-gcc` + `qemu-ppc`), absent here. The wire format is already proven canonical.
-- **MISRA report** (`cppcheck --addon=misra`) and **libFuzzer run** — harnesses wired; tools absent here.
+The three items below all needed a toolchain (cppcheck, clang, a PowerPC cross-compiler + qemu)
+absent from every environment this project has been developed in so far. Rather than install them
+on a dev machine (a from-source cppcheck build was abandoned mid-build after contributing to a
+machine crash), a CI workflow now runs all three on a fresh `ubuntu-latest` GitHub Actions runner
+(has root + apt, so prebuilt packages install cleanly — no from-source builds needed):
+
+- **`native` job** — `make check` (the full local gate: strict, ASan/UBSan, R7 cross-check,
+  decoder fuzz, 15k-case stress).
+- **`misra` job** — `apt-get install cppcheck` (prebuilt binary, not a source build) → `make misra`.
+- **`libfuzzer` job** — `apt-get install clang`, builds `fuzz_pfc.c` per its own documented
+  invocation, runs bounded to 120s wall-clock.
+- **`bigendian` job** — installs `gcc-powerpc-linux-gnu` + `qemu-user`, then (1) runs the full
+  139-check `test_pfc` suite ON emulated big-endian PowerPC hardware (proves no endian-dependent
+  bug in the codec internals — genuinely the "big-endian hardware run" this section used to list
+  as an open item), and (2) byte-compares `emit.c`'s output built once natively (LE) and once
+  cross-compiled (BE) via `cmp` (the literal R4 wire-format proof). `crosscheck`/`fuzz_decode.py`
+  and `stress.c` deliberately stay native-only: ctypes can't call into a cross-compiled foreign-
+  architecture `.so`, and `stress.c`'s 150k-iteration loop gains nothing from emulation once
+  `test_pfc` already covers BE correctness.
+
+**Status: authored and reasoned-correct by code review (every `run:` command traced against a
+verified-existing Makefile target), but NOT YET EXECUTED — no CI ran tonight (authored in an
+unattended `/overnight` run with no C toolchain, Docker, or WSL touched on the dev machine, to
+avoid retriggering a prior crash). The workflow's existence is not evidence these gates pass;
+review its first real run (after this branch is pushed) and update this document with results.**
+
+## Other open items
+
 - **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (−0.5% at band 64) — finer context modelling
   that only pays off with bigger bands (memory/containment tradeoff); a directional entropy context regressed.
-  feeding the existing arithmetic + mantissa coder).
