@@ -47,6 +47,12 @@ Flight builds cross-compile the same `src/` with the target toolchain — e.g.
 `powerpc-linux-gnu-gcc` (big-endian, RAD750-class), `sparc-gaisler-elf-gcc` (LEON), or a RISC-V
 toolchain (HPSC). The code is plain C99 with only `<stddef.h>`/`<stdint.h>`.
 
+`make emit` builds and runs `test/emit.c`, a deterministic fixture emitter (fixed LCG, no
+time/rand) used to PROVE R4's endianness-neutrality claim: build it once natively and once
+cross-compiled for a big-endian target, byte-compare the two stdout streams under a big-endian
+CI job. Identical bytes means a BE flight encoder and an LE ground decoder agree on the wire
+format — see `.github/workflows/flight-ci.yml`.
+
 ## API (see `include/pfc.h`)
 
 ```c

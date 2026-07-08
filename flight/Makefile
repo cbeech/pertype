@@ -17,7 +17,7 @@ OBJ     := $(SRC:.c=.o)
 #   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
-.PHONY: all test strict asan sharedlib crosscheck fuzz stress check clean
+.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean
 all: test
 
 # Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
@@ -66,6 +66,18 @@ asan: clean test
 misra:
 	@command -v cppcheck >/dev/null 2>&1 || { echo "cppcheck not installed (CI gate skipped)"; exit 0; }
 	cppcheck --std=c99 --addon=misra --enable=warning,style --error-exitcode=2 $(INC) src/
+
+# Deterministic fixture emitter — the R4 endianness-neutrality proof. Built once natively (host
+# endianness) and once cross-compiled for a big-endian target (CI job `bigendian`), each run's
+# stdout is byte-compared: identical bytes means a BE flight encoder and an LE ground decoder
+# agree on the wire format. `make emit` alone just builds+runs it for the host (sanity check);
+# the actual BE comparison needs a cross toolchain + qemu-user and lives in flight-ci.yml.
+build/emit: $(OBJ) test/emit.c
+	@mkdir -p build
+	$(CC) $(CSTD) $(WARN) $(CFLAGS) $(INC) $(OBJ) test/emit.c -o $@
+emit: build/emit
+	./build/emit > build/emit.out
+	@echo "wrote build/emit.out ($$(wc -c < build/emit.out) bytes)"
 
 clean:
 	rm -f src/*.o
