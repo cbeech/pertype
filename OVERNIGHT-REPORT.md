@@ -165,3 +165,61 @@ not a new task.
 Files: `.gitea/workflows/flight-ci.yml` (new), `flight/docs/requirements.md` (noted the two-copy
 setup and the extra uncertainty).
 
+---
+
+## Summary (morning wrap-up)
+
+**Goal:** implement toolchain-gated functionality for flight-core (MISRA, libFuzzer, big-endian
+cross-compile+qemu) — continuing from a prior session that ended in a machine crash mid-way
+through a from-source cppcheck build.
+
+**Environment constraint that shaped everything:** this run executed in a Windows Git Bash shell
+with **no C toolchain at all** (no gcc/cc/make) and Docker's daemon not running. Combined with
+your explicit caution twice ("computer crashed, do this later when it isn't so busy"), I ruled out
+starting Docker/WSL or any native compilation tonight. Every deliverable below is therefore
+**authored and reasoned correct by careful code review — not executed, not proven by a test run.**
+That distinction is stated explicitly in every file touched, not left implicit.
+
+### Done (all committed locally, all local-only — nothing pushed)
+
+| Commit | What |
+|---|---|
+| `18a4fb5` | Found + fixed a real compile bug in uncommitted `flight/test/emit.c` (incomplete-type instantiation); wired into the Makefile |
+| `74762d3` | Authored `.github/workflows/flight-ci.yml` — 4 jobs: native (`make check`), misra (apt cppcheck), libfuzzer (clang, bounded), bigendian (qemu-user BE execution + R4 wire-format proof) |
+| `78d634b` | Updated `requirements.md`/`mission-safety.md` to honestly reflect the new CI workflow; fixed a stray orphaned doc line; freshened stale numbers found along the way |
+| `49631f4` | Found `flight-core` actually pushes to gitea, not GitHub — added an equivalent `.gitea/workflows/flight-ci.yml` with its own flagged uncertainty |
+
+Plus: memory note (`flight-core-libpfc.md`) and `HANDOFF.md` updated outside git to point at
+tonight's state for the next session.
+
+### Verification evidence for each "done" item
+- `emit.c` fix: verified by C-language reasoning (opaque-type/constant-expression rules are
+  unambiguous), cross-checked against 3 other files in this repo that already use the correct
+  pattern successfully. NOT compiled.
+- CI workflows: verified by PyYAML structural parsing (both files), a full manual trace of every
+  `run:` command against Makefile targets/invocations I independently confirmed exist by reading
+  source, and a diff proving the two workflow copies' job bodies are identical. NOT executed.
+- Docs: verified by careful re-read for internal consistency after editing. Not applicable to
+  "execution" — these are honest-status writeups, and I checked they don't overclaim.
+
+### Parked / not attempted
+Nothing was started and abandoned tonight — the environment constraint (no toolchain, Docker
+down) was discovered during Phase 1 kickoff, before committing to any task that would have needed
+it, so the queue itself was scoped to avoid a parked item. Nothing to report here.
+
+### Decisions waiting on you
+1. **Review the 4 commits above**, especially the `emit.c` bug fix and the two CI workflow files.
+2. **Push `flight-core` to gitea (`origin`)** when ready — this is the actual unblock: it's the
+   only way any of tonight's CI-related work gets its first real execution and stops being "authored,
+   not yet executed."
+3. **After the first CI run**, come back and update `requirements.md`/`mission-safety.md` with
+   real results (pass/fail per job) — I've deliberately left every relevant claim phrased so this
+   update is a clean find-and-replace of "authored, not yet executed" with the actual outcome.
+4. **Gitea Actions may not even be enabled** on the self-hosted instance, or the runner's label/
+   network access may not match what `.gitea/workflows/flight-ci.yml` assumes — this can only be
+   resolved by trying it (or checking the gitea admin panel), not from this environment tonight.
+5. Separately, when convenient: a from-source cppcheck build was abandoned on a prior crashed
+   session in `/tmp` on the Linux/WSL side of this project — worth confirming nothing was left in
+   a bad state there, unrelated to tonight's Windows-side work.
+
+Nothing was started tonight that needs stopping (no servers, no background processes).
