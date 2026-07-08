@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential
+        run: apt-get update && apt-get install -y build-essential
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install cppcheck
-        run: sudo apt-get update && sudo apt-get install -y cppcheck
+        run: apt-get update && apt-get install -y cppcheck
       - name: MISRA-C:2012 static analysis
         working-directory: flight
         run: make misra
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install clang
-        run: sudo apt-get update && sudo apt-get install -y clang
+        run: apt-get update && apt-get install -y clang
       - name: Build the libFuzzer harness
         working-directory: flight
         run: |
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install the PowerPC (big-endian) cross toolchain + qemu-user
-        run: sudo apt-get update && sudo apt-get install -y gcc-powerpc-linux-gnu qemu-user
+        run: apt-get update && apt-get install -y gcc-powerpc-linux-gnu qemu-user
       - name: Native (little-endian) reference run of emit.c, then clean
         working-directory: flight
         run: |
