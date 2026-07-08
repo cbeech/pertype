@@ -123,13 +123,23 @@ data, so the predictor is everything. (The CCSDS-123-class bar is a per-band lea
 of the standard's adaptive spectral+spatial predictor — class-faithful, not bit-exact. Lossless
 round-trip and C↔Python cross-check verified on real AVIRIS bands.)
 
-## CI: automating the toolchain-gated gates — `.github/workflows/flight-ci.yml`
+## CI: automating the toolchain-gated gates — `flight-ci.yml`
 
 The three items below all needed a toolchain (cppcheck, clang, a PowerPC cross-compiler + qemu)
 absent from every environment this project has been developed in so far. Rather than install them
 on a dev machine (a from-source cppcheck build was abandoned mid-build after contributing to a
-machine crash), a CI workflow now runs all three on a fresh `ubuntu-latest` GitHub Actions runner
-(has root + apt, so prebuilt packages install cleanly — no from-source builds needed):
+machine crash), a CI workflow now runs all three on a fresh `ubuntu-latest` runner (has root +
+apt, so prebuilt packages install cleanly — no from-source builds needed).
+
+**Two copies, same content:** `.github/workflows/flight-ci.yml` (GitHub Actions) and
+`.gitea/workflows/flight-ci.yml` (Gitea Actions). `flight-core`'s actual push target is `origin`
+(the self-hosted gitea), not GitHub — GitHub only reads `.github/workflows/`, so without the
+gitea copy the GitHub version would sit dormant on this branch. The gitea copy carries
+**materially higher uncertainty**, flagged in its own header: whether Gitea Actions is even
+enabled on this instance, whether a runner advertises the `ubuntu-latest` label used here, and
+whether the runner has outbound internet access at all (needed for `apt-get` and to fetch
+`actions/checkout`). If any of that is wrong, every job fails visibly at its first network step —
+not silently. Keep the two files in sync by hand; job bodies are otherwise identical.
 
 - **`native` job** — `make check` (the full local gate: strict, ASan/UBSan, R7 cross-check,
   decoder fuzz, 15k-case stress).

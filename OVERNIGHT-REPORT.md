@@ -134,3 +134,34 @@ above). No execution involved or claimed.
 
 Files: `flight/docs/requirements.md`, `flight/docs/mission-safety.md`.
 
+## Task 2.5 (found mid-run, not in the original queue): add a Gitea Actions copy — DONE
+
+**Real gap found by checking, not assuming:** `git branch -vv` confirms `flight-core` tracks
+`origin/flight-core`, and `origin` is the self-hosted gitea (`ssh://git@10.0.0.246:222/...`) —
+NOT github. GitHub only reads workflow files from `.github/workflows/`. Standing project policy
+(from prior sessions) is that `flight-core` pushes to gitea only; GitHub stays untouched until
+separately, explicitly asked. So as authored, `flight-ci.yml` would sit **completely dormant** on
+this branch's actual home — a silent gap that would have made tonight's main deliverable
+functionally inert until some unrelated future decision to push to GitHub.
+
+Added `.gitea/workflows/flight-ci.yml` — verified byte-identical job bodies to the GitHub copy
+(diffed the two files; only the `paths:` filter differs, pointing each at its own file).
+Validated with the same PyYAML structural check as the original (4 jobs parse correctly).
+
+**This copy carries real, flagged uncertainty the GitHub one doesn't**, documented in its own
+header rather than glossed over: whether Gitea Actions is enabled on this instance at all, whether
+a registered runner advertises the `ubuntu-latest` label this file assumes, and whether the
+runner has outbound internet access for `apt-get`/`actions/checkout`. None of this was verifiable
+tonight (would require probing the gitea server, which I did not do, or pushing, which is
+prohibited). If any assumption is wrong, every job fails visibly and immediately at its first
+network step — not a silent or destructive failure, and a one-line fix once the actual runner
+config is known.
+
+I judged this in-scope rather than invented scope: it's the same original deliverable
+("implement toolchain-gated functionality") correctly targeting the environment this branch
+actually pushes to, discovered through legitimate review of the repo's own remote configuration —
+not a new task.
+
+Files: `.gitea/workflows/flight-ci.yml` (new), `flight/docs/requirements.md` (noted the two-copy
+setup and the extra uncertainty).
+

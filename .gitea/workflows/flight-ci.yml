@@ -1,0 +1,109 @@
+name: flight-ci
+
+# Gitea Actions copy of .github/workflows/flight-ci.yml — needed because flight-core's actual
+# push target is `origin` (this self-hosted gitea, ssh://git@10.0.0.246:222/...), NOT github;
+# GitHub only reads workflows from .github/workflows/, so without this copy the GitHub version
+# would sit dormant forever on this branch. Gitea Actions is designed for broad syntax
+# compatibility with GitHub Actions (same triggers/jobs/steps/`uses:` actions), so this is kept
+# near-identical to the GitHub copy rather than reinvented — keep the two in sync by hand.
+#
+# HIGHER UNCERTAINTY than the GitHub copy, flagged honestly rather than assumed away (authored
+# in an /overnight run with no way to probe this server's config):
+#   1. Gitea Actions may not be enabled on this instance/repo at all.
+#   2. `runs-on: ubuntu-latest` assumes a registered runner advertises that label (the common
+#      act_runner convention, mirroring GitHub's own label) — unverified for this instance.
+#   3. `apt-get update/install` and `uses: actions/*` both need the runner to reach the internet
+#      (Ubuntu archive, github.com for actions) — a self-hosted runner behind a home network may
+#      not have that. If it doesn't, every job here fails at its first network step, visibly.
+# None of this blocks landing the file: if wrong, CI logs make it immediately obvious what to fix
+# (runner labels, a local action mirror, etc.) — a much better position than not having tried.
+#
+# See flight/docs/requirements.md for what each gate verifies and flight/docs/mission-safety.md
+# for how this fits the broader qualification path.
+
+on:
+  push:
+    branches: ["flight-core", "master", "main"]
+    paths: ["flight/**", ".gitea/workflows/flight-ci.yml"]
+  pull_request:
+    paths: ["flight/**", ".gitea/workflows/flight-ci.yml"]
+  workflow_dispatch:
+
+jobs:
+  # The gates that only need a stock gcc + python3 (make check: strict -Werror build, ASan/UBSan,
+  # the independent-decoder cross-check (R7), decoder fuzz, and randomised property/edge stress).
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install numpy (test_crosscheck.py's only hard dependency)
+        run: python -m pip install --upgrade pip numpy
+      - name: make check — strict + asan + crosscheck + fuzz + stress
+        working-directory: flight
+        run: make check
+
+  # MISRA-C:2012 gate (JPL Power-of-Ten discipline). Real cppcheck from apt, not the from-source
+  # build that destabilised a dev machine earlier — apt's build is prebuilt, no local compile.
+  misra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: MISRA-C:2012 static analysis
+        working-directory: flight
+        run: make misra
+
+  # libFuzzer + ASan/UBSan on the decoder (untrusted downlink input, R6). Bounded wall-clock so
+  # the job terminates on its own; any crash/leak found within that window fails the job.
+  libfuzzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build the libFuzzer harness
+        working-directory: flight
+        run: |
+          mkdir -p build
+          clang -std=c99 -g -O1 -fsanitize=address,undefined,fuzzer -Iinclude \
+                src/*.c test/fuzz_pfc.c -o build/fuzz_pfc
+      - name: Fuzz the decoder for 2 minutes
+        working-directory: flight
+        run: ./build/fuzz_pfc -max_total_time=120 -max_len=65536
+
+  # Big-endian validation (R4): cross-compile for 32-bit big-endian PowerPC (RAD750-class) and
+  # run under qemu-user. Two checks, both needed: (1) the full lossless test suite executed ON
+  # emulated BE hardware — proves no endian-dependent bug in the codec internals; (2) the
+  # deterministic emit.c fixture built once natively (LE) and once cross-compiled (BE), byte-
+  # compared — proves the WIRE FORMAT itself is canonical regardless of the encoding host's
+  # endianness, which is the literal R4 claim.
+  bigendian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the PowerPC (big-endian) cross toolchain + qemu-user
+        run: sudo apt-get update && sudo apt-get install -y gcc-powerpc-linux-gnu qemu-user
+      - name: Native (little-endian) reference run of emit.c, then clean
+        working-directory: flight
+        run: |
+          make build/emit
+          ./build/emit > /tmp/emit-le.out
+          make clean
+      - name: Cross-compile the test suite + emit.c for big-endian PowerPC (static)
+        working-directory: flight
+        run: make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' build/test_pfc build/emit
+      - name: Run the full lossless test suite on emulated big-endian hardware
+        working-directory: flight
+        run: qemu-ppc ./build/test_pfc
+      - name: Cross-endian wire-format proof (R4) — BE encoder output must match the LE reference
+        working-directory: flight
+        run: |
+          qemu-ppc ./build/emit > /tmp/emit-be.out
+          cmp /tmp/emit-le.out /tmp/emit-be.out
+          echo "R4 VERIFIED: big-endian and little-endian encoders produce byte-identical output"
