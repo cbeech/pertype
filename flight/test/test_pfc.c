@@ -233,6 +233,15 @@ static void test_spectral_corruption(void)
         s[4] = 1; s[5] = 5; s[6] = 16; s[8] = 0;     /* width 0 -> corrupt */
         CHECK(pfc_decode(s, 28, d2, 64, &out, g_work) == PFC_E_CORRUPT, "spectral decode bad dims");
     }
+    {
+        /* Regression for a real libFuzzer-found heap-buffer-overflow: a 20-23 byte input passes
+         * the top-level pfc_decode() dispatcher's generic PFC_HDR(20)-byte check, but SPECTRAL's
+         * real header is PFC_SPEC_HDR(24) bytes -- pfc_spectral_decode used to read s[20..23]
+         * unconditionally, one byte past a 20-byte buffer. Mirrors the exact crashing input. */
+        uint8_t s[20] = {'P','F','C','1', 1, 5, 0xff,0x01,0xff,0x21,0xff,0x00,0xff,0xfb,0x0a,0xf5,0x01,0x95,0x50,0x43};
+        CHECK(pfc_decode(s, sizeof s, d2, 64, &out, g_work) == PFC_E_CORRUPT,
+              "spectral truncated-header (20B) rejected, not OOB-read");
+    }
 }
 
 static void test_fault_injection(void)

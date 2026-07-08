@@ -11,7 +11,7 @@ coverage) still demands.
 |----------|----------|
 | Lossless round-trip | 139 unit + **15 063 randomised/edge cases** across all 5 codecs (image/seq/float/columnar/spectral) + real CyCIF + real AVIRIS hyperspectral; 0 failures |
 | No expansion (`pfc_bound`) | property-checked on adversarial inputs — **two real under-estimate bugs found and fixed** (a skinny-image case, then a many-small-blocks spectral-cube case, both caught by the stress harness) |
-| Error containment | bit-flip + truncation tests, **170 000 fuzz iterations**, all under **ASan + UBSan**, no OOB/crash |
+| Error containment | bit-flip + truncation tests, **170 000 Python-harness fuzz iterations** under ASan/UBSan found nothing; the **real C/libFuzzer CI run found a genuine heap-buffer-overflow within ~2 minutes** (SPECTRAL header-size validation gap — see below) — found and fixed, but the honest lesson is coverage-guided fuzzing catches what blind random fuzzing doesn't, and this was the *first* CI run |
 | No dynamic allocation | compiled `.so` imports **zero** alloc symbols; no recursion |
 | Bounded memory | single caller-owned `pfc_ctx` (~330 KB at defaults), compile-time sized |
 | Determinism | encode-twice byte-identical (checked every stress case) |
@@ -28,10 +28,13 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   then satisfy the required activities — plans, reviews, audits, configuration management.
 - **Coding-standard compliance report**: MISRA-C:2012 + JPL *Power of Ten*, run with a qualified
   analyzer (Coverity / LDRA / Polyspace / cppcheck-MISRA), every finding resolved or formally
-  deviated. Wired as `make misra` and now automated in CI (`.github/workflows/flight-ci.yml`,
-  `misra` job, installs cppcheck from the Ubuntu archive) — **authored, not yet executed**; a
-  from-source cppcheck build was attempted on a dev machine and abandoned mid-build after
-  contributing to a crash, which is exactly why this now runs on a CI runner instead.
+  deviated. Wired as `make misra` and automated in CI (`.github/workflows/flight-ci.yml`, `misra`
+  job, installs cppcheck from the Ubuntu archive) — a from-source cppcheck build was attempted on
+  a dev machine and abandoned mid-build after contributing to a crash, which is exactly why this
+  runs on a CI runner instead. **Executed for real on the first run:** `cppcheck --addon=misra`
+  ran cleanly (9/9 files) and correctly failed the build on real findings (misra-c2012-17.8,
+  misra-c2012-2.5, misra-c2012-8.7 ×4 — see `requirements.md` for the full list). **Triage not yet
+  done** — each finding needs to become a real fix, a justified suppression, or a formal deviation.
 - **Bidirectional requirements traceability**: requirement → design → code → test → result, with
   test *procedures* and review records. We have a starter matrix (`requirements.md`); flight needs
   the full, audited chain.
@@ -55,10 +58,11 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   decoder; a genuine **big-endian *execution*** run (not just a format proof) is now automated in
   CI (`flight-ci.yml`, `bigendian` job): the full 139-check test suite runs on emulated big-endian
   PowerPC via `qemu-user`, plus a byte-comparison of a deterministic fixture built once natively
-  (LE) and once cross-compiled (BE) — **authored, not yet executed; results pending its first
-  run**. qemu-user emulation is real BE *execution*, a meaningfully stronger check than static
-  analysis, but it is still not the actual RAD750/LEON/RISC-V target hardware or RTOS — that
-  remains a real gap even once this CI job goes green.
+  (LE) and once cross-compiled (BE). **Executed for real on the first run and PASSED**: all 139
+  checks green under emulated BE execution, and the LE/BE `emit.c` outputs matched byte-for-byte.
+  qemu-user emulation is real BE *execution*, a meaningfully stronger check than static analysis,
+  but it is still not the actual RAD750/LEON/RISC-V target hardware or RTOS — that remains a real
+  gap even with this CI job green.
 - **WCET and stack-depth analysis**: bound worst-case execution time per block on the target and
   prove maximum stack usage (no recursion → tractable). Encode throughput must clear the instrument
   data rate with margin.
@@ -74,16 +78,22 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
-  on every finding. 170k Python-harness iterations plus a proper libFuzzer+ASan+UBSan run are now
-  wired into CI (`flight-ci.yml`, `libfuzzer` job — bounded to 120s per run for now, a smoke test,
-  not a campaign) — **authored, not yet executed**. Raising the bound and persisting a corpus
-  across runs (rather than starting fresh each CI run) is the natural next step once it's green.
+  on every finding. A proper libFuzzer+ASan+UBSan run is wired into CI (`flight-ci.yml`,
+  `libfuzzer` job — bounded to 120s per run for now, a smoke test, not a campaign), and **on its
+  first execution it found a real heap-buffer-overflow within ~2 minutes** (SPECTRAL header-size
+  validation gap, found+fixed — see `requirements.md`). This is exactly the value case for this
+  gate: 170k iterations of the *Python* fuzz harness found nothing over the same class of input;
+  coverage-guided libFuzzer found a real bug almost immediately. Raising the bound and persisting a
+  corpus across runs (rather than starting fresh each time) is the natural next step.
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
-1. **Push `flight-core` and review the first `flight-ci.yml` run** — the `native`/`misra`/
-   `libfuzzer`/`bigendian` jobs are authored but unexecuted; this is the immediate unblock for
-   items 2–4 below and for closing out several "authored, not yet executed" statuses in this doc.
+1. **Done: pushed and reviewed the first `flight-ci.yml` run.** Results: `bigendian` passed for
+   real; `misra` ran correctly and surfaced real findings (triage still needed); `libfuzzer` found
+   and fixed a real heap-buffer-overflow in the SPECTRAL codec; `native` hit two environment bugs
+   (`sudo` missing, `setup-python` incompatible with this self-hosted runner), both fixed. **Next:**
+   push the fixes and confirm `native` reaches a fully green `make check`, and triage the MISRA
+   findings (item 3 below covers coverage; MISRA triage itself isn't separately listed — add it).
 2. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
 3. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions (MISRA itself is now automated — see #1).

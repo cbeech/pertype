@@ -155,11 +155,55 @@ not silently. Keep the two files in sync by hand; job bodies are otherwise ident
   architecture `.so`, and `stress.c`'s 150k-iteration loop gains nothing from emulation once
   `test_pfc` already covers BE correctness.
 
-**Status: authored and reasoned-correct by code review (every `run:` command traced against a
-verified-existing Makefile target), but NOT YET EXECUTED — no CI ran tonight (authored in an
-unattended `/overnight` run with no C toolchain, Docker, or WSL touched on the dev machine, to
-avoid retriggering a prior crash). The workflow's existence is not evidence these gates pass;
-review its first real run (after this branch is pushed) and update this document with results.**
+**Status: pushed and executed for real (first run: #15/#16 on the `ugreen-nas` Gitea Actions
+runner).** The overnight-authored workflow was reasoned-correct but unexecuted; the first actual
+run surfaced real, useful results — both environment bugs in the workflow itself and a genuine
+memory-safety bug in the code:
+
+- **`bigendian` — ✅ PASSED for real.** The full 139-check `test_pfc` suite ran on emulated
+  big-endian PowerPC via `qemu-ppc` and the `emit.c` LE-vs-BE byte-comparison matched. This is the
+  actual R4 execution proof, not just the wire-format reasoning — genuinely closes that open item.
+  Also confirms the runner has real outbound internet access (apt archive + GitHub for actions),
+  resolving the biggest flagged unknown from the overnight authoring.
+- **Two environment bugs found + fixed:** (1) the runner's `ubuntu-latest` label maps to
+  `node:20-bookworm` (act's own default for an unconfigured self-hosted runner, not a real Ubuntu
+  image) — it runs as root already and has no `sudo` binary, so every job died in ~10s on the
+  first `sudo apt-get` line; fixed by dropping `sudo` (jobs run as root in this container). (2)
+  `actions/setup-python@v5` can't find a matching Python 3.12 build for this runner's self-
+  reported platform (a known friction point for `act`-based self-hosted runners against
+  GitHub's hosted-runner-oriented version manifest); fixed by installing `python3`/`python3-numpy`
+  directly via `apt-get` instead (Debian-based image, no PyPI/manifest lookup needed).
+- **`misra` — ran successfully end-to-end** (`apt-get install cppcheck` → `make misra`, `9/9 files
+  checked`) and correctly **failed the build on real MISRA-C:2012 findings**: misra-c2012-17.8
+  (loop-counter modification, `pfc_spectral.c`/elsewhere), misra-c2012-2.5 (the `PFC_WORKMEM_BYTES`
+  macro, `include/pfc.h`), misra-c2012-8.7 ×4 (functions cppcheck's per-file analysis can't see are
+  used cross-file — `pfc_image_encode_band`/`store_raw`/`load_raw`/`decode_band` — likely false
+  positives from single-TU analysis rather than real findings, needs triage either way). **The gate
+  itself works correctly; these findings are the actual MISRA-compliance backlog and need triage
+  (real fix / suppress with justification / formal deviation) — not yet done.**
+- **`libfuzzer` — found a real heap-buffer-overflow within ~2 minutes of fuzzing.** ASan:
+  `SUMMARY: AddressSanitizer: heap-buffer-overflow flight/src/pfc_internal.h:134:22 in
+  pfc_get_u32`, called from `pfc_spectral_decode` (`pfc_spectral.c:219`). Root cause: SPECTRAL's
+  header is `PFC_SPEC_HDR` (24 bytes) but the top-level `pfc_decode()` dispatcher only validates
+  `src_len >= PFC_HDR` (20 bytes) before routing to a codec — correct for the other four codecs,
+  whose header *is* exactly `PFC_HDR`, but insufficient for SPECTRAL. A 20–23-byte crafted input
+  (`PFC1`+ver+codec=5+garbage) passed that check and `pfc_spectral_decode` read `s[20..23]`
+  unconditionally, one byte past the buffer. **Fixed:** added an explicit
+  `if (len < PFC_SPEC_HDR) return PFC_E_CORRUPT;` at the top of `pfc_spectral_decode`, before any
+  header byte is touched — matches how the other codecs rely on (and satisfy) the dispatcher's
+  generic check, since only SPECTRAL's header size differs. Added a regression test in
+  `test_pfc.c` (`test_spectral_corruption`) using the exact crashing input. **Notable:** the
+  Python-based `fuzz_decode.py` ran 20,000 iterations in the earlier overnight session and found
+  nothing — libFuzzer's coverage-guided mutation found this in under 2 minutes, a concrete
+  demonstration of why the C/ASan/libFuzzer gate (not just the Python harness) is worth having.
+- **`native` — blocked on the `setup-python` bug above** (fixed in this same round, not yet
+  re-verified). Should now reach `make check` on the next run — the SPECTRAL fix and the
+  `misra`/coverage backlog still need addressing before `make check`'s `misra`-independent parts
+  (strict, asan, crosscheck, fuzz, stress) can be trusted to reflect a fully green state.
+
+**Next run should be checked, and this section updated again** — `native` behavior after the
+python fix, and whether the SPECTRAL bounds-check fix resolves `libfuzzer` cleanly, are both
+still open as of this writing.
 
 ## Other open items
 

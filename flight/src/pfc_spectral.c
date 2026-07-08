@@ -212,14 +212,23 @@ pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *ds
 pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
                                size_t *out, pfc_ctx *w, int *corrupt)
 {
-    uint8_t bd = s[6];
-    uint32_t width = pfc_get_u32(&s[8]);
-    uint32_t height = pfc_get_u32(&s[12]);
-    uint32_t count = pfc_get_u32(&s[16]);
-    uint32_t band = pfc_get_u32(&s[20]);
-    uint8_t es;
-    size_t pos = PFC_SPEC_HDR;
-    uint32_t z, y0;
+    uint8_t bd, es;
+    uint32_t width, height, count, band, z, y0;
+    size_t pos;
+
+    /* SPECTRAL's header is PFC_SPEC_HDR (24) bytes, larger than the generic PFC_HDR (20) the
+     * top-level pfc_decode() dispatcher checks before routing here — that check alone is NOT
+     * sufficient for this codec (found via libFuzzer: a 20-23 byte crafted input reads past the
+     * buffer at s[20..23] below). Every other codec's header is exactly PFC_HDR, so they can rely
+     * on the dispatcher's check alone; this one cannot. */
+    if (len < PFC_SPEC_HDR) { return PFC_E_CORRUPT; }
+
+    bd = s[6];
+    width = pfc_get_u32(&s[8]);
+    height = pfc_get_u32(&s[12]);
+    count = pfc_get_u32(&s[16]);
+    band = pfc_get_u32(&s[20]);
+    pos = PFC_SPEC_HDR;
 
     if ((bd != 8u) && (bd != 16u)) { return PFC_E_CORRUPT; }
     if ((width == 0u) || (height == 0u) || (count == 0u) || (band == 0u) || (width > PFC_MAX_COLS)) {
