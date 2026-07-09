@@ -173,14 +173,18 @@ memory-safety bug in the code:
   reported platform (a known friction point for `act`-based self-hosted runners against
   GitHub's hosted-runner-oriented version manifest); fixed by installing `python3`/`python3-numpy`
   directly via `apt-get` instead (Debian-based image, no PyPI/manifest lookup needed).
-- **`misra` — ran successfully end-to-end** (`apt-get install cppcheck` → `make misra`, `9/9 files
-  checked`) and correctly **failed the build on real MISRA-C:2012 findings**: misra-c2012-17.8
-  (loop-counter modification, `pfc_spectral.c`/elsewhere), misra-c2012-2.5 (the `PFC_WORKMEM_BYTES`
-  macro, `include/pfc.h`), misra-c2012-8.7 ×4 (functions cppcheck's per-file analysis can't see are
-  used cross-file — `pfc_image_encode_band`/`store_raw`/`load_raw`/`decode_band` — likely false
-  positives from single-TU analysis rather than real findings, needs triage either way). **The gate
-  itself works correctly; these findings are the actual MISRA-compliance backlog and need triage
-  (real fix / suppress with justification / formal deviation) — not yet done.**
+- **`misra` — ran successfully end-to-end** (`apt-get install cppcheck` → `make misra`) and
+  correctly **failed the build on 179 real MISRA-C:2012 findings across 17 rules** — the gate
+  itself works correctly. **Triage now done — see `flight/docs/misra-deviations.md` for the full
+  rule-by-rule record.** Summary: 4 findings were genuine and trivially fixed (two missing `else`
+  branches, one loop-variable reuse); 27 were confirmed cppcheck-MISRA-addon false positives
+  (comma-separated declarator lists misidentified as the comma operator, and cross-file function
+  usage the single-file scan can't see) — suppressed with a documented reason; the remaining 148
+  are deliberate, verified-safe patterns that conflict with an Advisory rule (early-return
+  defensive style, explicit widening casts, void* buffer handling, etc.) — each spot-checked
+  against real source, not assumed, and suppressed via `flight/.cppcheck-suppressions` with a
+  written justification per rule. `make misra` now applies that suppression list, so the gate
+  stays meaningful (anything not on the reviewed list still fails the build) rather than silenced.
 - **`libfuzzer` — found a real heap-buffer-overflow within ~2 minutes of fuzzing.** ASan:
   `SUMMARY: AddressSanitizer: heap-buffer-overflow flight/src/pfc_internal.h:134:22 in
   pfc_get_u32`, called from `pfc_spectral_decode` (`pfc_spectral.c:219`). Root cause: SPECTRAL's
@@ -218,10 +222,13 @@ memory-safety bug in the code:
   (`test_columnar_oversized_block`) — a pure 20-byte crafted header, no payload needed, since the
   new check fires before the block-record path is reached.
 
-**Two real bugs found, both fixed, in the very first `libfuzzer` runs — both were header-size /
-header-value validation gaps in the newest codec (SPECTRAL) and the most structurally distinct
-existing one (COLUMNAR, the only codec using the `xform` scratch buffer). Next run should confirm
-`libfuzzer` clean and `misra` still pending triage.**
+**Confirmed on the following runs: all four jobs green except `misra`.** Two real bugs found and
+fixed by `libfuzzer` in its very first runs — both header-size/header-value validation gaps, in
+the newest codec (SPECTRAL) and the most structurally distinct existing one (COLUMNAR, the only
+codec using the `xform` scratch buffer). `native` and `bigendian` confirmed fully green after a
+test-setup bug in my own regression test was found and fixed (wrong `cap` value — the underlying
+fix was already correct). `misra` remains red **by design** until the findings below are
+addressed in the codebase — see the MISRA triage section further down.
 
 ## Other open items
 

@@ -62,10 +62,15 @@ asan: CFLAGS += -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 asan: clean test
 
 # MISRA-C:2012 static analysis gate (CI). Requires cppcheck with the MISRA addon.
+# --suppressions-list applies the project's reviewed deviation policy (see .cppcheck-suppressions
+# and docs/misra-deviations.md) -- confirmed tool-limitation false positives and deliberate,
+# verified-safe patterns that conflict with an Advisory rule. Anything NOT in that list still
+# fails the build; this gate stays meaningful, not silenced wholesale.
 .PHONY: misra
 misra:
 	@command -v cppcheck >/dev/null 2>&1 || { echo "cppcheck not installed (CI gate skipped)"; exit 0; }
-	cppcheck --std=c99 --addon=misra --enable=warning,style --error-exitcode=2 $(INC) src/
+	cppcheck --std=c99 --addon=misra --enable=warning,style --error-exitcode=2 \
+		--suppressions-list=.cppcheck-suppressions $(INC) src/
 
 # Deterministic fixture emitter — the R4 endianness-neutrality proof. Built once natively (host
 # endianness) and once cross-compiled for a big-endian target (CI job `bigendian`), each run's

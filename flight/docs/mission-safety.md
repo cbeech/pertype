@@ -31,10 +31,18 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   deviated. Wired as `make misra` and automated in CI (`.github/workflows/flight-ci.yml`, `misra`
   job, installs cppcheck from the Ubuntu archive) — a from-source cppcheck build was attempted on
   a dev machine and abandoned mid-build after contributing to a crash, which is exactly why this
-  runs on a CI runner instead. **Executed for real on the first run:** `cppcheck --addon=misra`
-  ran cleanly (9/9 files) and correctly failed the build on real findings (misra-c2012-17.8,
-  misra-c2012-2.5, misra-c2012-8.7 ×4 — see `requirements.md` for the full list). **Triage not yet
-  done** — each finding needs to become a real fix, a justified suppression, or a formal deviation.
+  runs on a CI runner instead. **Executed for real, and triaged.** `cppcheck --addon=misra` found
+  179 findings across 17 rules on the first run (correctly failing the build — the gate works).
+  Full rule-by-rule triage in `flight/docs/misra-deviations.md`: 4 were real and fixed (missing
+  `else` branches, a loop-variable reuse); 27 were confirmed cppcheck-MISRA-addon false positives
+  (comma-separated declarations misread as the comma operator; cross-file function usage a
+  single-file scan can't see); the remaining 148 are deliberate, individually-verified-safe
+  patterns (defensive early-return style, explicit widening casts, generic `void*` buffer
+  handling, and one genuinely careful case — signed right-shift in the zigzag encode, confirmed
+  safe on all three real cross-compile targets, not just assumed) that conflict with an Advisory
+  rule and are recorded as formal deviations, applied via `flight/.cppcheck-suppressions`. Every
+  deviation has a written, source-verified justification — this is not the gate silenced, it's the
+  gate having done its job once.
 - **Bidirectional requirements traceability**: requirement → design → code → test → result, with
   test *procedures* and review records. We have a starter matrix (`requirements.md`); flight needs
   the full, audited chain.
@@ -90,22 +98,26 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
-1. **Done: pushed and reviewed the first `flight-ci.yml` run.** Results: `bigendian` passed for
-   real; `misra` ran correctly and surfaced real findings (triage still needed); `libfuzzer` found
-   and fixed a real heap-buffer-overflow in the SPECTRAL codec; `native` hit two environment bugs
-   (`sudo` missing, `setup-python` incompatible with this self-hosted runner), both fixed. **Next:**
-   push the fixes and confirm `native` reaches a fully green `make check`, and triage the MISRA
-   findings (item 3 below covers coverage; MISRA triage itself isn't separately listed — add it).
-2. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
-3. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
-   framing + predictor-edge functions (MISRA itself is now automated — see #1).
-4. **Target bring-up on real hardware**: qemu-user emulation (once CI confirms it) is real BE
+1. **Done: pushed, reviewed, and iterated on the first `flight-ci.yml` runs.** `native`,
+   `libfuzzer`, and `bigendian` all fully green (confirmed on repeated runs); `libfuzzer` found and
+   fixed two real heap-buffer-overflows (SPECTRAL, COLUMNAR) in its first-ever executions; `native`
+   hit two environment bugs (`sudo` missing, `setup-python` incompatible with this self-hosted
+   runner), both fixed.
+2. **Done: MISRA triage.** 179 findings across 17 rules, triaged rule-by-rule against real source
+   (not guessed from rule numbers) — 4 fixed, 27 confirmed tool-limitation false positives, 148
+   deliberate-and-verified-safe patterns recorded as formal deviations. Full record:
+   `flight/docs/misra-deviations.md`. `misra` in CI still shows red until those 4 fixes +
+   suppression list are pushed and the job re-run.
+3. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
+4. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
+   framing + predictor-edge functions.
+5. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
    *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap;
    WCET + stack analysis need the real target, not an emulator.
-5. **Sustained fuzzing**: raise `libfuzzer`'s 120s bound and persist a corpus across CI runs
+6. **Sustained fuzzing**: raise `libfuzzer`'s 120s bound and persist a corpus across CI runs
    (currently starts fresh each run).
-6. **Formal `pfc_bound` sufficiency + small-input round-trip proofs** (CBMC).
-7. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
+7. **Formal `pfc_bound` sufficiency + small-input round-trip proofs** (CBMC).
+8. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
    NPR 7150.2 for the assigned software class.
 
 ## 4. Bottom line

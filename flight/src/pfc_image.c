@@ -201,7 +201,7 @@ void pfc_image_encode_band(pfc_rc_enc *e, pfc_ctx *w, const void *src,
             int err;
             image_ctx(src, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
             px += sign * (int)w->bias_c[bq];
-            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
+            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; } else { /* already in range */ }
             err = ix - px;
             if (sign < 0) { err = -err; }
             pfc_resid_encode(e, w, emc, err);
@@ -248,7 +248,7 @@ void pfc_image_decode_band(pfc_rc_dec *d, pfc_ctx *w, void *dst,
             int errf, err, ix;
             image_ctx(dst, bitdepth, width, x, y, y0, t1, &emc, &bq, &sign);
             px += sign * (int)w->bias_c[bq];
-            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; }
+            if (px < 0) { px = 0; } else if (px > maxval) { px = maxval; } else { /* already in range */ }
             errf = pfc_resid_decode(d, w, emc);
             bias_update(w, bq, errf);
             err = (sign < 0) ? -errf : errf;
@@ -403,11 +403,15 @@ pfc_status pfc_image_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
             fill_band(dst, bitdepth, width, y0, y1);
             *corrupt = 1;
             if (pos == before) {
-                /* truncation: fill all remaining bands, stop reading */
-                for (y0 = y1; y0 < height; y0 += band) {
-                    uint32_t yy = y0 + band;
+                /* truncation: fill all remaining bands, stop reading. Uses its own counter (yf)
+                 * rather than reusing the outer loop's y0, so this loop is self-contained and
+                 * well-formed on its own terms even though we break out of the outer loop right
+                 * after (behaviour is unchanged either way; this is purely for clarity). */
+                uint32_t yf;
+                for (yf = y1; yf < height; yf += band) {
+                    uint32_t yy = yf + band;
                     if (yy > height) { yy = height; }
-                    fill_band(dst, bitdepth, width, y0, yy);
+                    fill_band(dst, bitdepth, width, yf, yy);
                 }
                 break;
             }

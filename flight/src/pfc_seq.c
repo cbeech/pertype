@@ -58,6 +58,7 @@ static void raw_load(const uint8_t *in, void *dst, uint8_t elem, uint8_t is_sign
         }
         if (is_signed && (elem == 1u)) { v = (uint32_t)(int32_t)(int8_t)(uint8_t)v; }
         else if (is_signed && (elem == 2u)) { v = (uint32_t)(int32_t)(int16_t)(uint16_t)v; }
+        else { /* unsigned, or elem==4 (already full-width): no sign-extension needed */ }
         s_set(dst, elem, i0 + i, (int32_t)v);
     }
 }
