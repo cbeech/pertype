@@ -14,6 +14,13 @@ case. cppcheck's free MISRA addon can't print the licensed rule *text* (`use --r
 descriptions below are from the MISRA-C:2012 rule set's well-known public numbering, cross-checked
 against the actual source at real occurrences of each.
 
+**Verified working on the next CI run**: with the suppressions applied, zero `misra-c2012-*`
+findings remained. `--enable=warning,style` (needed for the MISRA addon) also turns on cppcheck's
+own general checks, which had been masked by the sheer volume of MISRA findings — once those
+cleared, three more surfaced and were triaged the same way (see "Non-MISRA cppcheck findings"
+below): one real, safe fix; two more suppressions (one an exact duplicate of a MISRA finding
+already justified here, under a different cppcheck error ID).
+
 ## Fixed (4 findings, real and trivially correctable)
 
 | Rule | Where | Fix |
@@ -73,3 +80,16 @@ are bugs; each is a deliberate choice with a specific reason, given here.
   the well-established public MISRA-C:2012 numbering; a full commercial audit (Coverity/LDRA/
   Polyspace with the licensed rule text) would be the real qualification-grade version of this
   document.
+
+## Non-MISRA cppcheck findings (surfaced after the MISRA list was suppressed)
+
+`--enable=warning,style` is required for the MISRA addon to run, but it also enables cppcheck's
+own general-purpose checks. These were invisible in the noise of 179 MISRA findings; once those
+were suppressed, three more findings appeared on the next run.
+
+| Check | Where | Verdict |
+|-------|-------|---------|
+| `duplicateCondition` | `pfc_spectral.c`, `spec_predict` | **Real, fixed.** `if (haveW && haveN) { dNW = ...; }` immediately followed by a second, identical `if (haveW && haveN) { ... }` that uses `dNW` — nothing between them could change `haveW`/`haveN`, so the condition was genuinely evaluated twice for no reason. Merged into one `if` block: compute `dNW` where it's used, inside the single surviving condition. Not a bug (both branches were correctly gated), just a real, safe, worthwhile cleanup. |
+| `shiftTooManyBitsSigned` | `pfc_model.c`, `pfc_zigzag` | **Suppressed — exact duplicate of misra-c2012-10.1 above.** Same line (`n >> 31`), same code, same justification (verified safe on all three real cross-compile targets); cppcheck's generic portability check and the MISRA addon both flag it, under different error IDs. |
+| `variableScope` | `pfc_columnar.c`, `pfc_columnar_decode` | **Suppressed — deliberate.** `uint32_t c;` is declared at the top of the per-block loop (matching every other local used anywhere in that loop) but only read inside one nested branch. Narrowing its scope would require declaring it partway through the block — exactly the declaration-after-statement pattern this codebase deliberately avoids (corrected twice in the same session that wrote this fix, specifically to keep all locals declared at the top of the block they're in). Kept as-is for consistency with that convention. |
+

@@ -71,3 +71,20 @@ misra-c2012-14.4
 # PFC_WORKMEM_BYTES (include/pfc.h) looks unused because it's PUBLIC API for external callers,
 # not used internally by the library itself -- intentional, not dead code.
 misra-c2012-2.5
+
+# --enable=warning,style also turns on cppcheck's own (non-MISRA) general checks, which surfaced
+# two more findings once the misra-c2012-* list above was applied and stopped masking them:
+
+# Exact duplicate of the misra-c2012-10.1 finding already justified above -- pfc_model.c's
+# pfc_zigzag, `n >> 31` on signed int32_t. Same code, same reasoning, different cppcheck error ID
+# (cppcheck's generic portability check vs. the MISRA addon's rule numbering for the same issue).
+shiftTooManyBitsSigned
+
+# pfc_columnar.c: a `uint32_t c;` declared at the top of the per-block loop (alongside every other
+# local used anywhere in that loop body) is only actually used inside one nested branch. cppcheck
+# suggests narrowing its scope; doing so would mean declaring it partway through the block, which
+# is exactly the declaration-after-statement pattern this codebase deliberately avoids (corrected
+# twice in this same session to keep all locals declared at the top of the block they're in) --
+# kept as-is for consistency with that convention rather than narrowed for this one variable.
+variableScope
+
