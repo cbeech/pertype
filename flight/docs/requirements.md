@@ -196,14 +196,32 @@ memory-safety bug in the code:
   Python-based `fuzz_decode.py` ran 20,000 iterations in the earlier overnight session and found
   nothing — libFuzzer's coverage-guided mutation found this in under 2 minutes, a concrete
   demonstration of why the C/ASan/libFuzzer gate (not just the Python harness) is worth having.
-- **`native` — blocked on the `setup-python` bug above** (fixed in this same round, not yet
-  re-verified). Should now reach `make check` on the next run — the SPECTRAL fix and the
-  `misra`/coverage backlog still need addressing before `make check`'s `misra`-independent parts
-  (strict, asan, crosscheck, fuzz, stress) can be trusted to reflect a fully green state.
+- **`native` — ✅ FIXED and confirmed on the next run.** The `setup-python` fix (installing
+  `python3`/`python3-numpy` via `apt-get` instead) worked: `make check` — strict `-Werror` build,
+  ASan/UBSan, the R7 independent-decoder cross-check, decoder fuzz, and 15k-case stress — all
+  passed in ~73s on the second run.
+- **`libfuzzer` — found a SECOND real bug immediately after the SPECTRAL fix, in the very same
+  120s run.** With the SPECTRAL crash gone, fuzzing continued (visible in the log: coverage climbed
+  past 1,088,000 executions) and found a heap-buffer-overflow in `pfc_columnar_decode`
+  (`pfc_columnar.c:150`, both ASan and a UBSan `index 65536 out of bounds for
+  uint8_t[65536]` on the same line). Root cause: `pfc_columnar_encode` always derives
+  `block_recs = PFC_BLOCK_BYTES / rw` so `rw * block_recs` can never exceed the fixed
+  `w->xform[PFC_BLOCK_BYTES]` scratch buffer it's transposed through — but
+  `pfc_columnar_decode` reads `block_recs` straight from the untrusted stream header with **no
+  upper-bound check at all**. A crafted header (`rw=2, cnt=block_recs=40000` → `block_bytes =
+  80000 > 65536`) writes past the buffer. Checked `pfc_seq_decode` for the same class of bug —
+  it's safe, because it writes directly into the caller's already-capacity-checked `dst` and never
+  uses the shared `xform` scratch buffer at all; `pfc_columnar_decode` is the only codec that
+  transposes through `xform`, so it's the only one exposed. **Fixed:** added
+  `if (block_bytes > PFC_BLOCK_BYTES) return PFC_E_CORRUPT;` right after computing `block_bytes`
+  each iteration, before any block-record read is even attempted. Added a regression test
+  (`test_columnar_oversized_block`) — a pure 20-byte crafted header, no payload needed, since the
+  new check fires before the block-record path is reached.
 
-**Next run should be checked, and this section updated again** — `native` behavior after the
-python fix, and whether the SPECTRAL bounds-check fix resolves `libfuzzer` cleanly, are both
-still open as of this writing.
+**Two real bugs found, both fixed, in the very first `libfuzzer` runs — both were header-size /
+header-value validation gaps in the newest codec (SPECTRAL) and the most structurally distinct
+existing one (COLUMNAR, the only codec using the `xform` scratch buffer). Next run should confirm
+`libfuzzer` clean and `misra` still pending triage.**
 
 ## Other open items
 

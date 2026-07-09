@@ -244,6 +244,26 @@ static void test_spectral_corruption(void)
     }
 }
 
+static void test_columnar_oversized_block(void)
+{
+    /* Regression for a real libFuzzer-found heap-buffer-overflow: unlike the encoder (which always
+     * derives block_recs = PFC_BLOCK_BYTES / rw, so rw*block_recs never exceeds the fixed xform
+     * scratch buffer), the decoder read block_recs straight from the untrusted stream header with
+     * no upper bound. rw=2, block_recs=cnt=40000 -> nr*rw=80000 > PFC_BLOCK_BYTES(65536), which
+     * used to write w->xform[65536] (UBSan: index out of bounds; ASan: heap-buffer-overflow,
+     * pfc_columnar.c:150). No block-record payload is needed: the new check fires purely from the
+     * 20-byte header, before pfc_block_read is ever attempted. */
+    uint8_t s[20], d2[64]; size_t out = 0;
+    memset(s, 0, sizeof s);
+    s[0] = 'P'; s[1] = 'F'; s[2] = 'C'; s[3] = '1';
+    s[4] = 1; s[5] = (uint8_t)PFC_CODEC_COLUMNAR;
+    s[8] = 2u;                                  /* rw = 2 */
+    s[12] = 0x40u; s[13] = 0x9Cu;                /* cnt = 40000 (LE) */
+    s[16] = 0x40u; s[17] = 0x9Cu;                /* block_recs = 40000 (LE) */
+    CHECK(pfc_decode(s, sizeof s, d2, 64, &out, g_work) == PFC_E_CORRUPT,
+          "columnar oversized block_recs rejected, not OOB-write");
+}
+
 static void test_fault_injection(void)
 {
     uint32_t w = 200u, h = 120u; uint8_t bd = 16u;
@@ -424,6 +444,7 @@ int main(void)
     test_columnar();
     test_spectral();
     test_spectral_corruption();
+    test_columnar_oversized_block();
     test_fault_injection();
     test_truncation();
     test_validation();

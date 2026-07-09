@@ -11,7 +11,7 @@ coverage) still demands.
 |----------|----------|
 | Lossless round-trip | 139 unit + **15 063 randomised/edge cases** across all 5 codecs (image/seq/float/columnar/spectral) + real CyCIF + real AVIRIS hyperspectral; 0 failures |
 | No expansion (`pfc_bound`) | property-checked on adversarial inputs — **two real under-estimate bugs found and fixed** (a skinny-image case, then a many-small-blocks spectral-cube case, both caught by the stress harness) |
-| Error containment | bit-flip + truncation tests, **170 000 Python-harness fuzz iterations** under ASan/UBSan found nothing; the **real C/libFuzzer CI run found a genuine heap-buffer-overflow within ~2 minutes** (SPECTRAL header-size validation gap — see below) — found and fixed, but the honest lesson is coverage-guided fuzzing catches what blind random fuzzing doesn't, and this was the *first* CI run |
+| Error containment | bit-flip + truncation tests, **170 000 Python-harness fuzz iterations** under ASan/UBSan found nothing; the **real C/libFuzzer CI run found TWO genuine heap-buffer-overflows across its first two runs** — a SPECTRAL header-size validation gap, then (after that fix, same 120s run) a COLUMNAR unbounded-`block_recs` gap — both found and fixed; the honest lesson is coverage-guided fuzzing catches what blind random fuzzing doesn't, and both were found within minutes of the gate's first-ever execution |
 | No dynamic allocation | compiled `.so` imports **zero** alloc symbols; no recursion |
 | Bounded memory | single caller-owned `pfc_ctx` (~330 KB at defaults), compile-time sized |
 | Determinism | encode-twice byte-identical (checked every stress case) |
@@ -79,12 +79,14 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
   on every finding. A proper libFuzzer+ASan+UBSan run is wired into CI (`flight-ci.yml`,
-  `libfuzzer` job — bounded to 120s per run for now, a smoke test, not a campaign), and **on its
-  first execution it found a real heap-buffer-overflow within ~2 minutes** (SPECTRAL header-size
-  validation gap, found+fixed — see `requirements.md`). This is exactly the value case for this
-  gate: 170k iterations of the *Python* fuzz harness found nothing over the same class of input;
-  coverage-guided libFuzzer found a real bug almost immediately. Raising the bound and persisting a
-  corpus across runs (rather than starting fresh each time) is the natural next step.
+  `libfuzzer` job — bounded to 120s per run for now, a smoke test, not a campaign), and **its first
+  two executions found two real heap-buffer-overflows** — SPECTRAL header-size validation, then
+  (immediately after that fix landed) an unbounded `block_recs` in COLUMNAR's decode, both
+  found+fixed — see `requirements.md`. This is exactly the value case for this gate: 170k
+  iterations of the *Python* fuzz harness found nothing over the same class of input; coverage-
+  guided libFuzzer found two real bugs within minutes of first running. Raising the bound and
+  persisting a corpus across runs (rather than starting fresh each time) is the natural next step —
+  it's already earned its place twice over on a smoke-test budget.
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 

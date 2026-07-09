@@ -114,10 +114,19 @@ pfc_status pfc_columnar_decode(const uint8_t *s, size_t len, void *dst, size_t c
         size_t plen;
         uint8_t flags;
         size_t before = pos;
-        pfc_status st = pfc_block_read(s, len, &pos, &payload, &plen, &flags);
+        pfc_status st;
         uint32_t c;
         size_t r;
 
+        /* block_recs comes straight from the untrusted stream header (unlike the encoder, which
+         * always derives it safely from rw so rw*block_recs <= PFC_BLOCK_BYTES) -- a corrupted or
+         * malicious stream can set it arbitrarily large. The range-coded branch below writes
+         * block_bytes bytes into w->xform, a fixed PFC_BLOCK_BYTES-byte scratch buffer; without
+         * this check that write overflows it. Found by libFuzzer (heap-buffer-overflow,
+         * pfc_columnar.c:150, UBSan: index 65536 out of bounds for xform[65536]). */
+        if (block_bytes > PFC_BLOCK_BYTES) { return PFC_E_CORRUPT; }
+
+        st = pfc_block_read(s, len, &pos, &payload, &plen, &flags);
         if (st != PFC_OK) {
             *corrupt = 1;
             if (pos == before) {                       /* truncation: zero remainder, stop */
