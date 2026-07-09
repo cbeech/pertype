@@ -63,14 +63,14 @@ static int spec_predict(const void *p, uint8_t bd, size_t bz, size_t bzp, int ha
 {
     int haveW = (x > 0u);
     int haveN = (y > y0);
-    int dW = 0, dN = 0, dNW = 0;
+    int dW = 0, dN = 0;
     if (haveW) { dW = spec_diff(p, bd, bz, bzp, has_prev, width, y, x - 1u); }
     if (haveN) { dN = spec_diff(p, bd, bz, bzp, has_prev, width, y - 1u, x); }
 
     if (haveW && haveN) {
         uint32_t g;
         unsigned c;
-        dNW = spec_diff(p, bd, bz, bzp, has_prev, width, y - 1u, x - 1u);
+        int dNW = spec_diff(p, bd, bz, bzp, has_prev, width, y - 1u, x - 1u);
         g = (uint32_t)(si_abs(dW - dNW) + si_abs(dN - dNW));
         c = si_bitlen(g);
         *ctx = (c < PFC_NCTX) ? c : (PFC_NCTX - 1u);
