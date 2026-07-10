@@ -87,14 +87,18 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
   on every finding. A proper libFuzzer+ASan+UBSan run is wired into CI (`flight-ci.yml`,
-  `libfuzzer` job — bounded to 120s per run for now, a smoke test, not a campaign), and **its first
-  two executions found two real heap-buffer-overflows** — SPECTRAL header-size validation, then
-  (immediately after that fix landed) an unbounded `block_recs` in COLUMNAR's decode, both
-  found+fixed — see `requirements.md`. This is exactly the value case for this gate: 170k
-  iterations of the *Python* fuzz harness found nothing over the same class of input; coverage-
-  guided libFuzzer found two real bugs within minutes of first running. Raising the bound and
-  persisting a corpus across runs (rather than starting fresh each time) is the natural next step —
-  it's already earned its place twice over on a smoke-test budget.
+  `libfuzzer` job), and **its first two executions (at the original 120s bound) found two real
+  heap-buffer-overflows** — SPECTRAL header-size validation, then (immediately after that fix
+  landed, same run) an unbounded `block_recs` in COLUMNAR's decode, both found+fixed — see
+  `requirements.md`. This is exactly the value case for this gate: 170k iterations of the *Python*
+  fuzz harness found nothing over the same class of input; coverage-guided libFuzzer found two
+  real bugs within minutes of first running. **Done:** raised the bound to 300s and wired corpus
+  persistence across CI runs via `actions/cache` (unique-key-per-run + `restore-keys`, the
+  standard "ratchet" pattern — same trick `ccache`-in-CI setups use) — fuzzing coverage now
+  compounds run over run instead of restarting from nothing each time, still not yet confirmed to
+  actually work on the self-hosted gitea runner specifically (depends on that instance's cache
+  backend being configured; genuinely still an open smoke test, not "days of CPU" yet, but it now
+  accumulates toward that instead of resetting every push).
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
@@ -103,19 +107,21 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    fixed two real heap-buffer-overflows (SPECTRAL, COLUMNAR) in its first-ever executions; `native`
    hit two environment bugs (`sudo` missing, `setup-python` incompatible with this self-hosted
    runner), both fixed.
-2. **Done: MISRA triage.** 179 findings across 17 rules, triaged rule-by-rule against real source
-   (not guessed from rule numbers) — 4 fixed, 27 confirmed tool-limitation false positives, 148
-   deliberate-and-verified-safe patterns recorded as formal deviations. Full record:
-   `flight/docs/misra-deviations.md`. `misra` in CI still shows red until those 4 fixes +
-   suppression list are pushed and the job re-run.
-3. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
-4. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
+2. **Done: MISRA triage, confirmed green in CI.** 179 findings across 17 rules, triaged rule-by-
+   rule against real source (not guessed from rule numbers) — 4 fixed, 27 confirmed tool-limitation
+   false positives, 148 deliberate-and-verified-safe patterns recorded as formal deviations. Full
+   record: `flight/docs/misra-deviations.md`. `misra` confirmed passing in CI (all 4 jobs green on
+   the same run) after two more small real findings surfaced once the MISRA noise cleared and were
+   triaged the same way.
+3. **Done: sustained fuzzing.** Raised `libfuzzer`'s bound to 300s and wired corpus persistence
+   across CI runs via `actions/cache` — see 2.6 above for the details and the one remaining
+   uncertainty (unconfirmed on the self-hosted gitea runner specifically).
+4. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
+5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions.
-5. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
+6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
    *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap;
    WCET + stack analysis need the real target, not an emulator.
-6. **Sustained fuzzing**: raise `libfuzzer`'s 120s bound and persist a corpus across CI runs
-   (currently starts fresh each run).
 7. **Formal `pfc_bound` sufficiency + small-input round-trip proofs** (CBMC).
 8. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
    NPR 7150.2 for the assigned software class.
@@ -125,12 +131,17 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 libpfc is a small, freestanding, integer-only, no-malloc, error-contained, independently-verified
 lossless core that beats the CCSDS-121 flight standard by +2.8% and sits within a percent of both
 JPEG-LS (spatial) and CCSDS-123-class (hyperspectral, via the spectral codec), and survives heavy
-randomised/fuzz testing under sanitizers — and the testing process itself has caught and fixed two
-real contract bugs (both `pfc_bound` under-estimates). That makes it a strong *candidate* for
-flight. A CI workflow (`.github/workflows/flight-ci.yml`) now automates MISRA, libFuzzer, and a
-genuine big-endian execution run — authored and reasoned correct, but unexecuted as of this
-writing; its first real run is the next concrete step, not a formality. "Mission-safe" beyond that
-is earned through the remaining items above: structural/MC/DC coverage, formal memory-safety
-proofs, real-target (not emulated) hardware validation with WCET analysis, an SEU fault model, and
-the NPR 7150.2 assurance process with independent review — none blocked by the design, but all
+randomised/fuzz testing under sanitizers — and the testing process itself has caught and fixed real
+bugs at every level it's been pointed at: two `pfc_bound` under-estimates during local stress
+testing, then two real heap-buffer-overflows (SPECTRAL, COLUMNAR) the moment CI-grade libFuzzer
+actually ran. The CI workflow (`.github/workflows/flight-ci.yml` + the gitea copy) is no longer
+theoretical — it's been pushed, run repeatedly, debugged, and as of this writing **all four jobs
+(`native`, `misra`, `libfuzzer`, `bigendian`) are green on the same run**, including a full,
+source-verified MISRA-C:2012 triage (not a rubber stamp: 179 findings read individually, 4 fixed,
+the rest justified) and a genuine big-endian execution pass under `qemu-user`, not just static
+reasoning about the wire format. That makes it a strong *candidate* for flight — a materially
+stronger one than at the start of this document. "Mission-safe" beyond that is earned through the
+remaining items above: structural/MC/DC coverage, a formal CBMC memory-safety proof, real-target
+(not emulated) hardware validation with WCET analysis, an SEU fault model, and the NPR 7150.2
+assurance process with independent review — none blocked by the design, but all
 real work beyond writing code.

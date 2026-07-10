@@ -68,15 +68,40 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install clang
         run: apt-get update && apt-get install -y clang
+      # Persist the corpus across runs so fuzzing effort compounds instead of restarting from
+      # nothing every time. Key includes github.run_id so it's always unique (a cache entry can't
+      # be overwritten), restore-keys grabs the most recent prior one -- the standard "ratchet"
+      # cache pattern. First run just gets a cache miss and an empty corpus, which is fine.
+      # ADDITIONAL uncertainty specific to this gitea copy (on top of the ones in this file's
+      # header): whether actions/cache works at all against this self-hosted runner depends on
+      # Gitea's own cache backend being configured server-side -- untested tonight. If it doesn't
+      # work, this step should just no-op (cache miss every time) rather than fail the job outright,
+      # but that hasn't been confirmed either.
+      - name: Restore fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: flight/fuzz-corpus
+          key: libfuzzer-corpus-${{ github.run_id }}
+          restore-keys: |
+            libfuzzer-corpus-
       - name: Build the libFuzzer harness
         working-directory: flight
         run: |
-          mkdir -p build
+          mkdir -p build fuzz-corpus
           clang -std=c99 -g -O1 -fsanitize=address,undefined,fuzzer -Iinclude \
                 src/*.c test/fuzz_pfc.c -o build/fuzz_pfc
-      - name: Fuzz the decoder for 2 minutes
+      # 5 minutes per run (up from 2) PLUS the persisted corpus above -- coverage compounds run
+      # over run rather than starting from zero every time.
+      - name: Fuzz the decoder for 5 minutes, using the persisted corpus as seed input
         working-directory: flight
-        run: ./build/fuzz_pfc -max_total_time=120 -max_len=65536
+        run: ./build/fuzz_pfc fuzz-corpus -max_total_time=300 -max_len=65536
+      - name: Upload crash artifact (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libfuzzer-crash
+          path: flight/crash-*
+          if-no-files-found: ignore
 
   # Big-endian validation (R4): cross-compile for 32-bit big-endian PowerPC (RAD750-class) and
   # run under qemu-user. Two checks, both needed: (1) the full lossless test suite executed ON

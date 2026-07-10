@@ -145,7 +145,11 @@ not silently. Keep the two files in sync by hand; job bodies are otherwise ident
   decoder fuzz, 15k-case stress).
 - **`misra` job** — `apt-get install cppcheck` (prebuilt binary, not a source build) → `make misra`.
 - **`libfuzzer` job** — `apt-get install clang`, builds `fuzz_pfc.c` per its own documented
-  invocation, runs bounded to 120s wall-clock.
+  invocation, runs bounded to 300s wall-clock (raised from an initial 120s once the gate proved
+  its value — see below). The corpus persists across CI runs via `actions/cache` (a `libfuzzer-
+  corpus-<run_id>` key with `restore-keys` grabbing the latest prior one — the standard "ratchet"
+  cache pattern), so fuzzing coverage compounds run over run instead of restarting from nothing
+  each time. A crash artifact uploads automatically on failure for easy local reproduction.
 - **`bigendian` job** — installs `gcc-powerpc-linux-gnu` + `qemu-user`, then (1) runs the full
   139-check `test_pfc` suite ON emulated big-endian PowerPC hardware (proves no endian-dependent
   bug in the codec internals — genuinely the "big-endian hardware run" this section used to list
