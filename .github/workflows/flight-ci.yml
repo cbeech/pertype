@@ -60,8 +60,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install cbmc
-        run: apt-get update && apt-get install -y cbmc
+      - name: Install cbmc (no Debian apt package for bookworm — install the upstream release .deb)
+        run: |
+          curl -fsSL -o /tmp/cbmc.deb \
+            https://github.com/diffblue/cbmc/releases/download/cbmc-6.10.0/ubuntu-22.04-cbmc-6.10.0-Linux.deb
+          dpkg -i /tmp/cbmc.deb || (apt-get update && apt-get install -y -f)
       - name: CBMC proof — pfc_block_read never reads OOB (32-bit size_t model)
         working-directory: flight
         run: make cbmc

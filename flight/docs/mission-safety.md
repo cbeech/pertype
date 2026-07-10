@@ -138,11 +138,12 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 4. **Started: CBMC proof.** `pfc_block_read` (the shared block-framing primitive every codec's
    decoder calls) proved to never read OOB, under a 32-bit `size_t` model matching the real
    flight targets — and writing the harness found a real bug (a `size_t`-wraparound bounds-check
-   bypass, 32-bit-only, invisible to every other gate) before the proof ever ran, now fixed. Not
-   yet run in CI as of this writing — landing in the same push as this doc update; check the next
-   run's `cbmc` job before treating it as confirmed. Remaining scope: extend to the per-codec
-   header parsers that also touch untrusted fields, and prove `pfc_bound` sufficiency /
-   round-trip correctness.
+   bypass, 32-bit-only, invisible to every other gate) before the proof ever ran, now fixed. The
+   `cbmc` job's **first CI run failed at tool install** (`cbmc` isn't in Debian bookworm's default
+   apt repos — fixed by installing the upstream release `.deb` instead); the proof itself has not
+   yet actually executed in CI as of this writing. Remaining scope beyond confirming that run:
+   extend to the per-codec header parsers that also touch untrusted fields, and prove `pfc_bound`
+   sufficiency / round-trip correctness.
 5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions.
 6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE

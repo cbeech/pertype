@@ -288,9 +288,17 @@ for**: `harness_block_read.c` run with `--32` (`make cbmc` / the `cbmc` CI job) 
 32-bit `size_t` and asserts the function's full documented contract — on `PFC_OK`, `payload`/`plen`
 lie entirely within `src[0..len)` and `pos` advances by exactly the block size; on rejection,
 `pos` is left unchanged. Proved on the fixed code; the old (pre-fix) code would fail this proof
-under `--32` with `--unsigned-overflow-check`, which is exactly the point — status of the actual
-CI run against the fixed code not yet confirmed as of this writing (job just landed, see the
-CI-status section for the outcome once run #24 finishes).
+under `--32` with `--unsigned-overflow-check`, which is exactly the point.
+
+**`cbmc` job — first real run (#25) failed, but at the environment step, not the proof.**
+`apt-get install cbmc` doesn't work on this runner: Debian bookworm's default repos don't carry a
+`cbmc` package at all (`E: Unable to locate package cbmc`) — unlike `cppcheck`/`clang`, this one
+just isn't packaged for Debian stable. **Fixed:** install the upstream release `.deb` directly
+(`ubuntu-22.04-cbmc-6.10.0-Linux.deb` from `github.com/diffblue/cbmc/releases`, glibc-compatible
+with this bookworm container) via `dpkg -i` + `apt-get install -f` to resolve dependencies,
+pinned to a specific version rather than "latest" for reproducibility. Whether the proof itself
+(against the now-fixed `pfc_block_read`) actually passes once the tool installs correctly is not
+yet confirmed as of this writing — that's the next thing to check once this fix lands.
 
 ## Other open items
 
