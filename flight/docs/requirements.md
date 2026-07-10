@@ -286,19 +286,52 @@ proven `len - p >= PFC_BLKHDR`, and the final `*pos = p + PFC_BLKHDR + n` is onl
 own 64-bit `size_t`; it cannot exercise the wraparound itself. **That's what the CBMC proof is
 for**: `harness_block_read.c` run with `--32` (`make cbmc` / the `cbmc` CI job) models a real
 32-bit `size_t` and asserts the function's full documented contract — on `PFC_OK`, `payload`/`plen`
-lie entirely within `src[0..len)` and `pos` advances by exactly the block size; on rejection,
-`pos` is left unchanged. Proved on the fixed code; the old (pre-fix) code would fail this proof
-under `--32` with `--unsigned-overflow-check`, which is exactly the point.
+lie entirely within `src[0..len)` and `pos` advances by exactly the block size; on rejection, `pos`
+never moves backward and never advances past `len` (not "unchanged" — see below, an earlier
+version of this harness asserted that and CBMC correctly caught it as false). Proved on the fixed
+code; the old (pre-fix) code would fail this proof under `--32` with `--unsigned-overflow-check`,
+which is exactly the point.
 
-**`cbmc` job — first real run (#25) failed, but at the environment step, not the proof.**
-`apt-get install cbmc` doesn't work on this runner: Debian bookworm's default repos don't carry a
-`cbmc` package at all (`E: Unable to locate package cbmc`) — unlike `cppcheck`/`clang`, this one
-just isn't packaged for Debian stable. **Fixed:** install the upstream release `.deb` directly
-(`ubuntu-22.04-cbmc-6.10.0-Linux.deb` from `github.com/diffblue/cbmc/releases`, glibc-compatible
-with this bookworm container) via `dpkg -i` + `apt-get install -f` to resolve dependencies,
-pinned to a specific version rather than "latest" for reproducibility. Whether the proof itself
-(against the now-fixed `pfc_block_read`) actually passes once the tool installs correctly is not
-yet confirmed as of this writing — that's the next thing to check once this fix lands.
+**Getting the `cbmc` job green took four more real fixes, none of them the proof itself being
+wrong about the code:**
+
+1. **Run #25 failed at tool install.** `apt-get install cbmc` doesn't work on this runner: Debian
+   bookworm's default repos don't carry a `cbmc` package at all (`E: Unable to locate package
+   cbmc`) — unlike `cppcheck`/`clang`, this one just isn't packaged for Debian stable. Fixed:
+   install the upstream release `.deb` directly (`ubuntu-22.04-cbmc-6.10.0-Linux.deb` from
+   `github.com/diffblue/cbmc/releases`), pinned to a specific version for reproducibility.
+2. **Automated commit review flagged the install as unverified binary execution.** Fair — curling
+   a binary and running `dpkg` on it with no integrity check. Fixed: verify its sha256 (the digest
+   GitHub's release API reports for this exact asset, independently re-downloaded and re-hashed by
+   hand to confirm) via `sha256sum -c` before `dpkg` ever touches the file.
+3. **Run #27: install succeeded, but `cbmc` itself errored with "Usage error!" (exit 2).**
+   Reproduced locally with Docker (same `node:20-bookworm` base image) instead of iterating via
+   push-and-wait — much faster to debug. Root cause, found in the buried help-dump output: `Unknown
+   option: -std=c99`. CBMC's own C frontend doesn't accept GCC's `-std=c99`; it wants `--c99`.
+   Fixed in the Makefile.
+4. **Locally, with that fixed: `--32` failed at preprocessing** — `fatal error:
+   bits/libc-header-start.h: No such file or directory`. `--32` needs actual 32-bit libc headers to
+   preprocess against, which the runner's Debian container doesn't have by default. Fixed: `apt-get
+   install gcc-multilib` in both workflow copies (~25MB, one-time per job run).
+5. **With the tool finally running correctly, the proof itself ran — and found two real issues,**
+   both fixed with actual corrections, not suppressions:
+   - The harness's own assertion was wrong: it claimed `pos` is unchanged on *any* rejected block,
+     but `pfc_block_read` deliberately advances `pos` on a CRC-mismatch rejection ("corrupt block,
+     but framing stays in sync" — so a caller can keep reading subsequent blocks after a corrupt
+     one). CBMC correctly found a counterexample. Fixed the harness to assert the real contract:
+     `pos` never moves backward and never exceeds `len`, matching the literal "reads never advance
+     out of bounds" promise in `pfc_frame.c`'s header comment.
+   - `pfc_crc32`'s branchless mask (`uint32_t mask = 0u - (crc & 1u);`) is well-defined C (unsigned
+     wraparound is modular, not UB) but reads as an arithmetic overflow to
+     `--unsigned-overflow-check`, which flags it regardless of intent. Rewrote as an explicit
+     branch — behaviorally identical (confirmed via a full local `make check`: 145 unit + 7
+     crosscheck + 20k fuzz + 15063 stress, 0 failures, same compressed-size numbers), zero
+     functional change, no more CBMC noise.
+
+**Confirmed on run #28: all 5 jobs green, `cbmc` reports `** 0 of 165 failed (1 iterations) /
+VERIFICATION SUCCESSFUL`.** Verified locally end-to-end before pushing (same steps as the real CI
+job, via Docker) to avoid another push-and-wait round-trip, then confirmed the real CI run matched
+exactly. This closes out the CBMC next-step item for `pfc_block_read`.
 
 ## Other open items
 

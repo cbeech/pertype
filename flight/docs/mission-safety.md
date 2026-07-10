@@ -57,17 +57,20 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 ### 2.3 Formal methods (stronger than testing for the safety-critical claims)
 - **Bounded model checking** (CBMC) of the decoder: prove *no out-of-bounds read for any input up
   to N bytes* — a proof, not a sample. The decoder eats untrusted/SEU-corrupted data, so this is
-  the highest-value formal target. **Started, and it already paid for itself.** `pfc_block_read`
-  — the shared block-framing primitive every codec's decoder calls — is now proved (`proofs/cbmc/
-  harness_block_read.c`, `make cbmc` / CI `cbmc` job) to never read out of bounds, and critically
-  the proof is run under a **32-bit `size_t` model** (`--32`), matching the real RAD750/LEON/
-  RISC-V-32 flight targets rather than the 64-bit host every other gate here runs on. Writing that
-  harness surfaced a real bug first: the original bounds check summed an untrusted 4-byte length
-  field before comparing it, which can wrap `size_t` on a 32-bit target (never on 64-bit CI) and
-  let a crafted `payload_len` near `UINT32_MAX` bypass the check entirely — invisible to every
-  sanitizer/fuzz/functional gate in this pipeline because they all run 64-bit. Fixed with a
-  subtraction-based check that cannot overflow on any width; see `requirements.md` for the full
-  writeup. Scope is currently one function, not the whole decoder — see next steps.
+  the highest-value formal target. **Done for one function, confirmed green in CI, and it already
+  paid for itself twice over.** `pfc_block_read` — the shared block-framing primitive every
+  codec's decoder calls — is proved (`proofs/cbmc/harness_block_read.c`, `make cbmc` / CI `cbmc`
+  job, confirmed `VERIFICATION SUCCESSFUL` on run #28) to never read out of bounds, under a
+  **32-bit `size_t` model** (`--32`), matching the real RAD750/LEON/RISC-V-32 flight targets
+  rather than the 64-bit host every other gate here runs on. Writing that harness surfaced a real
+  bug first: the original bounds check summed an untrusted 4-byte length field before comparing
+  it, which can wrap `size_t` on a 32-bit target (never on 64-bit CI) and let a crafted
+  `payload_len` near `UINT32_MAX` bypass the check entirely — invisible to every sanitizer/fuzz/
+  functional gate in this pipeline because they all run 64-bit. Fixed with a subtraction-based
+  check that cannot overflow on any width. Running the proof itself then found two more real
+  issues (an over-strict harness assertion, and a CRC branchless-mask idiom CBMC's overflow
+  checker flags on principle) — see `requirements.md` for the full writeup. Scope is currently one
+  function, not the whole decoder — see next steps.
 - Extend CBMC coverage to the rest of the untrusted-input surface (the per-codec header parsers
   in `pfc_spectral.c`/`pfc_columnar.c`/`pfc_image.c`/`pfc_seq.c`, which each still do their own
   small amount of arithmetic on untrusted header fields before or alongside calling
@@ -135,15 +138,20 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    does *not* work on this self-hosted Gitea instance (no configured cache backend) — see 2.6
    above. Real remaining work: enable a cache backend on the Gitea instance, or drop the persistence
    attempt and just accept fresh-corpus 5-minute runs.
-4. **Started: CBMC proof.** `pfc_block_read` (the shared block-framing primitive every codec's
-   decoder calls) proved to never read OOB, under a 32-bit `size_t` model matching the real
-   flight targets — and writing the harness found a real bug (a `size_t`-wraparound bounds-check
-   bypass, 32-bit-only, invisible to every other gate) before the proof ever ran, now fixed. The
-   `cbmc` job's **first CI run failed at tool install** (`cbmc` isn't in Debian bookworm's default
-   apt repos — fixed by installing the upstream release `.deb` instead); the proof itself has not
-   yet actually executed in CI as of this writing. Remaining scope beyond confirming that run:
-   extend to the per-codec header parsers that also touch untrusted fields, and prove `pfc_bound`
-   sufficiency / round-trip correctness.
+4. **Done: CBMC proof, confirmed green in CI.** `pfc_block_read` (the shared block-framing
+   primitive every codec's decoder calls) is proved — not sampled — to never read out of bounds,
+   under a 32-bit `size_t` model matching the real flight targets. Getting here found and fixed
+   real issues at every layer: (a) writing the harness surfaced the `size_t`-wraparound
+   bounds-check bypass itself, 32-bit-only, invisible to every other gate; (b) the `cbmc` job
+   needed the upstream release `.deb` (not in Debian's apt repos) plus `gcc-multilib` (`--32`
+   needs real 32-bit libc headers to preprocess at all) plus `--c99` instead of GCC's `-std=c99`;
+   (c) the proof's first real run then found two more real issues — the harness's own contract was
+   too strict (it didn't account for `pfc_block_read` deliberately advancing `pos` on a
+   CRC-mismatch rejection), and `pfc_crc32`'s branchless mask idiom (well-defined, but reads as
+   overflow to `--unsigned-overflow-check`) was rewritten as an explicit branch. Confirmed on CI
+   run #28: `** 0 of 165 failed (1 iterations) / VERIFICATION SUCCESSFUL`. Full writeup:
+   `requirements.md`. Remaining scope: extend to the per-codec header parsers that also touch
+   untrusted fields, and prove `pfc_bound` sufficiency / round-trip correctness.
 5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions.
 6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
