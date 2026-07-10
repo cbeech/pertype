@@ -5,8 +5,12 @@
  * attacker or downlink corruption could put in src, regardless of size_t width:
  *   - on PFC_OK, payload/plen lie entirely within src[0..len) and pos advances by exactly the
  *     block size;
- *   - on rejection (PFC_E_CORRUPT), pos is left unchanged so a caller can safely stop or
- *     resynchronise.
+ *   - on PFC_E_CORRUPT, pos never moves backward and never advances past len -- "reads never
+ *     advance out of bounds" (see pfc_frame.c's header comment), not "pos is always unchanged":
+ *     a CRC-mismatch rejection deliberately DOES advance pos (see the comment at that return in
+ *     pfc_block_read) so a caller can keep reading subsequent blocks after a corrupt one -- an
+ *     earlier version of this harness wrongly asserted pos was unchanged on every rejection and
+ *     CBMC correctly flagged that as false.
  *
  * MUST be run with `--32` (see Makefile `cbmc` target / flight-ci.yml `cbmc` job): the property
  * this proof exists for is a size_t-width-dependent bug — a crafted payload_len field near
@@ -45,6 +49,7 @@ void harness_pfc_block_read(void)
         __CPROVER_assert(pos == (pos_in + PFC_BLKHDR + plen), "pos advances by exactly the block size");
         __CPROVER_assert(pos <= len, "advanced pos stays within len");
     } else {
-        __CPROVER_assert(pos == pos_in, "pos unchanged on any rejected block");
+        __CPROVER_assert(pos >= pos_in, "pos never moves backward on rejection");
+        __CPROVER_assert(pos <= len, "pos never advances past len on rejection");
     }
 }

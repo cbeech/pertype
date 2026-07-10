@@ -63,12 +63,15 @@ jobs:
       # No Debian apt package for bookworm, so this installs the upstream release .deb directly —
       # verify its sha256 against the digest GitHub's release API reports for this exact asset
       # (independently re-checked by hand when this was authored) before executing dpkg on it.
-      - name: Install cbmc (checksum-verified upstream release .deb)
+      # gcc-multilib provides the 32-bit libc headers `--32` needs to preprocess at all (verified
+      # locally: without it, cbmc --32 fails with "bits/libc-header-start.h: No such file").
+      - name: Install cbmc (checksum-verified upstream release .deb) + 32-bit libc headers
         run: |
+          apt-get update && apt-get install -y gcc-multilib
           curl -fsSL -o /tmp/cbmc.deb \
             https://github.com/diffblue/cbmc/releases/download/cbmc-6.10.0/ubuntu-22.04-cbmc-6.10.0-Linux.deb
           echo "75421d8037afe2ff6bde4e31c054218b7eb88e19aa7590435ec44b57a39347bd  /tmp/cbmc.deb" | sha256sum -c -
-          dpkg -i /tmp/cbmc.deb || (apt-get update && apt-get install -y -f)
+          dpkg -i /tmp/cbmc.deb || apt-get install -y -f
       - name: CBMC proof — pfc_block_read never reads OOB (32-bit size_t model)
         working-directory: flight
         run: make cbmc

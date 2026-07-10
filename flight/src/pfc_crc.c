@@ -13,8 +13,15 @@ uint32_t pfc_crc32(const uint8_t *buf, size_t len)
     for (i = 0u; i < len; i++) {
         crc ^= buf[i];
         for (b = 0u; b < 8u; b++) {
-            uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+            /* Explicit branch, not the classic branchless `0u - (crc & 1u)` mask trick: that
+             * form is well-defined (unsigned wraparound is modular, not UB) but reads as an
+             * arithmetic overflow to CBMC's --unsigned-overflow-check, and crc bits aren't
+             * secret here so there's no timing-side-channel reason to keep it branchless. */
+            if ((crc & 1u) != 0u) {
+                crc = (crc >> 1) ^ 0xEDB88320u;
+            } else {
+                crc = crc >> 1;
+            }
         }
     }
     return ~crc;

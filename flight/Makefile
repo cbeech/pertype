@@ -78,7 +78,7 @@ misra:
 # proof mean anything; without it CBMC would silently verify the wrong machine model.
 cbmc:
 	@command -v cbmc >/dev/null 2>&1 || { echo "cbmc not installed (CI gate skipped)"; exit 0; }
-	cbmc --32 $(CSTD) $(INC) \
+	cbmc --32 --c99 $(INC) \
 		proofs/cbmc/harness_block_read.c src/pfc_frame.c src/pfc_crc.c \
 		--function harness_pfc_block_read \
 		--bounds-check --pointer-check --unsigned-overflow-check --signed-overflow-check \
