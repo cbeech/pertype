@@ -333,6 +333,42 @@ VERIFICATION SUCCESSFUL`.** Verified locally end-to-end before pushing (same ste
 job, via Docker) to avoid another push-and-wait round-trip, then confirmed the real CI run matched
 exactly. This closes out the CBMC next-step item for `pfc_block_read`.
 
+### Extending past pfc_block_read: a FOURTH real bug, more severe than the first three
+
+Reading the other three codecs' decoders for the same class of bug (chaining untrusted wire-header
+fields into a size check) found one immediately, and it's worse than the `pfc_block_read` bug:
+SPECTRAL's `cap < ((size_t)width * height * count * es)` multiplies four factors derived from
+untrusted input — `width` (bounded to `PFC_MAX_COLS`, 13 bits), `height` and `count` (raw 32-bit
+wire fields, unbounded), `es` (1 bit) — up to **78 bits total**. `pfc_block_read`'s bug only
+manifested on a 32-bit `size_t` (the encoder-side flight target; per `pfc.h`'s own doc comment the
+*decoder* is meant to run ground-side, typically 64-bit) — but 78 bits overflows a 64-bit `size_t`
+too, so this one is reachable on the actual deployed ground decoder, not just a defensive concern
+for hypothetical 32-bit reuse.
+
+Concrete proof it's real: `width=2, height=count=2^31, es=2` (bd=16) makes the true product
+**exactly `2^64`** — which a naive 64-bit `(size_t)width*height*count*es` computes as `0` (full
+wraparound). The old check `cap < total` became `cap < 0`, which is always false for an unsigned
+`cap`: **any** `cap`, including `0`, would have been accepted as "big enough" for a stream that
+actually needs `2^64` bytes. Added as a regression test (`test_pfc.c`, the new case in
+`test_spectral_corruption`) asserting `PFC_E_BOUND` for exactly this crafted 24-byte header.
+
+Fixed with a small reusable helper, `pfc_size_mul` (`pfc_internal.h`) — the standard CERT C
+INT30-C division-guarded-multiply idiom (`if (a != 0 && b > SIZE_MAX/a) overflow; else *out =
+a*b;`), correct by construction and hand-verified in its doc comment. Applied to all four codecs'
+decode-side size checks (SPECTRAL's the only one reachable at 64 bits; IMAGE/COLUMNAR/SEQ fixed
+defensively for the same 32-bit-reuse reason `pfc_block_read` was, though their two/three-factor
+products can't overflow 64 bits given their existing bounds).
+
+**Attempted a CBMC proof of `pfc_size_mul` itself** (fully generic, unconstrained `size_t` domain,
+at both `--32` and native 64-bit) — the SAT problem for unconstrained multiplication-overflow
+checking didn't converge within a 10-minute budget on either width, and got killed both times.
+Rather than force through an unreliable/slow CI gate for a well-established four-line idiom, left
+it as a hand-verified proof-sketch in the source comment instead — a division-guarded multiply is
+provably correct via basic integer-division properties (rounds down, so `a*(SIZE_MAX/a) <=
+SIZE_MAX` always) without needing exhaustive bit-blasting. Confirmed via full local `make check`
+(146 unit + 7 crosscheck + 20k fuzz + 15063 stress, 0 failures) that the fix is behaviorally
+correct in the cases that matter, even without the generic CBMC proof.
+
 ## Other open items
 
 - **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (−0.5% at band 64) — finer context modelling

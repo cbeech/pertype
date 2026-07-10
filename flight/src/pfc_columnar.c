@@ -99,11 +99,15 @@ pfc_status pfc_columnar_decode(const uint8_t *s, size_t len, void *dst, size_t c
     uint32_t block_recs = pfc_get_u32(&s[16]);
     size_t pos = PFC_HDR;
     size_t r0;
+    size_t total;
 
     if ((rw == 0u) || (rw > PFC_BLOCK_BYTES) || (cnt == 0u) || (block_recs == 0u)) {
         return PFC_E_CORRUPT;
     }
-    if (cap < ((size_t)rw * cnt)) {
+    /* rw is bounded (PFC_BLOCK_BYTES) so this can't overflow a 64-bit size_t, but fixed
+     * defensively for a 32-bit size_t the same way pfc_block_read was (pfc_size_mul, see
+     * pfc_internal.h). */
+    if (!pfc_size_mul((size_t)rw, cnt, &total) || (cap < total)) {
         return PFC_E_BOUND;
     }
 
@@ -168,6 +172,6 @@ pfc_status pfc_columnar_decode(const uint8_t *s, size_t len, void *dst, size_t c
             }
         }
     }
-    *out = (size_t)rw * cnt;
+    *out = total;
     return PFC_OK;
 }

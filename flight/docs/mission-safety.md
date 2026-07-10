@@ -12,7 +12,7 @@ coverage) still demands.
 | Lossless round-trip | 139 unit + **15 063 randomised/edge cases** across all 5 codecs (image/seq/float/columnar/spectral) + real CyCIF + real AVIRIS hyperspectral; 0 failures |
 | No expansion (`pfc_bound`) | property-checked on adversarial inputs — **two real under-estimate bugs found and fixed** (a skinny-image case, then a many-small-blocks spectral-cube case, both caught by the stress harness) |
 | Error containment | bit-flip + truncation tests, **170 000 Python-harness fuzz iterations** under ASan/UBSan found nothing; the **real C/libFuzzer CI run found TWO genuine heap-buffer-overflows across its first two runs** — a SPECTRAL header-size validation gap, then (after that fix, same 120s run) a COLUMNAR unbounded-`block_recs` gap — both found and fixed; the honest lesson is coverage-guided fuzzing catches what blind random fuzzing doesn't, and both were found within minutes of the gate's first-ever execution |
-| Machine-model-dependent safety | **CBMC bounded proof found a THIRD real bug that no test above could ever find**: `pfc_block_read`'s length check summed an untrusted field before comparing, wrapping `size_t` (and bypassing the bounds check) only on a 32-bit target — the actual RAD750/LEON/RISC-V-32 flight hardware, invisible to every 64-bit CI job above. Fixed with an overflow-safe subtraction form, now proved under a `--32` (32-bit `size_t`) CBMC model — see `requirements.md` |
+| Machine-model-dependent safety | **CBMC-driven review found TWO more real bugs that no test above could ever find, across two size_t widths**: `pfc_block_read`'s length check summed an untrusted field before comparing, wrapping `size_t` only on a 32-bit target (the actual RAD750/LEON/RISC-V-32 flight hardware) — fixed and proved under a `--32` CBMC model. Then, extending the same review to the other three codecs, SPECTRAL's `width*height*count*es` size check (four untrusted factors, 78 bits) was found to overflow even a **64-bit** `size_t` — reachable on the real ground decoder, not just a defensive 32-bit concern — fixed with a reusable overflow-safe multiply helper across all four codecs. See `requirements.md` |
 | No dynamic allocation | compiled `.so` imports **zero** alloc symbols; no recursion |
 | Bounded memory | single caller-owned `pfc_ctx` (~330 KB at defaults), compile-time sized |
 | Determinism | encode-twice byte-identical (checked every stress case) |
@@ -71,10 +71,22 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   issues (an over-strict harness assertion, and a CRC branchless-mask idiom CBMC's overflow
   checker flags on principle) — see `requirements.md` for the full writeup. Scope is currently one
   function, not the whole decoder — see next steps.
-- Extend CBMC coverage to the rest of the untrusted-input surface (the per-codec header parsers
-  in `pfc_spectral.c`/`pfc_columnar.c`/`pfc_image.c`/`pfc_seq.c`, which each still do their own
-  small amount of arithmetic on untrusted header fields before or alongside calling
-  `pfc_block_read`) and prove **`pfc_bound` sufficiency** and **round-trip correctness**
+- **Extended to the rest of the untrusted-input surface — and it immediately found a FOURTH real
+  bug, more severe than the first three.** Reading the other three codecs' decoders for the same
+  overflow class found SPECTRAL's `cap < width*height*count*es` chaining four untrusted factors
+  (up to 78 bits) — unlike `pfc_block_read`'s bug (32-bit-only, encoder-side), this one overflows
+  even a **64-bit** `size_t`, so it's reachable on the actual deployed ground decoder, not just a
+  defensive concern. Concrete construction: `width=2, height=count=2^31, es=2` makes the true
+  product exactly `2^64`, which wraps to `0` — the old check would have accepted *any* `cap`,
+  including `0`. Fixed with a reusable overflow-safe multiply helper (`pfc_size_mul`, the standard
+  CERT C INT30-C division-guarded idiom) applied to all four codecs' decode-side size checks; added
+  a regression test with the exact `2^64` vector; confirmed via full `make check` (146 unit + 7
+  crosscheck + 20k fuzz + 15063 stress, 0 failures). A CBMC proof of `pfc_size_mul` itself was
+  attempted (fully generic domain, both widths) but the SAT problem didn't converge in a 10-minute
+  budget on either width — left as a hand-verified proof-sketch in the source comment rather than
+  an unreliable CI gate; the idiom is standard and provably correct by basic integer-division
+  properties. See `requirements.md` for the full writeup.
+- Remaining CBMC scope: prove **`pfc_bound` sufficiency** and **round-trip correctness**
   `decode(encode(x)) == x` exhaustively for small inputs.
 
 ### 2.4 Target & timing

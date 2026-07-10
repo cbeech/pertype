@@ -134,11 +134,14 @@ pfc_status pfc_seq_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
     uint32_t block = pfc_get_u32(&s[12]);
     size_t pos = PFC_HDR;
     size_t i0;
+    size_t total;
 
     if (((elem != 1u) && (elem != 2u) && (elem != 4u)) || (count == 0u) || (block == 0u)) {
         return PFC_E_CORRUPT;
     }
-    if (cap < ((size_t)count * elem)) {
+    /* elem is bounded ({1,2,4}) so this can't overflow a 64-bit size_t, but fixed defensively
+     * for a 32-bit size_t the same way pfc_block_read was (pfc_size_mul, see pfc_internal.h). */
+    if (!pfc_size_mul((size_t)count, elem, &total) || (cap < total)) {
         return PFC_E_BOUND;
     }
 
@@ -184,6 +187,6 @@ pfc_status pfc_seq_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
         }
     }
     /* zero any tail bands left unwritten by an early truncation break */
-    *out = (size_t)count * elem;
+    *out = total;
     return PFC_OK;
 }

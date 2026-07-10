@@ -217,6 +217,7 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
     uint8_t bd, es;
     uint32_t width, height, count, band, z, y0;
     size_t pos;
+    size_t total;
 
     /* SPECTRAL's header is PFC_SPEC_HDR (24) bytes, larger than the generic PFC_HDR (20) the
      * top-level pfc_decode() dispatcher checks before routing here — that check alone is NOT
@@ -237,7 +238,15 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
         return PFC_E_CORRUPT;
     }
     es = (bd > 8u) ? 2u : 1u;
-    if (cap < ((size_t)width * height * count * es)) { return PFC_E_BOUND; }
+    /* width(<=8192)*height*count*es is up to 78 bits of untrusted wire-header input -- can
+     * overflow even a 64-bit size_t (unlike the other three codecs' two/three-factor products),
+     * so this can't be a plain `a*b*c*d` -- see pfc_size_mul in pfc_internal.h. */
+    if (!pfc_size_mul((size_t)width, height, &total) ||
+        !pfc_size_mul(total, count, &total) ||
+        !pfc_size_mul(total, es, &total) ||
+        (cap < total)) {
+        return PFC_E_BOUND;
+    }
 
     for (z = 0u; z < count; z++) {
         for (y0 = 0u; y0 < height; y0 += band) {
@@ -261,7 +270,7 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
                             spec_fill_block(dst, bd, width, height, zz, yy, yy1);
                         }
                     }
-                    *out = (size_t)width * height * count * es;
+                    *out = total;
                     return PFC_OK;
                 }
                 continue;
@@ -281,6 +290,6 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
             }
         }
     }
-    *out = (size_t)width * height * count * es;
+    *out = total;
     return PFC_OK;
 }

@@ -138,4 +138,32 @@ static inline uint32_t pfc_get_u32(const uint8_t *p) {
 /* shared stream header size: magic(4) ver(1) codec(1) + 14 codec-param bytes */
 #define PFC_HDR 20u
 
+/* Multiply a*b without ever wrapping size_t; returns 0 (and leaves *out untouched) if the true
+ * product doesn't fit, 1 otherwise. Every decoder computes an expected output size by chaining
+ * several untrusted wire-header fields (e.g. SPECTRAL's width*height*count*elemsize is up to 78
+ * bits of untrusted input), and a naive `a * b` there can wrap size_t and let a too-small `cap`
+ * check pass -- on any width, not just the 32-bit one pfc_block_read's fix targeted: SPECTRAL's
+ * four-factor product can overflow even a 64-bit size_t (13+32+32+1 = 78 bits). Chain calls
+ * (each feeding the previous *out back in as a) to safely multiply more than two factors.
+ *
+ * The standard CERT C INT30-C division-guarded-multiply idiom, correct by construction (a is
+ * unsigned, integer division truncates toward zero, i.e. rounds down):
+ *   a == 0: product is 0, always representable -- returns 1 with *out = 0.
+ *   a != 0, b <= SIZE_MAX/a: since integer division rounds down, a * (SIZE_MAX/a) <= SIZE_MAX,
+ *     and b <= SIZE_MAX/a implies a*b <= a*(SIZE_MAX/a) <= SIZE_MAX -- fits, returns 1.
+ *   a != 0, b > SIZE_MAX/a: b >= (SIZE_MAX/a) + 1, so a*b >= a*(SIZE_MAX/a) + a > SIZE_MAX -- the
+ *     true product exceeds SIZE_MAX, so it cannot fit -- correctly returns 0 without computing
+ *     `a*b` at all (avoiding the wraparound this function exists to prevent).
+ * Attempted a CBMC proof of this over the full unconstrained size_t domain (both --32 and native
+ * 64-bit); the fully-generic multiplication-overflow SAT problem didn't converge within a 10-
+ * minute budget on either width. Not worth an unreliable/slow CI gate for a well-established,
+ * hand-verifiable four-line idiom -- see docs/requirements.md. */
+static inline int pfc_size_mul(size_t a, size_t b, size_t *out) {
+    if ((a != 0u) && (b > (SIZE_MAX / a))) {
+        return 0;
+    }
+    *out = a * b;
+    return 1;
+}
+
 #endif /* PFC_INTERNAL_H */

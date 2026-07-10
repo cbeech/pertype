@@ -243,6 +243,24 @@ static void test_spectral_corruption(void)
         CHECK(pfc_decode(s, sizeof s, d2, 64, &out, g_work) == PFC_E_CORRUPT,
               "spectral truncated-header (20B) rejected, not OOB-read");
     }
+    {
+        /* Regression for a real bug found extending CBMC coverage: width*height*count*es is up
+         * to 78 bits of untrusted wire-header input -- width=2, es=2 (bd=16), height=count=2^31
+         * makes the true product EXACTLY 2^64, which a naive 64-bit `(size_t)width*height*count*
+         * es` computes as 0 (full wraparound) -- so the old check `cap < total` was `cap < 0`,
+         * always false, meaning ANY cap (even 0) was accepted as "big enough" for a stream that
+         * actually needs 2^64 bytes. See pfc_size_mul in pfc_internal.h. */
+        uint8_t s[24];
+        memset(s, 0, sizeof s);
+        s[0] = 'P'; s[1] = 'F'; s[2] = 'C'; s[3] = '1'; s[4] = 1; s[5] = (uint8_t)PFC_CODEC_SPECTRAL;
+        s[6] = 16;                                   /* bd=16 -> es=2 */
+        s[8] = 2;                                     /* width = 2 (LE) */
+        s[12] = 0; s[13] = 0; s[14] = 0; s[15] = 0x80; /* height = 2^31 (LE) */
+        s[16] = 0; s[17] = 0; s[18] = 0; s[19] = 0x80; /* count = 2^31 (LE) */
+        s[20] = 1;                                     /* band = 1 (LE) */
+        CHECK(pfc_decode(s, sizeof s, d2, 64, &out, g_work) == PFC_E_BOUND,
+              "spectral width*height*count*es overflow (2^64) rejected, not silently wrapped");
+    }
 }
 
 static void test_columnar_oversized_block(void)

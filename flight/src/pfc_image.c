@@ -375,6 +375,7 @@ pfc_status pfc_image_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
     uint8_t es;
     size_t pos = PFC_HDR;
     uint32_t y0;
+    size_t total;
 
     if ((bitdepth != 8u) && (bitdepth != 16u)) {
         return PFC_E_CORRUPT;
@@ -383,7 +384,13 @@ pfc_status pfc_image_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
         return PFC_E_CORRUPT;
     }
     es = (bitdepth > 8u) ? 2u : 1u;
-    if (cap < ((size_t)width * height * es)) {
+    /* width is bounded (PFC_MAX_COLS) so this product can't overflow a 64-bit size_t, but a
+     * 32-bit size_t (see pfc_size_mul in pfc_internal.h) is a different story -- fixed
+     * defensively for the same reason pfc_block_read was, even though this codec's decoder is
+     * expected to run ground-side (typically 64-bit) per pfc.h's asymmetric-codec design. */
+    if (!pfc_size_mul((size_t)width, height, &total) ||
+        !pfc_size_mul(total, es, &total) ||
+        (cap < total)) {
         return PFC_E_BOUND;
     }
 
@@ -431,6 +438,6 @@ pfc_status pfc_image_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
             pfc_image_decode_band(&dec, w, dst, width, bitdepth, y0, y1);
         }
     }
-    *out = (size_t)width * height * es;
+    *out = total;
     return PFC_OK;
 }
