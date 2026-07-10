@@ -92,13 +92,16 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   landed, same run) an unbounded `block_recs` in COLUMNAR's decode, both found+fixed — see
   `requirements.md`. This is exactly the value case for this gate: 170k iterations of the *Python*
   fuzz harness found nothing over the same class of input; coverage-guided libFuzzer found two
-  real bugs within minutes of first running. **Done:** raised the bound to 300s and wired corpus
-  persistence across CI runs via `actions/cache` (unique-key-per-run + `restore-keys`, the
-  standard "ratchet" pattern — same trick `ccache`-in-CI setups use) — fuzzing coverage now
-  compounds run over run instead of restarting from nothing each time, still not yet confirmed to
-  actually work on the self-hosted gitea runner specifically (depends on that instance's cache
-  backend being configured; genuinely still an open smoke test, not "days of CPU" yet, but it now
-  accumulates toward that instead of resetting every push).
+  real bugs within minutes of first running. **Done:** raised the bound to 300s — confirmed on run
+  #23 (`Done 329400 runs in 301 second(s)`, 0 crashes, clean exit). **Attempted, confirmed not
+  working:** corpus persistence across CI runs via `actions/cache` (unique-key-per-run +
+  `restore-keys`, the standard "ratchet" pattern). Run #23's log shows both the restore and save
+  steps failing with `Request timeout` against `/_apis/artifactcache/...` — this Gitea instance's
+  cache backend isn't configured server-side, so the step is a permanent no-op (it degrades to a
+  warning rather than failing the job, which is why the job itself still went green). Net effect:
+  each run still fuzzes for a real 5 minutes from an empty corpus, but coverage does not yet
+  compound across runs — that requires enabling a cache backend on the Gitea instance itself,
+  outside what's fixable from workflow YAML.
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
@@ -113,9 +116,11 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    record: `flight/docs/misra-deviations.md`. `misra` confirmed passing in CI (all 4 jobs green on
    the same run) after two more small real findings surfaced once the MISRA noise cleared and were
    triaged the same way.
-3. **Done: sustained fuzzing.** Raised `libfuzzer`'s bound to 300s and wired corpus persistence
-   across CI runs via `actions/cache` — see 2.6 above for the details and the one remaining
-   uncertainty (unconfirmed on the self-hosted gitea runner specifically).
+3. **Partially done: sustained fuzzing.** Raised `libfuzzer`'s bound to 300s — confirmed working.
+   Attempted corpus persistence across CI runs via `actions/cache`; confirmed on run #23 that it
+   does *not* work on this self-hosted Gitea instance (no configured cache backend) — see 2.6
+   above. Real remaining work: enable a cache backend on the Gitea instance, or drop the persistence
+   attempt and just accept fresh-corpus 5-minute runs.
 4. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
 5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions.
