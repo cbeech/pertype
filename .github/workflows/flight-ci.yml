@@ -49,6 +49,23 @@ jobs:
         working-directory: flight
         run: make misra
 
+  # CBMC bounded proof (R6, formal): pfc_block_read -- the shared framing primitive every
+  # codec's decoder calls to parse untrusted downlink bytes -- never reads out of bounds, proved
+  # under a 32-bit size_t model (the real RAD750/LEON/RISC-V-32 flight targets), not the 64-bit
+  # host every other job here implicitly runs under. See proofs/cbmc/harness_block_read.c: this
+  # proof exists because a payload_len field near UINT32_MAX could wrap the old bounds check's
+  # size_t arithmetic on a 32-bit target while never doing so in 64-bit CI -- a real bug found
+  # authoring this proof, fixed in the same change (see docs/requirements.md).
+  cbmc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cbmc
+        run: apt-get update && apt-get install -y cbmc
+      - name: CBMC proof — pfc_block_read never reads OOB (32-bit size_t model)
+        working-directory: flight
+        run: make cbmc
+
   # libFuzzer + ASan/UBSan on the decoder (untrusted downlink input, R6). Bounded wall-clock so
   # the job terminates on its own; any crash/leak found within that window fails the job.
   libfuzzer:

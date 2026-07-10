@@ -12,6 +12,7 @@ coverage) still demands.
 | Lossless round-trip | 139 unit + **15 063 randomised/edge cases** across all 5 codecs (image/seq/float/columnar/spectral) + real CyCIF + real AVIRIS hyperspectral; 0 failures |
 | No expansion (`pfc_bound`) | property-checked on adversarial inputs — **two real under-estimate bugs found and fixed** (a skinny-image case, then a many-small-blocks spectral-cube case, both caught by the stress harness) |
 | Error containment | bit-flip + truncation tests, **170 000 Python-harness fuzz iterations** under ASan/UBSan found nothing; the **real C/libFuzzer CI run found TWO genuine heap-buffer-overflows across its first two runs** — a SPECTRAL header-size validation gap, then (after that fix, same 120s run) a COLUMNAR unbounded-`block_recs` gap — both found and fixed; the honest lesson is coverage-guided fuzzing catches what blind random fuzzing doesn't, and both were found within minutes of the gate's first-ever execution |
+| Machine-model-dependent safety | **CBMC bounded proof found a THIRD real bug that no test above could ever find**: `pfc_block_read`'s length check summed an untrusted field before comparing, wrapping `size_t` (and bypassing the bounds check) only on a 32-bit target — the actual RAD750/LEON/RISC-V-32 flight hardware, invisible to every 64-bit CI job above. Fixed with an overflow-safe subtraction form, now proved under a `--32` (32-bit `size_t`) CBMC model — see `requirements.md` |
 | No dynamic allocation | compiled `.so` imports **zero** alloc symbols; no recursion |
 | Bounded memory | single caller-owned `pfc_ctx` (~330 KB at defaults), compile-time sized |
 | Determinism | encode-twice byte-identical (checked every stress case) |
@@ -54,10 +55,23 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   predictor edges). Functional tests passing ≠ all branches exercised.
 
 ### 2.3 Formal methods (stronger than testing for the safety-critical claims)
-- **Bounded model checking** (CBMC / Frama-C) of the decoder: prove *no out-of-bounds read for any
-  input up to N bytes* — a proof, not a sample. The decoder eats untrusted/SEU-corrupted data, so
-  this is the highest-value formal target.
-- Prove **`pfc_bound` sufficiency** (the class of bug we just hit) and **round-trip correctness**
+- **Bounded model checking** (CBMC) of the decoder: prove *no out-of-bounds read for any input up
+  to N bytes* — a proof, not a sample. The decoder eats untrusted/SEU-corrupted data, so this is
+  the highest-value formal target. **Started, and it already paid for itself.** `pfc_block_read`
+  — the shared block-framing primitive every codec's decoder calls — is now proved (`proofs/cbmc/
+  harness_block_read.c`, `make cbmc` / CI `cbmc` job) to never read out of bounds, and critically
+  the proof is run under a **32-bit `size_t` model** (`--32`), matching the real RAD750/LEON/
+  RISC-V-32 flight targets rather than the 64-bit host every other gate here runs on. Writing that
+  harness surfaced a real bug first: the original bounds check summed an untrusted 4-byte length
+  field before comparing it, which can wrap `size_t` on a 32-bit target (never on 64-bit CI) and
+  let a crafted `payload_len` near `UINT32_MAX` bypass the check entirely — invisible to every
+  sanitizer/fuzz/functional gate in this pipeline because they all run 64-bit. Fixed with a
+  subtraction-based check that cannot overflow on any width; see `requirements.md` for the full
+  writeup. Scope is currently one function, not the whole decoder — see next steps.
+- Extend CBMC coverage to the rest of the untrusted-input surface (the per-codec header parsers
+  in `pfc_spectral.c`/`pfc_columnar.c`/`pfc_image.c`/`pfc_seq.c`, which each still do their own
+  small amount of arithmetic on untrusted header fields before or alongside calling
+  `pfc_block_read`) and prove **`pfc_bound` sufficiency** and **round-trip correctness**
   `decode(encode(x)) == x` exhaustively for small inputs.
 
 ### 2.4 Target & timing
@@ -121,7 +135,14 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    does *not* work on this self-hosted Gitea instance (no configured cache backend) — see 2.6
    above. Real remaining work: enable a cache backend on the Gitea instance, or drop the persistence
    attempt and just accept fresh-corpus 5-minute runs.
-4. **CBMC proof: decoder never reads OOB** for inputs ≤ N — converts the fuzz evidence into a proof.
+4. **Started: CBMC proof.** `pfc_block_read` (the shared block-framing primitive every codec's
+   decoder calls) proved to never read OOB, under a 32-bit `size_t` model matching the real
+   flight targets — and writing the harness found a real bug (a `size_t`-wraparound bounds-check
+   bypass, 32-bit-only, invisible to every other gate) before the proof ever ran, now fixed. Not
+   yet run in CI as of this writing — landing in the same push as this doc update; check the next
+   run's `cbmc` job before treating it as confirmed. Remaining scope: extend to the per-codec
+   header parsers that also touch untrusted fields, and prove `pfc_bound` sufficiency /
+   round-trip correctness.
 5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
    framing + predictor-edge functions.
 6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE

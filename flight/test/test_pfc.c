@@ -5,6 +5,7 @@
  * (bit-flip + truncation), and a compression-ratio sanity check on smooth data.
  */
 #include "pfc.h"
+#include "pfc_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -268,6 +269,38 @@ static void test_columnar_oversized_block(void)
     free(d2);
 }
 
+static void test_block_read_bounds(void)
+{
+    /* Locks in the exact boundary of pfc_block_read's rewritten (subtraction-based) length
+     * check, guarding against a regression back to the addition-based form (p+PFC_BLKHDR+n>len)
+     * that could wrap size_t on a 32-bit target -- see pfc_frame.c and proofs/cbmc/. This host
+     * test only proves the boundary is correct under the host's own (64-bit) size_t; it cannot
+     * exercise the wraparound itself, which is what the CBMC proof (--32) is for. */
+    uint8_t buf[20];
+    size_t pos;
+    const uint8_t *payload;
+    size_t plen;
+    uint8_t flags;
+    uint32_t crc;
+
+    /* rem = len(20) - pos(0) - PFC_BLKHDR(9) = 11: exact-fit payload_len must be accepted. */
+    memset(buf, 0, sizeof buf);
+    crc = pfc_crc32(&buf[9], 11u);
+    pfc_put_u32(&buf[0], 11u);
+    pfc_put_u32(&buf[5], crc);
+    pos = 0u;
+    CHECK(pfc_block_read(buf, sizeof buf, &pos, &payload, &plen, &flags) == PFC_OK,
+          "block_read accepts exact-fit payload_len (rem boundary)");
+    CHECK(pos == sizeof buf, "block_read advances pos to end of buffer on exact fit");
+
+    /* rem+1 (12) must be rejected without advancing pos, not silently truncated/wrapped. */
+    pfc_put_u32(&buf[0], 12u);
+    pos = 0u;
+    CHECK(pfc_block_read(buf, sizeof buf, &pos, &payload, &plen, &flags) == PFC_E_CORRUPT,
+          "block_read rejects payload_len one past the boundary");
+    CHECK(pos == 0u, "block_read leaves pos unchanged on rejection");
+}
+
 static void test_fault_injection(void)
 {
     uint32_t w = 200u, h = 120u; uint8_t bd = 16u;
@@ -449,6 +482,7 @@ int main(void)
     test_spectral();
     test_spectral_corruption();
     test_columnar_oversized_block();
+    test_block_read_bounds();
     test_fault_injection();
     test_truncation();
     test_validation();

@@ -144,6 +144,12 @@ not silently. Keep the two files in sync by hand; job bodies are otherwise ident
 - **`native` job** — `make check` (the full local gate: strict, ASan/UBSan, R7 cross-check,
   decoder fuzz, 15k-case stress).
 - **`misra` job** — `apt-get install cppcheck` (prebuilt binary, not a source build) → `make misra`.
+- **`cbmc` job** — `apt-get install cbmc` → `make cbmc`: a bounded model-checking proof (not a
+  test) that `pfc_block_read` — the shared block-framing primitive every codec's decoder calls to
+  parse untrusted downlink bytes — never reads out of bounds. Run with `--32` so CBMC models a
+  32-bit `size_t`, matching the real flight targets (RAD750/LEON/RISC-V-32) rather than the
+  64-bit host every other job here runs under; see `proofs/cbmc/harness_block_read.c` and the
+  "CBMC proof" section below for why that distinction is the entire point of this gate.
 - **`libfuzzer` job** — `apt-get install clang`, builds `fuzz_pfc.c` per its own documented
   invocation, runs bounded to 300s wall-clock (raised from an initial 120s once the gate proved
   its value — see below). The corpus persists across CI runs via `actions/cache` (a `libfuzzer-
@@ -233,6 +239,58 @@ codec using the `xform` scratch buffer). `native` and `bigendian` confirmed full
 test-setup bug in my own regression test was found and fixed (wrong `cap` value — the underlying
 fix was already correct). `misra` remains red **by design** until the findings below are
 addressed in the codebase — see the MISRA triage section further down.
+
+### CBMC proof: pfc_block_read, and a THIRD real bug found writing it
+
+Authoring the `cbmc` job's harness (`proofs/cbmc/harness_block_read.c`) surfaced a real bug before
+the proof ever ran in CI — reading `pfc_block_read`'s bounds check with "does this hold for any
+`size_t` width" in mind, not just "does this pass on this 64-bit host", made it visible by hand:
+
+```c
+if ((p + PFC_BLKHDR + n) > len) { return PFC_E_CORRUPT; }
+```
+
+`n` is the raw 4-byte `payload_len` field, read straight off the wire via `pfc_get_u32` —
+attacker/corruption-controlled, up to `UINT32_MAX`. On the 64-bit host every other CI job runs
+on, `p + PFC_BLKHDR + n` never overflows `size_t`, so this check has always behaved correctly in
+every test this project has ever run — `native`, `libfuzzer` (170k Python iterations, then real
+coverage-guided libFuzzer), `bigendian` (`qemu-ppc` is still a 64-bit host process emulating a
+32-bit *instruction set*, not a 32-bit `size_t` C runtime). But the actual flight targets
+(RAD750, LEON/SPARC, RISC-V-32) are 32-bit machines where `size_t` really is `uint32_t`. There, a
+crafted `payload_len` near `UINT32_MAX` makes `p + PFC_BLKHDR + n` wrap around 2^32 to a small
+value, satisfies `<= len`, and the function proceeds to treat a multi-gigabyte `n` as a valid
+in-bounds payload length — `pfc_crc32(*payload, n)` and whatever codec consumes `*payload`/`*plen`
+next would read far past the actual buffer. Every codec's decoder funnels through this one
+function (`pfc_spectral.c`, `pfc_seq.c`, `pfc_image.c`, `pfc_columnar.c` all call it directly), so
+this was a single point of exposure for the whole decoder on 32-bit flight hardware specifically —
+and specifically the class of bug no gate in this pipeline could have found: it's invisible under
+every sanitizer, every fuzz run, and every functional test executed so far, because they all run
+on 64-bit hosts. This is the textbook case for formal methods over testing: the property depends
+on a machine model (32-bit `size_t`) that nothing else in this CI pipeline exercises.
+
+**Fixed** in `pfc_block_read` (and, defensively, the symmetric `pfc_block_write`, even though its
+inputs are locally-trusted encoder-side values, not downlink data): rewrote the bounds check to
+subtract already-validated quantities instead of summing untrusted-scale ones —
+
+```c
+if ((p > len) || ((len - p) < PFC_BLKHDR)) { return PFC_E_CORRUPT; }
+rem = (len - p) - PFC_BLKHDR;
+if ((size_t)n > rem) { return PFC_E_CORRUPT; }
+```
+
+— which cannot overflow on any `size_t` width: `rem` is a subtraction of two quantities already
+proven `len - p >= PFC_BLKHDR`, and the final `*pos = p + PFC_BLKHDR + n` is only reached once `n
+<= rem` is proven, which bounds that sum by `len` itself. Added a host-level regression test
+(`test_block_read_bounds` in `test_pfc.c`) locking in the exact boundary (`n == rem` accepted, `n
+== rem + 1` rejected) — though that test can only prove the boundary is correct under the host's
+own 64-bit `size_t`; it cannot exercise the wraparound itself. **That's what the CBMC proof is
+for**: `harness_block_read.c` run with `--32` (`make cbmc` / the `cbmc` CI job) models a real
+32-bit `size_t` and asserts the function's full documented contract — on `PFC_OK`, `payload`/`plen`
+lie entirely within `src[0..len)` and `pos` advances by exactly the block size; on rejection,
+`pos` is left unchanged. Proved on the fixed code; the old (pre-fix) code would fail this proof
+under `--32` with `--unsigned-overflow-check`, which is exactly the point — status of the actual
+CI run against the fixed code not yet confirmed as of this writing (job just landed, see the
+CI-status section for the outcome once run #24 finishes).
 
 ## Other open items
 

@@ -11,10 +11,18 @@ pfc_status pfc_block_write(uint8_t *dst, size_t cap, size_t *pos,
                            const uint8_t *payload, size_t plen, uint8_t flags)
 {
     size_t p = *pos;
+    size_t rem;
     uint32_t crc;
     size_t i;
 
-    if ((p + PFC_BLKHDR + plen) > cap) {
+    /* Subtraction-based, not addition-based: p+PFC_BLKHDR+plen can wrap size_t on a 32-bit
+     * target even though it never does on a 64-bit dev/CI host. Bound each quantity against
+     * already-validated headroom instead of summing untrusted-scale values first. */
+    if ((p > cap) || ((cap - p) < PFC_BLKHDR)) {
+        return PFC_E_BOUND;
+    }
+    rem = (cap - p) - PFC_BLKHDR;
+    if (plen > rem) {
         return PFC_E_BOUND;
     }
     crc = pfc_crc32(payload, plen);
@@ -33,16 +41,24 @@ pfc_status pfc_block_read(const uint8_t *src, size_t len, size_t *pos,
                           const uint8_t **payload, size_t *plen, uint8_t *flags)
 {
     size_t p = *pos;
+    size_t rem;
     uint32_t n, crc;
 
-    if ((p + PFC_BLKHDR) > len) {
+    if ((p > len) || ((len - p) < PFC_BLKHDR)) {
         return PFC_E_CORRUPT;          /* truncated header — *pos unchanged */
     }
     n = pfc_get_u32(&src[p]);
     *flags = src[p + 4u];
     crc = pfc_get_u32(&src[p + 5u]);
 
-    if ((p + PFC_BLKHDR + n) > len) {
+    /* n is a raw 4-byte field straight from untrusted downlink data — attacker/corruption-
+     * controlled up to UINT32_MAX. Comparing against rem (subtraction of already-validated
+     * quantities) instead of summing p+PFC_BLKHDR+n avoids a size_t wraparound that would
+     * otherwise let a crafted length near UINT32_MAX bypass this check on a 32-bit size_t
+     * target (RAD750/LEON/RISC-V-32) — invisible on a 64-bit dev/CI host, where the same sum
+     * never overflows. See docs/misra-deviations.md / proofs/cbmc for the CBMC proof. */
+    rem = (len - p) - PFC_BLKHDR;
+    if ((size_t)n > rem) {
         return PFC_E_CORRUPT;          /* implausible/truncated length — *pos unchanged, no OOB */
     }
     *payload = &src[p + PFC_BLKHDR];
