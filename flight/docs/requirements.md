@@ -77,26 +77,35 @@ residual sub-percent floor is finer context modelling that only pays off with bi
 - `fuzz_pfc.c` — libFuzzer harness. Not run locally (no clang in this environment). Wired into the
   `libfuzzer` job in `flight-ci.yml` (bounded to 120s wall-clock). **Authored, not yet executed.**
 
-### Structural coverage (gcov, full corpus = test_pfc + stress)
+### Structural coverage (gcov/gcovr, full corpus = test_pfc + stress)
 
-| File | Lines | Branches taken |
-|------|-------|----------------|
-| pfc_arith.c (range coder) | 100% | 95% |
-| pfc_model.c | 100% | 100% |
-| pfc_crc.c / pfc_frame.c | 100% | 100% |
-| pfc.c (dispatch) | 98.6% | 84% |
-| pfc_image.c (incl. bias + run mode) | 99.2% | 93% |
-| pfc_seq.c | 97.2% | 86% |
-| pfc_columnar.c | 96.8% | 88% |
-| pfc_spectral.c | 96.1% | — |
+**Now automated as a CI gate** (`make coverage`, `coverage` job in `flight-ci.yml`) rather than a
+one-off manual measurement — every push re-runs it and fails below 95% line / 80% branch
+project-wide (set under the measured baseline to leave headroom for legitimate new code). Current
+measured baseline, same corpus as `native`:
+
+| File | Branches taken |
+|------|-----------------|
+| pfc_crc.c | 100% |
+| pfc_model.c | 100% |
+| pfc_arith.c (range coder) | 95% |
+| pfc_frame.c | 87% |
+| pfc_image.c (incl. bias + run mode) | 93% |
+| pfc_seq.c | 88% |
+| pfc.c (dispatch) | 85% |
+| pfc_columnar.c | 85% |
+| pfc_spectral.c | 84% |
+
+Project-wide: **98.4% lines** (908/923), **89.3% branches** (553/619), 100% functions.
 
 Driving coverage exposed that the `seq`/`float`/`columnar` **error-containment paths had no direct
 tests** (only `image` did); targeted bit-flip + truncation + malformed-header + invalid-param tests
 were added for every codec (`test_validation`, `test_corruption_all`, `test_more_guards`). The
-residual ~9 uncovered lines are **defensive guards verified by inspection**: (a) internal
+residual uncovered lines are **defensive guards verified by inspection**: (a) internal
 re-validation the dispatcher already enforces; (b) the raw-block plen-mismatch repair, reachable
 only with a CRC-valid-but-length-inconsistent block (negligible from real corruption) and
-structurally identical to the tested CRC-mismatch repair. MC/DC measurement is a future step.
+structurally identical to the tested CRC-mismatch repair. **MC/DC measurement remains a gap** —
+gcov doesn't measure condition/decision coverage; see `mission-safety.md` §2.2.
 
 See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 
@@ -368,6 +377,24 @@ provably correct via basic integer-division properties (rounds down, so `a*(SIZE
 SIZE_MAX` always) without needing exhaustive bit-blasting. Confirmed via full local `make check`
 (146 unit + 7 crosscheck + 20k fuzz + 15063 stress, 0 failures) that the fix is behaviorally
 correct in the cases that matter, even without the generic CBMC proof.
+
+**Attempted CBMC proofs of `pfc_bound` sufficiency + round-trip correctness** for the smallest
+nontrivial SEQ case (count=1, elem=1, either signedness, ANY 1-byte input): same "didn't converge"
+outcome as `pfc_size_mul` above, for a different reason. Two harnesses were written and run (32-bit
+model, `--unwind 40`, same check flags as `pfc_block_read`'s proof): a combined
+`pfc_decode(pfc_encode(x)) == x` round-trip proof, which didn't reach a verdict in 10 minutes; then
+an encode-only `pfc_bound` sufficiency proof split out on the theory that it's a smaller problem —
+it also didn't converge in a comparable window. Unlike `pfc_block_read` (pure bounds arithmetic,
+the case this toolchain has proven tractable) or `pfc_size_mul` (unconstrained-domain arithmetic),
+this pulls in the range coder's carry/renormalisation branching and the adaptive category model's
+per-symbol frequency-table updates — real, data-dependent state, not just a wider input domain, and
+CBMC's bounded model checking scales badly with that kind of branching even for a single symbol.
+Both harness files were deleted rather than left in `proofs/cbmc/` unrun (same handling as
+`pfc_size_mul`'s abandoned attempt — no dangling broken proof, just this writeup). The property
+remains covered only by testing (15 063 stress cases + the independent-decoder cross-check
+exercise round-trip correctness and bound sufficiency empirically already), not by formal proof.
+Re-attempting would need a larger time budget, a hand-built model of the range coder's invariants
+instead of symbolically executing it, or a different solver backend — none pursued here.
 
 ## Other open items
 

@@ -17,7 +17,7 @@ OBJ     := $(SRC:.c=.o)
 #   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
-.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc
+.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage
 all: test
 
 # Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
@@ -83,6 +83,33 @@ cbmc:
 		--function harness_pfc_block_read \
 		--bounds-check --pointer-check --unsigned-overflow-check --signed-overflow-check \
 		--unwind 40 --unwinding-assertions
+
+# Structural coverage (line + branch, via gcov/gcovr). Same corpus as `check`'s functional gates
+# (test_pfc + stress): both instrumented binaries link the SAME coverage objects, so running both
+# accumulates into shared .gcda counters -- one combined report, not two separate ones. MC/DC is
+# NOT measured here (gcov doesn't do condition/decision coverage); see docs/mission-safety.md §2.2
+# for why that remains a separate, unaddressed gap. Thresholds are set below the current measured
+# baseline (98.4% line / 89.2% branch project-wide, see docs/requirements.md) to leave headroom
+# for legitimate new code while still catching a real regression.
+COVDIR := build/cov
+COVFLAGS := $(CSTD) $(WARN) --coverage -O0 -g $(INC)
+COVOBJ := $(patsubst src/%.c,$(COVDIR)/%.o,$(SRC))
+
+$(COVDIR)/%.o: src/%.c
+	@mkdir -p $(COVDIR)
+	$(CC) $(COVFLAGS) -c $< -o $@
+
+coverage:
+	@command -v gcovr >/dev/null 2>&1 || { echo "gcovr not installed (CI gate skipped)"; exit 0; }
+	rm -rf $(COVDIR)
+	@mkdir -p $(COVDIR)
+	$(MAKE) $(COVOBJ)
+	$(CC) $(COVFLAGS) $(COVOBJ) test/test_pfc.c -o $(COVDIR)/test_pfc
+	$(CC) $(COVFLAGS) $(COVOBJ) test/stress.c -o $(COVDIR)/stress
+	./$(COVDIR)/test_pfc
+	./$(COVDIR)/stress 5000 150000
+	gcovr --root . --filter 'src/' --branches --print-summary \
+		--fail-under-line 95 --fail-under-branch 80
 
 # Deterministic fixture emitter — the R4 endianness-neutrality proof. Built once natively (host
 # endianness) and once cross-compiled for a big-endian target (CI job `bigendian`), each run's

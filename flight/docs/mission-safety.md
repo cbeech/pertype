@@ -18,7 +18,7 @@ coverage) still demands.
 | Determinism | encode-twice byte-identical (checked every stress case) |
 | Independent reference | pure-Python ground decoder reproduces C-encoder output byte-for-byte (R7), **10/10** cross-check incl. real CyCIF and real AVIRIS |
 | Standard-relative perf | beats CCSDS-121-class Rice **+2.8%** (spatial) and is within **−1.2%** of CCSDS-123-class (hyperspectral, via the spectral codec) on real 16-bit data |
-| Structural coverage | gcov: entropy core (range coder/model/CRC/framing) **100%** lines; all five codecs 96–99% lines |
+| Structural coverage | gcov, automated as a CI gate (`make coverage`, `coverage` job): **98.4%** lines / **89.3%** branches project-wide over the same corpus as `native` (test_pfc + stress); entropy core (range coder/model/CRC/framing) 100% lines; gated in CI at 95% line / 80% branch (below measured baseline, catches regressions without blocking legitimate new code) |
 
 This is a high-quality, well-tested core — a credible *foundation*. It is not yet flight-qualified.
 
@@ -50,9 +50,16 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
 - **Independent V&V (IV&V)**: review by a separate team/organisation.
 
 ### 2.2 Structural coverage (beyond functional tests)
-- Measure **statement, branch, and MC/DC** coverage (gcov/llvm-cov). Highest-criticality code wants
-  ~100% statement/branch and **MC/DC** on decision-heavy functions (range coder renorm, framing,
-  predictor edges). Functional tests passing ≠ all branches exercised.
+- **Done: statement + branch coverage, automated in CI.** `make coverage` (gcov/gcovr) runs the
+  same corpus as `native` (test_pfc + stress) with instrumented objects and gates on line/branch
+  percentage — 98.4% lines / 89.3% branches project-wide as of this writing, gated at 95%/80% in
+  CI (`coverage` job in `flight-ci.yml`). Per-file detail in `docs/requirements.md`.
+- **Remaining gap: MC/DC.** gcov measures statement and branch coverage, not modified
+  condition/decision coverage — a compound boolean like `a && b || c` can hit every branch outcome
+  without exercising every condition's independent effect. Highest-criticality code (range coder
+  renorm, framing, predictor edges) wants MC/DC for a real DO-178C-spirit claim; this needs a
+  different tool (e.g. `llvm-cov` with `-fcoverage-mcdc`, or a dedicated MC/DC analyzer) and is not
+  yet attempted.
 
 ### 2.3 Formal methods (stronger than testing for the safety-critical claims)
 - **Bounded model checking** (CBMC) of the decoder: prove *no out-of-bounds read for any input up
@@ -86,8 +93,23 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   budget on either width — left as a hand-verified proof-sketch in the source comment rather than
   an unreliable CI gate; the idiom is standard and provably correct by basic integer-division
   properties. See `requirements.md` for the full writeup.
-- Remaining CBMC scope: prove **`pfc_bound` sufficiency** and **round-trip correctness**
-  `decode(encode(x)) == x` exhaustively for small inputs.
+- **Attempted: `pfc_bound` sufficiency + round-trip correctness for the smallest SEQ case
+  (count=1, elem=1, either signedness, ANY 1-byte input) — did not converge, same outcome as
+  `pfc_size_mul` above and for a similar reason.** Two harnesses were written and run (32-bit
+  model, `--unwind 40`, same check flags as `pfc_block_read`): a combined encode+decode round-trip
+  proof, and an encode-only `pfc_bound` sufficiency proof split out after the combined one didn't
+  finish in 10 minutes. The split encode-only proof also didn't reach a verdict in a comparable
+  window. Unlike `pfc_block_read` (pure bounds arithmetic — the SAT-friendly case), this pipeline
+  pulls in the range coder's data-dependent carry/renormalisation branching and the adaptive
+  category model's frequency-table updates even for a single symbol — a much larger state space
+  for CBMC's solver, not just a bigger input domain. Per the same policy as `pfc_size_mul`: not
+  worth an unreliable/slow CI gate. No harness file was kept in `proofs/cbmc/` (consistent with how
+  `pfc_size_mul`'s abandoned attempt was handled — no dangling unrun proof, just this writeup).
+  This property remains covered only by testing: 15 063 stress cases + the independent-decoder
+  cross-check already exercise round-trip correctness and bound sufficiency empirically, just not
+  as an exhaustive proof. Re-attempting would need either a much larger time budget, a tighter
+  hand-built model (e.g. asserting range-coder invariants directly instead of symbolically
+  executing it), or a different solver backend — not pursued further here.
 
 ### 2.4 Target & timing
 - **Cross-compile and run on the flight CPU/RTOS**: RAD750 (big-endian PowerPC), LEON/SPARC, or
@@ -123,14 +145,20 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   fuzz harness found nothing over the same class of input; coverage-guided libFuzzer found two
   real bugs within minutes of first running. **Done:** raised the bound to 300s — confirmed on run
   #23 (`Done 329400 runs in 301 second(s)`, 0 crashes, clean exit). **Attempted, confirmed not
-  working:** corpus persistence across CI runs via `actions/cache` (unique-key-per-run +
-  `restore-keys`, the standard "ratchet" pattern). Run #23's log shows both the restore and save
-  steps failing with `Request timeout` against `/_apis/artifactcache/...` — this Gitea instance's
-  cache backend isn't configured server-side, so the step is a permanent no-op (it degrades to a
-  warning rather than failing the job, which is why the job itself still went green). Net effect:
-  each run still fuzzes for a real 5 minutes from an empty corpus, but coverage does not yet
-  compound across runs — that requires enabling a cache backend on the Gitea instance itself,
-  outside what's fixable from workflow YAML.
+  working, and now formally closed out:** corpus persistence across CI runs via `actions/cache`
+  (unique-key-per-run + `restore-keys`, the standard "ratchet" pattern). Run #23's log shows both
+  the restore and save steps failing with `Request timeout` against `/_apis/artifactcache/...` —
+  this Gitea instance's cache backend isn't configured server-side. A second option,
+  `actions/upload-artifact` + `download-artifact`, was considered and deliberately not pursued:
+  v4's cross-run fetch needs a prior run-id lookup (no built-in "restore latest" the way `cache`
+  has `restore-keys`), and that protocol's compatibility with this Gitea instance is itself
+  unverified without live testing — trading one unverified integration for another isn't worth it
+  for a bounded 300s job. The dead `actions/cache` step has been removed from both workflow files
+  rather than left as a misleading permanent no-op. **Accepted limitation:** each run fuzzes a
+  real, fresh 300s from an empty corpus; coverage does not compound across runs. Closing this for
+  real requires either enabling a cache backend on the Gitea instance itself (outside what's
+  fixable from workflow YAML) or committing a seed corpus into the repo — neither is worth the
+  cost/risk given two real bugs were already found within the first two cold-corpus runs.
 
 ## 3. Prioritised next steps (to raise assurance, in order of value/effort)
 
@@ -145,11 +173,12 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    record: `flight/docs/misra-deviations.md`. `misra` confirmed passing in CI (all 4 jobs green on
    the same run) after two more small real findings surfaced once the MISRA noise cleared and were
    triaged the same way.
-3. **Partially done: sustained fuzzing.** Raised `libfuzzer`'s bound to 300s — confirmed working.
-   Attempted corpus persistence across CI runs via `actions/cache`; confirmed on run #23 that it
-   does *not* work on this self-hosted Gitea instance (no configured cache backend) — see 2.6
-   above. Real remaining work: enable a cache backend on the Gitea instance, or drop the persistence
-   attempt and just accept fresh-corpus 5-minute runs.
+3. **Done: sustained fuzzing, corpus persistence formally closed out.** Raised `libfuzzer`'s bound
+   to 300s — confirmed working. Corpus persistence across CI runs via `actions/cache` confirmed not
+   working (run #23, no configured cache backend on this Gitea instance); an `upload-artifact`/
+   `download-artifact` alternative was considered and deliberately not pursued (own unverified
+   protocol-compatibility risk, not worth it for the gain); the dead cache step was removed from
+   both workflow files. Accepted as a real limitation, not left ambiguous — see 2.6 above.
 4. **Done: CBMC proof, confirmed green in CI.** `pfc_block_read` (the shared block-framing
    primitive every codec's decoder calls) is proved — not sampled — to never read out of bounds,
    under a 32-bit `size_t` model matching the real flight targets. Getting here found and fixed
@@ -162,14 +191,22 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    CRC-mismatch rejection), and `pfc_crc32`'s branchless mask idiom (well-defined, but reads as
    overflow to `--unsigned-overflow-check`) was rewritten as an explicit branch. Confirmed on CI
    run #28: `** 0 of 165 failed (1 iterations) / VERIFICATION SUCCESSFUL`. Full writeup:
-   `requirements.md`. Remaining scope: extend to the per-codec header parsers that also touch
-   untrusted fields, and prove `pfc_bound` sufficiency / round-trip correctness.
-5. **Coverage**: add gcov to CI, drive branch coverage to ~100% and MC/DC on the range coder +
-   framing + predictor-edge functions.
+   `requirements.md`. **`pfc_bound` sufficiency + round-trip correctness attempted, did not
+   converge** (see §2.3) — same "not worth an unreliable CI gate" call as `pfc_size_mul`. Remaining
+   scope: extend to the per-codec header parsers that also touch untrusted fields (a bounds-only
+   proof, the SAT-friendly case this toolchain has proven it can handle).
+5. **Done: line + branch coverage, automated in CI.** `make coverage` (gcov/gcovr) over the
+   `native` corpus (test_pfc + stress), gated at 95% line / 80% branch project-wide — below the
+   measured 98.4%/89.3% baseline, so it catches a real regression without blocking legitimate new
+   code. See `coverage` job in `flight-ci.yml` and §2.2. **Remaining gap: MC/DC** — not measured by
+   gcov, needs a different tool; see §2.2.
 6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
    *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap;
    WCET + stack analysis need the real target, not an emulator.
-7. **Formal `pfc_bound` sufficiency + small-input round-trip proofs** (CBMC).
+7. **Attempted, did not converge: formal `pfc_bound` sufficiency + small-input round-trip proofs**
+   (CBMC) — see §2.3. Left as a testing-covered (not formally proven) property, same call as
+   `pfc_size_mul`. Extending CBMC to the per-codec header bounds-checks (item 4's remaining scope)
+   is the more tractable next formal-methods step, not this.
 8. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
    NPR 7150.2 for the assigned software class.
 
