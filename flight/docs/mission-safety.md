@@ -44,9 +44,14 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   rule and are recorded as formal deviations, applied via `flight/.cppcheck-suppressions`. Every
   deviation has a written, source-verified justification — this is not the gate silenced, it's the
   gate having done its job once.
-- **Bidirectional requirements traceability**: requirement → design → code → test → result, with
-  test *procedures* and review records. We have a starter matrix (`requirements.md`); flight needs
-  the full, audited chain.
+- **Bidirectional requirements traceability: done at the solo-authored level.**
+  `requirements.md`'s traceability matrix now maps every requirement (R1–R9, including the two
+  process/assurance requirements added for the coding-standard and coverage gates) to its
+  implementing module/function, its verification procedure, and a cited result — not just a
+  pointer to a test file. What's still missing for a real flight qualification: **independent
+  audit** (someone other than the author checking the matrix is honest and complete — see IV&V
+  below) and **formal review records** in the process sense (signed-off design reviews, not just
+  the detailed self-review writeups already in this repo).
 - **Independent V&V (IV&V)**: review by a separate team/organisation.
 
 ### 2.2 Structural coverage (beyond functional tests)
@@ -207,8 +212,12 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    (CBMC) — see §2.3. Left as a testing-covered (not formally proven) property, same call as
    `pfc_size_mul`. Extending CBMC to the per-codec header bounds-checks (item 4's remaining scope)
    is the more tractable next formal-methods step, not this.
-8. **Process artifacts**: full traceability, test procedures, SEU fault model, and IV&V — per
-   NPR 7150.2 for the assigned software class.
+8. **Done (solo-authored level): requirements traceability matrix.** `requirements.md` now maps
+   all nine requirements (R1–R9, including coding-standard and coverage as process/assurance
+   requirements) to their implementing design, verification procedure, and a cited result —
+   design→code→test→result, not just requirement→test-file. **Remaining, out of scope for now**:
+   an SEU fault model (§2.5), and independent audit / IV&V / the full NPR 7150.2 process (§2.1) —
+   both need external review capacity this environment doesn't have.
 
 ## 4. Bottom line
 
@@ -217,15 +226,21 @@ lossless core that beats the CCSDS-121 flight standard by +2.8% and sits within 
 JPEG-LS (spatial) and CCSDS-123-class (hyperspectral, via the spectral codec), and survives heavy
 randomised/fuzz testing under sanitizers — and the testing process itself has caught and fixed real
 bugs at every level it's been pointed at: two `pfc_bound` under-estimates during local stress
-testing, then two real heap-buffer-overflows (SPECTRAL, COLUMNAR) the moment CI-grade libFuzzer
-actually ran. The CI workflow (`.github/workflows/flight-ci.yml` + the gitea copy) is no longer
-theoretical — it's been pushed, run repeatedly, debugged, and as of this writing **all four jobs
-(`native`, `misra`, `libfuzzer`, `bigendian`) are green on the same run**, including a full,
+testing, two real heap-buffer-overflows (SPECTRAL, COLUMNAR) the moment CI-grade libFuzzer actually
+ran, and a real 32-bit `size_t`-wraparound bug found writing the CBMC proof before it ever ran. The
+CI workflow (`.github/workflows/flight-ci.yml` + the gitea copy) is no longer theoretical — it's
+been pushed, run repeatedly, debugged, and as of this writing **six jobs are green on the same
+run: `native`, `misra`, `coverage`, `cbmc`, `libfuzzer`, `bigendian`**, including a full,
 source-verified MISRA-C:2012 triage (not a rubber stamp: 179 findings read individually, 4 fixed,
-the rest justified) and a genuine big-endian execution pass under `qemu-user`, not just static
-reasoning about the wire format. That makes it a strong *candidate* for flight — a materially
-stronger one than at the start of this document. "Mission-safe" beyond that is earned through the
-remaining items above: structural/MC/DC coverage, a formal CBMC memory-safety proof, real-target
-(not emulated) hardware validation with WCET analysis, an SEU fault model, and the NPR 7150.2
-assurance process with independent review — none blocked by the design, but all
-real work beyond writing code.
+the rest justified), a formal CBMC proof of `pfc_block_read`'s memory safety under a 32-bit model,
+98.4%/89.3% line/branch coverage gated in CI, and a genuine big-endian execution pass under
+`qemu-user`, not just static reasoning about the wire format. A solo-authored requirements
+traceability matrix (`requirements.md`) now maps every requirement to its implementing design,
+verification procedure, and result. That makes it a strong *candidate* for flight — a materially
+stronger one than at the start of this document. "Mission-safe" beyond that is earned through what
+remains genuinely open: **MC/DC coverage** (gcov doesn't measure it), **CBMC proof of `pfc_bound`
+sufficiency and round-trip correctness** (attempted, didn't converge — see §2.3), **fuzz-corpus
+persistence across CI runs** (attempted, formally accepted as a limitation — see §2.6),
+real-target (not emulated) hardware validation with WCET analysis, an SEU fault model, and the
+NPR 7150.2 assurance process with independent review — none blocked by the design, but all real
+work beyond writing code.

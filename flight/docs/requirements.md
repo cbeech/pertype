@@ -7,13 +7,18 @@ and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` a
 
 | ID | Requirement | Verification |
 |----|-------------|--------------|
-| **R1** | **Lossless.** For every valid input, `decode(encode(x)) == x` byte-for-byte. | Test (round-trip, all 4 codecs, synthetic + real) |
+| **R1** | **Lossless.** For every valid input, `decode(encode(x)) == x` byte-for-byte. | Test (round-trip, all 5 codecs, synthetic + real) |
 | **R2** | **No dynamic allocation.** No `malloc`/`free`/recursion. Working memory is a caller-supplied `pfc_ctx`. | Inspection (no alloc symbols in the `.so`) + test |
 | **R3** | **Bounded memory.** Working set ≤ compile-time maxima; footprint = `pfc_workmem_bytes()`. | Inspection + test |
-| **R4** | **Deterministic & portable.** Integer-only; canonical little-endian wire format (big-endian encoder ⇄ little-endian decoder). | Inspection (no FP in `src/`) + independent LE decoder |
-| **R5** | **No expansion.** Output never exceeds `pfc_bound()`; incompressible blocks store raw. | Test (random data within bound, all codecs) |
-| **R6** | **Error containment.** Each block independently CRC-protected; a corrupt/truncated frame loses one block, is reported, never reads OOB or crashes. | Test (bit-flip + truncation) + ASan/UBSan + fuzz |
+| **R4** | **Deterministic & portable.** Integer-only; canonical little-endian wire format (big-endian encoder ⇄ little-endian decoder). | Inspection (no FP in `src/`) + independent LE decoder + real big-endian execution |
+| **R5** | **No expansion.** Output never exceeds `pfc_bound()`; incompressible blocks store raw. | Test (random data within bound, all codecs); formal proof attempted, did not converge |
+| **R6** | **Error containment.** Each block independently CRC-protected; a corrupt/truncated frame loses one block, is reported, never reads OOB or crashes — on any `size_t` width. | Test (bit-flip + truncation) + ASan/UBSan + fuzz + formal proof (32-bit model) |
 | **R7** | **Independent reference.** An independent implementation decodes the C encoder's output byte-for-byte. | Cross-check (pure-Python ground decoder vs C encoder) |
+| **R8** | **Coding-standard compliance.** MISRA-C:2012 + JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit casts). | Static analysis (`cppcheck --addon=misra`), triaged rule-by-rule |
+| **R9** | **Structural coverage.** Line and branch coverage stay above a floor set below the measured baseline, every push. | Coverage-instrumented test run (gcov/gcovr) |
+
+R8/R9 are process/assurance requirements, not functional ones — added here so every automated CI
+gate has a requirement ID to trace back to, not just the five functional/safety properties R1–R7.
 
 ## Codec coverage (broad scope)
 
@@ -29,15 +34,24 @@ All five share one integer range coder, one adaptive category model, and one blo
 
 ## Traceability matrix
 
-| Requirement | Test / evidence | Status |
-|-------------|-----------------|--------|
-| R1 Lossless | `test_pfc.c` (image8/16, seq, float, columnar, odd sizes); `bench_real.py` (real CyCIF 4/4 byte-exact) | ✅ verified |
-| R2 No malloc | `src/` uses only `stddef/stdint`; `nm -uD build/libpfc.so` shows **no alloc imports** | ✅ verified |
-| R3 Bounded memory | `pfc_workmem_bytes()` = 329 096 B at defaults; tune via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` | ✅ verified |
-| R4 Deterministic/portable | no `float`/`double` types in `src/`; the **explicit-LE pure-Python decoder** decodes the C output (`test_crosscheck.py`), and store-raw serialises LE → stream is canonical | ✅ stream verified; **BE-hardware run: CI workflow authored (`.github/workflows/flight-ci.yml`, `bigendian` job), not yet executed** |
-| R5 No expansion | `test_pfc.c` random inputs (all codecs) stay ≤ `pfc_bound`; store-raw path exercised | ✅ verified |
-| R6 Error containment | `test_pfc.c::test_fault_injection`/`::test_truncation`; `make asan` clean; **`fuzz_decode.py` 20 000 random/mutated inputs, no crash/OOB** | ✅ verified |
-| R7 Independent reference | `test_crosscheck.py`: C-encode → Python-decode == original, **10/10** incl. real CyCIF, AVIRIS spectral, flat run-mode, all 4 codecs | ✅ verified |
+Requirement → design (the module/function that implements it) → verification procedure → result,
+per §2.1 of `mission-safety.md`'s qualification gap analysis. This is a **solo-authored** matrix,
+not an independently audited one — review records, where they exist, are the detailed per-finding
+writeups already in this repo (this file's CI sections below, `misra-deviations.md`), linked from
+the Result column; that's real self-review evidence but not a substitute for IV&V (tracked
+separately, out of scope for now — see `mission-safety.md` §2.1).
+
+| ID | Design (implementing module) | Verification procedure | Result / evidence |
+|----|-------------------------------|-------------------------|--------------------|
+| R1 | Per-codec encode/decode pairs (`pfc_image.c`, `pfc_seq.c`, `pfc_columnar.c` [also FLOAT], `pfc_spectral.c`) over the shared range coder (`pfc_arith.c`) + adaptive model (`pfc_model.c`) + block framing (`pfc_frame.c`, `pfc_crc.c`), dispatched by `pfc_encode`/`pfc_decode` (`pfc.c`) | `test_pfc.c`: `roundtrip()`/`check_rt()` drive image (gradient/random/flat, 8/16-bit, odd sizes) + `test_seq`/`test_float`/`test_columnar`/`test_spectral`; `stress.c` adds 5 000 randomised round-trips across all codecs; `bench_real.py` round-trips real CyCIF | ✅ 146 unit + 15 063 stress cases, 0 failures; real CyCIF 4/4 byte-exact. **Exhaustive small-input CBMC proof attempted (SEQ, count=1), did not converge** — see the CBMC section below; covered by testing only, not formal proof |
+| R2 | `pfc_ctx` is a plain caller-owned struct (`pfc_internal.h`); no `malloc`/`free`/`stdlib.h` anywhere in `src/` | Inspection: grep `src/` for allocator calls; `nm -uD build/libpfc.so` | ✅ zero alloc symbols imported |
+| R3 | `pfc_workmem_bytes()` = `sizeof(struct pfc_ctx)` (`pfc.c`); size tunable via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` (`pfc.h`) | Inspection of the struct layout + printed at test startup | ✅ 329 096 B at compile-time defaults |
+| R4 | Explicit little-endian serialisation helpers `pfc_put_u32`/`pfc_get_u32` (`pfc_internal.h`); no `float`/`double` anywhere in `src/` | Inspection (no FP types); `ground/pfc_decode.py` (independent explicit-LE decoder) via `test_crosscheck.py`; `bigendian` CI job: full test suite under `qemu-ppc` (real BE *execution*) + `emit.c` LE-vs-BE byte-comparison | ✅ stream verified; ✅ **real BE execution confirmed** — all 139 checks green under emulated PowerPC, LE/BE `emit.c` output byte-identical |
+| R5 | `pfc_bound()` closed-form worst-case formula (`pfc.c`); every codec encoder's store-raw fallback when the coded form would exceed capacity | `test_pfc.c`/`stress.c`: random inputs (all codecs) asserted `≤ pfc_bound`, store-raw path exercised | ✅ verified by test (0 failures, 2 real `pfc_bound` under-estimate bugs found+fixed by this same test in an earlier session). **CBMC sufficiency proof attempted (SEQ, count=1), did not converge** — see CBMC section below |
+| R6 | Per-block CRC framing, `pfc_block_write`/`pfc_block_read` (`pfc_frame.c`) + `pfc_crc32` (`pfc_crc.c`); decode repairs (zero-fills) a CRC-mismatched or truncated block instead of propagating it | `test_pfc.c::test_fault_injection`/`::test_truncation`/`::test_corruption_all`/`::test_more_guards`; `make asan` (ASan+UBSan); `fuzz_decode.py` (Python harness, 20 000 iterations); `libfuzzer` CI job (real coverage-guided C fuzzing); **CBMC proof** of `pfc_block_read` (`proofs/cbmc/harness_block_read.c`, `cbmc` CI job, 32-bit `size_t` model) | ✅ 0 crashes/OOB across all test-based evidence; **libFuzzer found and fixed 2 real heap-buffer-overflows** (SPECTRAL header-size gap, COLUMNAR unbounded `block_recs`) within minutes of first running; **CBMC formally proved** (not sampled) `pfc_block_read` never reads OOB under a 32-bit model — run #28, `VERIFICATION SUCCESSFUL`, and that same proof-authoring effort found the real `size_t`-wraparound bug it now guards against |
+| R7 | `ground/pfc_decode.py`, a from-scratch pure-Python decoder implementing the same explicit-LE wire format independently of the C encoder | `test_crosscheck.py`: C-encode → Python-decode, compared byte-for-byte to the original | ✅ **10/10** byte-exact, incl. real CyCIF, real AVIRIS hyperspectral, flat run-mode, all codecs |
+| R8 | All of `src/` written to MISRA-C:2012 / JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit widening casts) | `misra` CI job: `cppcheck --addon=misra` against `.cppcheck-suppressions`; full rule-by-rule triage recorded in `misra-deviations.md` | ✅ 179 findings on first run (gate works); triaged — 4 real + fixed, 27 tool-limitation false positives, 148 deliberate verified-safe deviations; confirmed green in CI with suppressions applied |
+| R9 | N/A (process requirement, not a design property) | `coverage` CI job: `make coverage` (gcov/gcovr) over the `test_pfc` + `stress` corpus, gated at 95% line / 80% branch | ✅ 98.4% lines / 89.3% branches project-wide, gated in CI below that baseline. **MC/DC not measured** — open gap, see `mission-safety.md` §2.2 |
 
 ## Verification environment (this build)
 
