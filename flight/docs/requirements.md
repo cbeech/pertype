@@ -50,7 +50,7 @@ separately, out of scope for now — see `mission-safety.md` §2.1).
 | R4 | Explicit little-endian serialisation helpers `pfc_put_u32`/`pfc_get_u32` (`pfc_internal.h`); no `float`/`double` anywhere in `src/` | Inspection (no FP types); `ground/pfc_decode.py` (independent explicit-LE decoder) via `test_crosscheck.py`; `bigendian` CI job: full test suite under `qemu-ppc` (real BE *execution*) + `emit.c` LE-vs-BE byte-comparison | ✅ stream verified; ✅ **real BE execution confirmed** — all 139 checks green under emulated PowerPC, LE/BE `emit.c` output byte-identical |
 | R5 | `pfc_bound()` closed-form worst-case formula (`pfc.c`); every codec encoder's store-raw fallback when the coded form would exceed capacity | `test_pfc.c`/`stress.c`: random inputs (all codecs) asserted `≤ pfc_bound`, store-raw path exercised | ✅ verified by test (0 failures, 2 real `pfc_bound` under-estimate bugs found+fixed by this same test in an earlier session). **CBMC sufficiency proof attempted (SEQ, count=1), did not converge** — see CBMC section below |
 | R6 | Per-block CRC framing, `pfc_block_write`/`pfc_block_read` (`pfc_frame.c`) + `pfc_crc32` (`pfc_crc.c`); decode repairs (zero-fills) a CRC-mismatched or truncated block instead of propagating it | `test_pfc.c::test_fault_injection`/`::test_truncation`/`::test_corruption_all`/`::test_more_guards`; `make asan` (ASan+UBSan); `fuzz_decode.py` (Python harness, 20 000 iterations); `libfuzzer` CI job (real coverage-guided C fuzzing); **CBMC proofs** of `pfc_block_read` AND `pfc_block_write` (`proofs/cbmc/`, `cbmc` CI job, 32-bit `size_t` model) | ✅ 0 crashes/OOB across all test-based evidence; **libFuzzer found and fixed 2 real heap-buffer-overflows** (SPECTRAL header-size gap, COLUMNAR unbounded `block_recs`) within minutes of first running; **CBMC formally proved** (not sampled) that neither `pfc_block_read` (`0 of 165 failed`) nor `pfc_block_write` (`0 of 152 failed`) accesses out of bounds under a 32-bit model — and authoring the read-side proof found the real `size_t`-wraparound bug it now guards against |
-| R11 | SEU tolerance: per-band model resets + small independently-framed blocks are intended to bound the blast radius of an encoder-side upset (`pfc_model_reset` per block, `pfc_frame.c` framing) | `make seu` (`test/seu_inject.c`): flips a bit in `pfc_ctx` mid-encode via linker `--wrap`, classifies the outcome, and measures how far the damage spreads. Two sampling modes: uniform (orbit rate) and stratified (per-region conditional risk) | ⚠️ **measured, with a caveat that matters** — see the SEU section below. Containment holds (no corruption crossed a band boundary) but the CRC detected **zero** encoder-side upsets, so silent corruption is the realistic failure mode |
+| R11 | SEU tolerance: per-band model resets + small independently-framed blocks are intended to bound the blast radius of an encoder-side upset (`pfc_model_reset` per block, `pfc_frame.c` framing) | `make seu` (`test/seu_inject.c`): flips a bit in `pfc_ctx` mid-encode via linker `--wrap`, classifies the outcome, and measures how far the damage spreads. Run across all four codecs, with two sampling modes: uniform (orbit rate) and stratified (per-region conditional risk) | ⚠️ **PARTIALLY MET — see the SEU section below.** The CRC detected **zero** encoder-side upsets on any codec, so silent corruption is the realistic failure mode. Containment holds for IMAGE/SEQ/COLUMNAR but **fails for SPECTRAL** (12 of 15 corruptions crossed a block boundary) because inter-band prediction makes its blocks non-independently-decodable. Also found and fixed a real SEU-induced infinite loop in the range coder |
 | R7 | `ground/pfc_decode.py`, a from-scratch pure-Python decoder implementing the same explicit-LE wire format independently of the C encoder | `test_crosscheck.py`: C-encode → Python-decode, compared byte-for-byte to the original | ✅ **10/10** byte-exact, incl. real CyCIF, real AVIRIS hyperspectral, flat run-mode, all codecs |
 | R8 | All of `src/` written to MISRA-C:2012 / JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit widening casts) | `misra` CI job: `cppcheck --addon=misra` against `.cppcheck-suppressions`; full rule-by-rule triage recorded in `misra-deviations.md` | ✅ 179 findings on first run (gate works); triaged — 4 real + fixed, 27 tool-limitation false positives, 148 deliberate verified-safe deviations; confirmed green in CI with suppressions applied |
 | R9 | N/A (process requirement, not a design property) | `coverage` CI job: `make coverage` (gcov/gcovr) over the `test_pfc` + `stress` corpus, gated at 95% line / 80% branch | ✅ 98.4% lines / 89.3% branches project-wide, gated in CI below that baseline. **MC/DC not measured** — open gap, see `mission-safety.md` §2.2 |
@@ -236,12 +236,26 @@ end to end.
 
 Two further findings the prose did not contain:
 
-1. **Containment holds, but "contained" is not "small".** Across 175 observed silent corruptions,
-   **not one crossed a band boundary** — the block-independence argument is validated with real
-   evidence. But within a band the damage is close to total: mean 504 corrupted samples, worst
-   **1 017 of a 1 024-sample band**. A single flipped bit can silently destroy essentially an
-   entire band. The correct reading of §2.5's mitigation is "the blast radius is bounded by the
-   band size", which only reassures to the extent the band is small.
+1. **Containment holds for three codecs and FAILS for SPECTRAL.** Measured per codec (each input
+   sized to span several blocks, so the property is actually testable):
+
+   | codec | silent corruptions | crossed a block boundary | worst damage |
+   |-------|--------------------|--------------------------|--------------|
+   | IMAGE 64×64@16 | 157 | **0** | 2 035 B of a 2 048 B block |
+   | SEQ 65536×i16 | 87 | **0** | 65 002 B of a 65 536 B block |
+   | COLUMNAR 16384×8B | 134 | **0** | 64 909 B of a 65 536 B block |
+   | **SPECTRAL 32×32×4@16** | 15 | **12** ⚠ | 3 734 B vs a 1 024 B block (~3.6 blocks) |
+
+   SPECTRAL's failure is architectural, not a coding error: it reconstructs band *z* by reading
+   band *z−1* from the output buffer (`pfc_spectral.c`, `bzp`/`has_prev`), because inter-band
+   MED-of-difference prediction is exactly where its compression advantage comes from. Its blocks
+   are independently *framed and CRC'd* but **not independently decodable**, so a silently-wrong
+   band feeds the next band's prediction. Containment and the codec's compression win are in direct
+   tension. See `mission-safety.md` §2.5, including the open question of whether the same
+   propagation weakens R6 for ordinary downlink corruption (untested — a hypothesis, not a finding).
+
+   Where containment does hold, note that "contained" is not "small": for SEQ and COLUMNAR a block
+   is 64 KB, so one upset can silently corrupt up to half a 128 KB payload.
 2. **Risk is inverse to region size — which is exactly what makes hardening affordable.** Uniform
    sampling barely reaches the small model regions (they are <1% of the workmem), so the harness
    runs a second **stratified** pass with equal trials per region. At 300 trials each:

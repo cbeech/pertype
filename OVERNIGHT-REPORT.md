@@ -143,10 +143,25 @@ That *confirms* rather than contradicts §2.5 — the CRC is computed after the 
 there is no incidental detection either. Encoder-side SEU is a wholly silent failure mode.
 
 Two further results the prose did not contain:
-- **Containment holds, but "contained" ≠ "small".** Across **175 silent corruptions, none crossed
-  a band boundary** — block-independence validated with evidence. But within a band damage is
-  near-total: worst **1 017 corrupted samples of a 1 024-sample band**. One flipped bit can
-  silently destroy an entire band.
+- **🔴 Containment FAILS for SPECTRAL — the second real finding of the night.** Extending the
+  harness to all four codecs (it previously only covered IMAGE) showed IMAGE/SEQ/COLUMNAR contain
+  the damage (0 of 157, 0 of 87, 0 of 134 crossed a block boundary) but **SPECTRAL does not:
+  12 of 15 crossed**, worst 3 734 bytes against a 1 024-byte block (~3.6 blocks).
+  Mechanism verified in source, not guessed: SPECTRAL reconstructs band *z* from band *z−1*
+  (`pfc_spectral.c`, `bzp`/`has_prev`), since inter-band prediction is where its compression win
+  comes from. Its blocks are independently **framed and CRC'd but not independently decodable**, so
+  a silently-wrong band feeds the next band's prediction. §2.5's blanket containment claim is
+  therefore **wrong for SPECTRAL**, and now says so. Containment and the codec's compression
+  advantage are in direct tension — you can't exploit inter-band correlation *and* have bands fail
+  independently.
+  Flagged as an open question, deliberately **not** claimed: whether the same propagation weakens
+  R6 for ordinary *downlink* corruption too (a CRC-rejected band is zero-filled, and that still
+  feeds band *z+1*). Plausible by the same mechanism, but this harness only measured encoder-side
+  faults. The existing bit-flip tests assert "reports corruption, doesn't crash", not "damage
+  confined to one block", so they wouldn't have caught it either.
+- **Where containment does hold, "contained" ≠ "small".** IMAGE worst case is 2 035 corrupted bytes
+  of a 2 048-byte block; for SEQ and COLUMNAR a block is 64 KB, so one upset can silently corrupt
+  half a 128 KB payload.
 - **Risk is inverse to region size, which makes hardening cheap.** Stratified injection (300
   trials/region): `tot[]` 20.3%, `mant[][]` 19.7%, `freq[][]` 7.7%, `bias_*[]` 7.0% silent — versus
   `scratch[]` 0.7% and `xform[]` 0.0%, which are 99% of the memory but overwritten before use.

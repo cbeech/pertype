@@ -207,12 +207,32 @@ method in `requirements.md`; what changed here:
   is showing there is no incidental detection either: encoder-side SEU is a **wholly silent**
   failure mode. 99.9% of upsets had no observable effect; the remaining 0.1% produced silently
   wrong data with a PFC_OK status.
-- **Containment holds — but "contained" is not "small".** Across **175 observed silent
-  corruptions, not one crossed a band boundary**, so the small-independent-blocks argument is
-  validated with evidence rather than asserted. However, within a band the damage is near total:
-  worst observed **1 017 corrupted samples out of a 1 024-sample band**. The honest statement of
-  the mitigation is "blast radius is bounded by the band size", which only reassures to the extent
-  the band is small. At `PFC_BAND_ROWS`=16 on a wide sensor, a band is not small.
+- **🔴 Containment does NOT hold for SPECTRAL.** Extending the harness across all four codecs
+  (previously only IMAGE was measured) found that IMAGE, SEQ and COLUMNAR contain the damage — 0
+  of 157, 0 of 87 and 0 of 134 silent corruptions crossed a block boundary respectively — but
+  **SPECTRAL fails: 12 of 15 crossed**, with a worst case of 3 734 corrupted bytes against a
+  1 024-byte block, i.e. damage spanning roughly 3.6 blocks.
+  The mechanism is architectural, not a coding error, and is visible in the source: SPECTRAL
+  reconstructs band *z* by reading band *z−1* out of the output buffer
+  (`pfc_spectral.c`, `bzp = (z-1)*height*width` / `has_prev`), because its whole compression
+  advantage comes from inter-band MED-of-difference prediction. So SPECTRAL's blocks are
+  independently *framed and CRC'd* but **not independently decodable** — a silently-wrong band
+  feeds the next band's prediction and the error propagates forward through the cube.
+  **This section's blanket claim that small independent blocks bound the blast radius is therefore
+  wrong for SPECTRAL**, and that is now stated rather than assumed. The containment property and
+  the codec's compression win are in direct tension: you cannot exploit inter-band correlation and
+  simultaneously have bands fail independently.
+  **Open question, explicitly not answered here:** whether the same propagation also weakens R6
+  containment for ordinary *downlink* corruption in SPECTRAL. The mechanism suggests it might — a
+  CRC-rejected band is zero-filled, and that zero-filled band still feeds band *z+1*'s prediction —
+  but this harness only measured encoder-side faults, so it is a hypothesis to test, not a finding.
+  The existing bit-flip/truncation tests assert "reports corruption, does not crash", not
+  "damage confined to one block", so they would not have caught it either.
+- **Containment holds for the other three codecs — but "contained" is not "small".** For IMAGE,
+  within a band the damage is near total: worst observed **2 035 corrupted bytes out of a
+  2 048-byte block**. The honest statement of the mitigation is "blast radius is bounded by the
+  block size", which only reassures to the extent the block is small. For SEQ and COLUMNAR the
+  block is 64 KB, so a single upset can silently corrupt up to half a 128 KB payload.
 - **Risk is inverse to region size, and that is the useful part.** Stratified injection (300 trials
   per region) gives conditional silent-corruption rates of **`tot[]` 20.3%, `mant[][]` 19.7%,
   `freq[][]` 7.7%, `bias_*[]` 7.0%** — versus **`scratch[]` 0.7% and `xform[]` 0.0%**, which
@@ -224,8 +244,16 @@ method in `requirements.md`; what changed here:
   That is a realistic ask of a flight platform in a way "harden all working memory" is not.
 - Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
   The new evidence sharpens where to spend that budget rather than replacing it.
-- **Not yet done:** the same measurement on the other four codecs (only IMAGE is exercised), and
-  a multi-bit / burst upset model. Single-bit, single-codec is a start, not a complete fault model.
+- **Not yet done:** a multi-bit / burst upset model (single-bit only so far), FLOAT (which shares
+  COLUMNAR's implementation), and the downlink-propagation question raised above. Single-bit is a
+  start, not a complete fault model.
+- **Recommended follow-up, in priority order:** (1) settle whether SPECTRAL's inter-band
+  propagation also weakens downlink R6 containment — that determines whether this is an
+  SEU-only caveat or a broader correction to R6; (2) if it is broader, either document SPECTRAL as
+  having explicitly weaker containment than the other codecs, or offer a periodic
+  "refresh band" (spatial-only, no inter-band reference) at a configurable interval to bound
+  propagation depth at a modest compression cost; (3) checksum the ~3 KB of model state per block
+  so encoder-side upsets become detectable rather than silent.
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression

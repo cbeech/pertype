@@ -139,11 +139,18 @@ typedef struct {
     long trials;
 } results;
 
-/* Shared fixture for a run. */
+/* Shared fixture for a run. `block_bytes` is the codec's independently-framed unit expressed in
+ * OUTPUT BYTES, which is what makes the containment test uniform across codecs: the R6 claim is
+ * "damage stays inside one block", and blocks are delimited differently per codec (image/spectral
+ * by row bands, seq/columnar by a fixed byte budget). Comparing byte offsets divided by
+ * block_bytes tests the same property in all four cases. */
 typedef struct {
+    pfc_codec  codec;
+    const char *name;
     pfc_params p;
     uint32_t   w, h;
     size_t     n_in;
+    size_t     block_bytes;
     uint8_t   *src, *dec, *ref_enc, *enc;
     pfc_ctx   *work;
     size_t     cap, ref_len;
@@ -157,7 +164,7 @@ static outcome one_trial(fixture *f, size_t off, unsigned bit, long at, results 
 
     g_inject_at = at; g_inject_byte = off; g_inject_bit = bit; g_call_count = 0;
 
-    st = pfc_encode(PFC_CODEC_IMAGE, &f->p, f->src, f->n_in, f->enc, f->cap, &enc_len, f->work);
+    st = pfc_encode(f->codec, &f->p, f->src, f->n_in, f->enc, f->cap, &enc_len, f->work);
     if (st != PFC_OK) { return OUT_OTHER; }
     if ((enc_len == f->ref_len) && (memcmp(f->enc, f->ref_enc, enc_len) == 0)) {
         return OUT_CLEAN;   /* corruption never reached the output at all */
@@ -169,21 +176,22 @@ static outcome one_trial(fixture *f, size_t off, unsigned bit, long at, results 
     if (st != PFC_OK)        { return OUT_OTHER; }
     if (memcmp(f->dec, f->src, f->n_in) == 0) { return OUT_CLEAN; }
 
-    /* SILENT: measure the blast radius, which is the containment claim under test. */
+    /* SILENT: measure the blast radius, which is the containment claim under test. Done on raw
+     * bytes rather than typed samples so the same code serves every codec. */
     {
-        const uint16_t *a = (const uint16_t *)f->src, *b = (const uint16_t *)f->dec;
-        uint32_t i, bad = 0u, first_band = 0xFFFFFFFFu, last_band = 0u;
-        for (i = 0u; i < (f->w * f->h); i++) {
+        const uint8_t *a = f->src, *b = f->dec;
+        size_t i, bad = 0u, first_blk = (size_t)-1, last_blk = 0u;
+        for (i = 0u; i < f->n_in; i++) {
             if (a[i] != b[i]) {
-                uint32_t band = (i / f->w) / PFC_BAND_ROWS;
+                size_t blk = i / f->block_bytes;
                 bad++;
-                if (band < first_band) { first_band = band; }
-                if (band > last_band)  { last_band = band; }
+                if (blk < first_blk) { first_blk = blk; }
+                if (blk > last_blk)  { last_blk = blk; }
             }
         }
-        res->silent_samples_total += bad;
+        res->silent_samples_total += (long)bad;
         if ((long)bad > res->silent_samples_worst) { res->silent_samples_worst = (long)bad; }
-        if (last_band != first_band) { res->silent_multiblock++; }
+        if (last_blk != first_blk) { res->silent_multiblock++; }
     }
     return OUT_SILENT;
 }
@@ -214,109 +222,170 @@ static void print_outcomes(const results *res)
     }
 }
 
-int main(int argc, char **argv)
+/* Configure a fixture per codec. Each input is sized to span SEVERAL blocks -- otherwise the
+ * containment test is vacuous (damage cannot cross a boundary that does not exist in the data). */
+static int setup_fixture(fixture *f, pfc_codec codec)
 {
-    const uint32_t W = 64u, H = 64u;      /* 4 bands at PFC_BAND_ROWS=16 -> containment is testable */
-    long trials = (argc > 1) ? atol(argv[1]) : 3000;
-    long per_region = (trials / 4) / REG_N;
-    fixture f;
-    results uni, strat[REG_N];
+    size_t i;
     pfc_status st;
-    int r;
 
-    region_bounds_init();
+    memset(f, 0, sizeof *f);
+    f->codec = codec;
 
-    memset(&f, 0, sizeof f);
-    f.w = W; f.h = H;
-    f.n_in = (size_t)W * H * 2u;
-    f.p.width = W; f.p.height = H; f.p.bitdepth = 16u;
-    f.cap = pfc_bound(PFC_CODEC_IMAGE, f.n_in);
-    f.src = malloc(f.n_in); f.dec = malloc(f.n_in);
-    f.ref_enc = malloc(f.cap); f.enc = malloc(f.cap);
-    f.work = malloc(pfc_workmem_bytes());
-    if (!f.src || !f.dec || !f.ref_enc || !f.enc || !f.work) { fprintf(stderr, "oom\n"); return 2; }
+    switch (codec) {
+    case PFC_CODEC_IMAGE:
+        f->name = "IMAGE 64x64 @16-bit";
+        f->w = 64u; f->h = 64u;
+        f->p.width = f->w; f->p.height = f->h; f->p.bitdepth = 16u;
+        f->n_in = (size_t)f->w * f->h * 2u;                 /* 8 KB, 4 bands */
+        f->block_bytes = (size_t)PFC_BAND_ROWS * f->w * 2u;
+        break;
+    case PFC_CODEC_SEQ:
+        f->name = "SEQ 65536 x int16";
+        f->p.count = 65536u; f->p.elem = 2u; f->p.is_signed = 1u;
+        f->n_in = (size_t)f->p.count * f->p.elem;           /* 128 KB, 2 blocks */
+        f->block_bytes = PFC_BLOCK_BYTES;
+        break;
+    case PFC_CODEC_COLUMNAR:
+        f->name = "COLUMNAR 16384 x 8B recs";
+        f->p.width = 8u; f->p.count = 16384u;
+        f->n_in = (size_t)f->p.width * f->p.count;          /* 128 KB, 2 blocks */
+        f->block_bytes = PFC_BLOCK_BYTES;
+        break;
+    case PFC_CODEC_SPECTRAL:
+        f->name = "SPECTRAL 32x32x4 @16-bit";
+        f->w = 32u; f->h = 32u;
+        f->p.width = f->w; f->p.height = f->h; f->p.count = 4u; f->p.bitdepth = 16u;
+        f->n_in = (size_t)f->w * f->h * f->p.count * 2u;    /* 8 KB, 2 bands x 4 cube bands */
+        f->block_bytes = (size_t)PFC_BAND_ROWS * f->w * 2u;
+        break;
+    default:
+        return 0;
+    }
 
-    /* Gently-textured image: compressible enough to exercise the model (not store-raw), noisy
-     * enough that residuals vary and the adaptive tables actually get used. */
+    f->cap = pfc_bound(codec, f->n_in);
+    f->src = malloc(f->n_in); f->dec = malloc(f->n_in);
+    f->ref_enc = malloc(f->cap); f->enc = malloc(f->cap);
+    f->work = malloc(pfc_workmem_bytes());
+    if (!f->src || !f->dec || !f->ref_enc || !f->enc || !f->work) { return 0; }
+
+    /* Gently-textured, deterministic payload: compressible enough that the adaptive model is
+     * actually used (not the store-raw path, where a model upset would be trivially harmless),
+     * noisy enough that residuals vary. */
     g_rng = 12345u;
-    {
-        uint16_t *s16 = (uint16_t *)f.src;
-        uint32_t i;
-        for (i = 0u; i < (W * H); i++) {
-            s16[i] = (uint16_t)(((i % W) * 7u) + ((i / W) * 3u) + (rnd() & 0x1Fu));
-        }
+    for (i = 0u; i < f->n_in; i++) {
+        f->src[i] = (uint8_t)(((i * 7u) & 0x3Fu) + (rnd() & 0x0Fu));
     }
 
     g_inject_at = -1; g_call_count = 0;
-    st = pfc_encode(PFC_CODEC_IMAGE, &f.p, f.src, f.n_in, f.ref_enc, f.cap, &f.ref_len, f.work);
-    if (st != PFC_OK) { fprintf(stderr, "reference encode failed: %d\n", (int)st); return 2; }
-    f.ref_calls = g_call_count;
+    st = pfc_encode(codec, &f->p, f->src, f->n_in, f->ref_enc, f->cap, &f->ref_len, f->work);
+    if (st != PFC_OK) {
+        fprintf(stderr, "  reference encode failed for %s: %d\n", f->name, (int)st);
+        return 0;
+    }
+    f->ref_calls = g_call_count;
+    return (f->ref_calls > 0) ? 1 : 0;   /* no resid calls => nothing to inject into */
+}
+
+static void free_fixture(fixture *f)
+{
+    free(f->src); free(f->dec); free(f->ref_enc); free(f->enc); free(f->work);
+}
+
+static void report_containment(const fixture *f, long silent, long multi,
+                               long tot_bytes, long worst)
+{
+    printf("\n  containment (R6 / §2.5 'small blocks bound the blast radius'):\n");
+    if (silent == 0) {
+        printf("    no silent corruptions observed; containment untested for this codec.\n");
+        return;
+    }
+    printf("    silent corruptions   : %ld\n", silent);
+    printf("    mean corrupted bytes : %.1f of %zu (one block = %zu B)\n",
+           (double)tot_bytes / (double)silent, f->n_in, f->block_bytes);
+    printf("    worst corrupted bytes: %ld of %zu\n", worst, f->n_in);
+    printf("    spanning >1 block    : %ld of %ld\n", multi, silent);
+    if (multi == 0) {
+        printf("    => CONTAINMENT HOLDS for %s.\n", f->name);
+    } else {
+        printf("    => CONTAINMENT VIOLATED for %s -- damage crossed a block boundary.\n", f->name);
+        printf("       §2.5 must be corrected: block independence does NOT bound encoder-side\n");
+        printf("       upsets for this codec.\n");
+    }
+}
+
+int main(int argc, char **argv)
+{
+    long trials = (argc > 1) ? atol(argv[1]) : 3000;
+    const pfc_codec codecs[4] = { PFC_CODEC_IMAGE, PFC_CODEC_SEQ,
+                                  PFC_CODEC_COLUMNAR, PFC_CODEC_SPECTRAL };
+    int c, r;
+
+    region_bounds_init();
 
     printf("SEU injection into encoder working memory (pfc_ctx = %zu B)\n", pfc_workmem_bytes());
-    printf("  image %ux%u @16-bit, %ld resid-encode calls\n", W, H, f.ref_calls);
-    printf("  region sizes:\n");
+    printf("region sizes:\n");
     for (r = 0; r < REG_N; r++) {
-        printf("    %-28s %8zu B (%5.2f%%)\n", region_name[r], reg_end[r] - reg_start[r],
+        printf("  %-28s %8zu B (%5.2f%%)\n", region_name[r], reg_end[r] - reg_start[r],
                (100.0 * (double)(reg_end[r] - reg_start[r])) / (double)sizeof(struct pfc_ctx));
     }
+    printf("\nAll five codecs share one range coder and one adaptive model, so a model upset is a\n");
+    printf("SHARED failure mode -- but each codec frames blocks differently, so containment must\n");
+    printf("be measured per codec rather than inferred from IMAGE alone.\n");
 
-    /* ---- pass 1: uniform (the orbit rate) ---- */
-    g_rng = 99991u;
-    printf("\n===== PASS 1: UNIFORM over all of pfc_ctx (%ld trials) =====\n", trials);
-    printf("Approximates the real in-orbit rate: an upset is equally likely at any bit.\n\n");
-    run_pass(&f, -1, trials, &uni);
-    print_outcomes(&uni);
+    for (c = 0; c < 4; c++) {
+        fixture f;
+        results uni, strat[REG_N];
+        /* Non-IMAGE fixtures are 16x larger, so scale their trial count down to keep the whole
+         * run tractable; IMAGE keeps the full budget since it is the primary analysis. */
+        long codec_trials = (c == 0) ? trials : (trials / 8);
+        long per_region = (codec_trials / 4) / REG_N;
+        long silent, multi, tot_bytes, worst;
 
-    /* ---- pass 2: stratified (per-region conditional risk) ---- */
-    printf("\n===== PASS 2: STRATIFIED, %ld trials per region =====\n", per_region);
-    printf("Per-region CONDITIONAL risk -- 'given an upset lands here, what happens?'\n");
-    printf("These are NOT orbit rates; weight by region size (above) before concluding.\n\n");
-    printf("  %-28s %7s %7s %7s %7s\n", "region", "clean", "detect", "SILENT", "other");
-    for (r = 0; r < REG_N; r++) {
-        run_pass(&f, r, per_region, &strat[r]);
-        printf("  %-28s %7ld %7ld %7ld %7ld\n", region_name[r],
-               strat[r].tally[OUT_CLEAN], strat[r].tally[OUT_DETECTED],
-               strat[r].tally[OUT_SILENT], strat[r].tally[OUT_OTHER]);
-    }
+        if (per_region < 1) { per_region = 1; }
+        if (!setup_fixture(&f, codecs[c])) {
+            printf("\n===== %s: SKIPPED (setup failed) =====\n",
+                   (codecs[c] == PFC_CODEC_SEQ) ? "SEQ" : "codec");
+            continue;
+        }
 
-    printf("\n  silent-corruption rate by region (conditional):\n");
-    for (r = 0; r < REG_N; r++) {
-        printf("    %-28s %6.2f%%\n", region_name[r],
-               (100.0 * (double)strat[r].tally[OUT_SILENT]) / (double)per_region);
-    }
+        printf("\n==================================================================\n");
+        printf("CODEC: %s  (%zu B in, %ld resid-encode calls, block = %zu B)\n",
+               f.name, f.n_in, f.ref_calls, f.block_bytes);
+        printf("==================================================================\n");
 
-    /* ---- containment: the §2.5 claim under test ---- */
-    {
-        long silent = uni.tally[OUT_SILENT], multi = uni.silent_multiblock;
-        long tot_samples = uni.silent_samples_total, worst = uni.silent_samples_worst;
+        g_rng = 99991u;
+        printf("\n  UNIFORM over all of pfc_ctx (%ld trials) -- approximates the orbit rate:\n",
+               codec_trials);
+        run_pass(&f, -1, codec_trials, &uni);
+        print_outcomes(&uni);
+
+        printf("\n  STRATIFIED, %ld trials per region -- conditional risk, NOT orbit rates:\n",
+               per_region);
+        printf("  %-28s %7s %7s %7s %7s\n", "region", "clean", "detect", "SILENT", "other");
         for (r = 0; r < REG_N; r++) {
-            silent += strat[r].tally[OUT_SILENT];
-            multi  += strat[r].silent_multiblock;
-            tot_samples += strat[r].silent_samples_total;
+            run_pass(&f, r, per_region, &strat[r]);
+            printf("  %-28s %7ld %7ld %7ld %7ld\n", region_name[r],
+                   strat[r].tally[OUT_CLEAN], strat[r].tally[OUT_DETECTED],
+                   strat[r].tally[OUT_SILENT], strat[r].tally[OUT_OTHER]);
+        }
+
+        silent = uni.tally[OUT_SILENT];
+        multi = uni.silent_multiblock;
+        tot_bytes = uni.silent_samples_total;
+        worst = uni.silent_samples_worst;
+        for (r = 0; r < REG_N; r++) {
+            silent    += strat[r].tally[OUT_SILENT];
+            multi     += strat[r].silent_multiblock;
+            tot_bytes += strat[r].silent_samples_total;
             if (strat[r].silent_samples_worst > worst) { worst = strat[r].silent_samples_worst; }
         }
-        printf("\n===== CONTAINMENT (§2.5's 'small blocks bound the blast radius') =====\n");
-        if (silent == 0) {
-            printf("  no silent corruptions observed; containment untested this run.\n");
-        } else {
-            printf("  silent corruptions      : %ld (across both passes)\n", silent);
-            printf("  mean corrupted samples  : %.1f of %u (one band = %u)\n",
-                   (double)tot_samples / (double)silent, W * H, W * PFC_BAND_ROWS);
-            printf("  worst corrupted samples : %ld of %u\n", worst, W * H);
-            printf("  spanning >1 band        : %ld of %ld\n", multi, silent);
-            if (multi == 0) {
-                printf("  => CONTAINMENT HOLDS: no silent corruption crossed a band boundary.\n");
-                printf("     Note the ceiling this implies: one band is %u samples, so a single\n",
-                       W * PFC_BAND_ROWS);
-                printf("     bit flip can still silently corrupt an ENTIRE band. Contained is not\n");
-                printf("     the same as small.\n");
-            } else {
-                printf("  => CONTAINMENT VIOLATED: damage crossed a band boundary. §2.5 must be\n");
-                printf("     corrected -- block independence does NOT bound encoder-side upsets.\n");
-            }
-        }
+        report_containment(&f, silent, multi, tot_bytes, worst);
+        free_fixture(&f);
     }
 
-    free(f.src); free(f.dec); free(f.ref_enc); free(f.enc); free(f.work);
+    printf("\nNOTE: DETECTED is expected to be 0 throughout -- the CRC is computed AFTER the\n");
+    printf("corruption, over the already-wrong payload, so it cannot see an encoder-side upset.\n");
+    printf("That is the point of this harness, not a bug in it.\n");
     return 0;
 }
