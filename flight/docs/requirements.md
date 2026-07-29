@@ -16,9 +16,10 @@ and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` a
 | **R7** | **Independent reference.** An independent implementation decodes the C encoder's output byte-for-byte. | Cross-check (pure-Python ground decoder vs C encoder) |
 | **R8** | **Coding-standard compliance.** MISRA-C:2012 + JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit casts). | Static analysis (`cppcheck --addon=misra`), triaged rule-by-rule |
 | **R9** | **Structural coverage.** Line and branch coverage stay above a floor set below the measured baseline, every push. | Coverage-instrumented test run (gcov/gcovr) |
+| **R10** | **Bounded stack.** Worst-case stack depth is statically bounded and known, on the flight target ABI as well as the host. | Call-graph longest-path over `-fstack-usage` frames |
 
-R8/R9 are process/assurance requirements, not functional ones — added here so every automated CI
-gate has a requirement ID to trace back to, not just the five functional/safety properties R1–R7.
+R8/R9/R10 are process/assurance requirements, not functional ones — added here so every automated
+CI gate has a requirement ID to trace back to, not just the functional/safety properties R1–R7.
 
 ## Codec coverage (broad scope)
 
@@ -48,10 +49,12 @@ separately, out of scope for now — see `mission-safety.md` §2.1).
 | R3 | `pfc_workmem_bytes()` = `sizeof(struct pfc_ctx)` (`pfc.c`); size tunable via `-DPFC_MAX_COLS`/`-DPFC_BAND_ROWS` (`pfc.h`) | Inspection of the struct layout + printed at test startup | ✅ 329 096 B at compile-time defaults |
 | R4 | Explicit little-endian serialisation helpers `pfc_put_u32`/`pfc_get_u32` (`pfc_internal.h`); no `float`/`double` anywhere in `src/` | Inspection (no FP types); `ground/pfc_decode.py` (independent explicit-LE decoder) via `test_crosscheck.py`; `bigendian` CI job: full test suite under `qemu-ppc` (real BE *execution*) + `emit.c` LE-vs-BE byte-comparison | ✅ stream verified; ✅ **real BE execution confirmed** — all 139 checks green under emulated PowerPC, LE/BE `emit.c` output byte-identical |
 | R5 | `pfc_bound()` closed-form worst-case formula (`pfc.c`); every codec encoder's store-raw fallback when the coded form would exceed capacity | `test_pfc.c`/`stress.c`: random inputs (all codecs) asserted `≤ pfc_bound`, store-raw path exercised | ✅ verified by test (0 failures, 2 real `pfc_bound` under-estimate bugs found+fixed by this same test in an earlier session). **CBMC sufficiency proof attempted (SEQ, count=1), did not converge** — see CBMC section below |
-| R6 | Per-block CRC framing, `pfc_block_write`/`pfc_block_read` (`pfc_frame.c`) + `pfc_crc32` (`pfc_crc.c`); decode repairs (zero-fills) a CRC-mismatched or truncated block instead of propagating it | `test_pfc.c::test_fault_injection`/`::test_truncation`/`::test_corruption_all`/`::test_more_guards`; `make asan` (ASan+UBSan); `fuzz_decode.py` (Python harness, 20 000 iterations); `libfuzzer` CI job (real coverage-guided C fuzzing); **CBMC proof** of `pfc_block_read` (`proofs/cbmc/harness_block_read.c`, `cbmc` CI job, 32-bit `size_t` model) | ✅ 0 crashes/OOB across all test-based evidence; **libFuzzer found and fixed 2 real heap-buffer-overflows** (SPECTRAL header-size gap, COLUMNAR unbounded `block_recs`) within minutes of first running; **CBMC formally proved** (not sampled) `pfc_block_read` never reads OOB under a 32-bit model — run #28, `VERIFICATION SUCCESSFUL`, and that same proof-authoring effort found the real `size_t`-wraparound bug it now guards against |
+| R6 | Per-block CRC framing, `pfc_block_write`/`pfc_block_read` (`pfc_frame.c`) + `pfc_crc32` (`pfc_crc.c`); decode repairs (zero-fills) a CRC-mismatched or truncated block instead of propagating it | `test_pfc.c::test_fault_injection`/`::test_truncation`/`::test_corruption_all`/`::test_more_guards`; `make asan` (ASan+UBSan); `fuzz_decode.py` (Python harness, 20 000 iterations); `libfuzzer` CI job (real coverage-guided C fuzzing); **CBMC proofs** of `pfc_block_read` AND `pfc_block_write` (`proofs/cbmc/`, `cbmc` CI job, 32-bit `size_t` model) | ✅ 0 crashes/OOB across all test-based evidence; **libFuzzer found and fixed 2 real heap-buffer-overflows** (SPECTRAL header-size gap, COLUMNAR unbounded `block_recs`) within minutes of first running; **CBMC formally proved** (not sampled) that neither `pfc_block_read` (`0 of 165 failed`) nor `pfc_block_write` (`0 of 152 failed`) accesses out of bounds under a 32-bit model — and authoring the read-side proof found the real `size_t`-wraparound bug it now guards against |
+| R11 | SEU tolerance: per-band model resets + small independently-framed blocks are intended to bound the blast radius of an encoder-side upset (`pfc_model_reset` per block, `pfc_frame.c` framing) | `make seu` (`test/seu_inject.c`): flips a bit in `pfc_ctx` mid-encode via linker `--wrap`, classifies the outcome, and measures how far the damage spreads. Two sampling modes: uniform (orbit rate) and stratified (per-region conditional risk) | ⚠️ **measured, with a caveat that matters** — see the SEU section below. Containment holds (no corruption crossed a band boundary) but the CRC detected **zero** encoder-side upsets, so silent corruption is the realistic failure mode |
 | R7 | `ground/pfc_decode.py`, a from-scratch pure-Python decoder implementing the same explicit-LE wire format independently of the C encoder | `test_crosscheck.py`: C-encode → Python-decode, compared byte-for-byte to the original | ✅ **10/10** byte-exact, incl. real CyCIF, real AVIRIS hyperspectral, flat run-mode, all codecs |
 | R8 | All of `src/` written to MISRA-C:2012 / JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit widening casts) | `misra` CI job: `cppcheck --addon=misra` against `.cppcheck-suppressions`; full rule-by-rule triage recorded in `misra-deviations.md` | ✅ 179 findings on first run (gate works); triaged — 4 real + fixed, 27 tool-limitation false positives, 148 deliberate verified-safe deviations; confirmed green in CI with suppressions applied |
 | R9 | N/A (process requirement, not a design property) | `coverage` CI job: `make coverage` (gcov/gcovr) over the `test_pfc` + `stress` corpus, gated at 95% line / 80% branch | ✅ 98.4% lines / 89.3% branches project-wide, gated in CI below that baseline. **MC/DC not measured** — open gap, see `mission-safety.md` §2.2 |
+| R10 | No recursion and no function pointers anywhere in `src/` (JPL Power-of-Ten discipline) — which is precisely what makes the bound exact rather than estimated | `stackdepth` CI job: `make stackdepth` (host ABI) + `make stackdepth-ppc` (flight target ABI) via `tools/stack_depth.py`, gated at `STACK_BUDGET` = 1024 B | ✅ **464 B worst case on the flight target** (PowerPC BE, `pfc_decode`), 632 B on x86-64. Both under budget. The tool asserts acyclicity and call-graph completeness, so it fails loudly rather than reporting a wrong number if recursion or a callback is ever introduced |
 
 ## Verification environment (this build)
 
@@ -118,8 +121,135 @@ were added for every codec (`test_validation`, `test_corruption_all`, `test_more
 residual uncovered lines are **defensive guards verified by inspection**: (a) internal
 re-validation the dispatcher already enforces; (b) the raw-block plen-mismatch repair, reachable
 only with a CRC-valid-but-length-inconsistent block (negligible from real corruption) and
-structurally identical to the tested CRC-mismatch repair. **MC/DC measurement remains a gap** —
-gcov doesn't measure condition/decision coverage; see `mission-safety.md` §2.2.
+structurally identical to the tested CRC-mismatch repair.
+
+### MC/DC coverage (R9) — measured, and it is the weakest structural number here
+
+gcov cannot measure MC/DC at all, so it stayed an open gap until clang 18's `-fcoverage-mcdc`
+(`make mcdc`, `tools/mcdc_gate.py`, `mcdc` CI job). The first measurement is worth stating plainly
+because it undercuts the comfortable reading of the numbers above:
+
+| metric | coverage |
+|--------|----------|
+| lines | 98.4% |
+| branches | 89.4% |
+| **MC/DC conditions** | **55.65%** (64 of 115) at first measurement → **65.22%** (75 of 115) after `test_mcdc.c` |
+
+That is not a contradiction; it is precisely what MC/DC exists to expose. A decision like
+`(a == NULL) || (b == NULL) || (c == NULL)` reaches both outcomes — 100% branch — as soon as one
+test passes all-valid and one passes a single NULL. Nothing about that demonstrates the other two
+conditions are load-bearing: invert one of them and both tests still pass. MC/DC requires showing
+each condition *independently* flips the result, which needs N+1 vectors for an N-way chain.
+
+`test/test_mcdc.c` was added to close the most tractable and highest-value of these — the
+argument guards and the magic-byte check on the untrusted-input path — with vectors chosen for
+condition independence rather than behaviour alone. These are real robustness tests, not
+metric-chasing: the magic-byte cases would catch a mistyped index (`s[2]` checked twice, leaving
+one byte unvalidated) that every existing behavioural test misses, because those only ever corrupt
+the whole header at once. Effect, per file:
+
+| file | before | after |
+|------|--------|-------|
+| `pfc.c` | 45.0% | **100%** (20/20) |
+| `pfc_model.c` | 100% | 100% (2/2) |
+| `pfc_image.c` | 75.0% | 75.0% (24/32) |
+| `pfc_seq.c` | 66.7% | 66.7% (10/15) |
+| `pfc_arith.c` | 66.7% | 66.7% (4/6) |
+| `pfc_frame.c` | 50.0% | 50.0% (2/4) |
+| `pfc_internal.h` | 50.0% | 50.0% (1/2) |
+| `pfc_columnar.c` | 36.4% | 36.4% (4/11) |
+| `pfc_spectral.c` | 34.8% | 34.8% (8/23) |
+
+**40 conditions remain uncovered**, concentrated in the spectral and columnar decoders'
+multi-factor validation chains. Those are the harder cases — reaching them needs crafted wire
+headers that satisfy several untrusted fields simultaneously, not just an argument permutation —
+and they are the real outstanding structural-coverage work.
+
+**The gate is a ratchet, not a compliance claim.** `MCDC_MIN` sits just under the current
+measurement so regressions fail the build, and is raised as conditions get covered. DO-178C wants
+~100% MC/DC on decision-heavy safety-critical code; this is a long way from that, and a passing
+`make mcdc` must not be read as "MC/DC compliant". See `mission-safety.md` §2.2.
+
+### Worst-case stack depth (R10) — `tools/stack_depth.py`
+
+Flight software must bound maximum stack usage. For libpfc that bound is **exact, not estimated**,
+because the two properties that make the general problem undecidable are both already forbidden by
+the project's JPL Power-of-Ten discipline — and the tool *asserts* them rather than assuming:
+
+- **No recursion** → the call graph is a DAG, so worst-case depth is a terminating longest-path
+  problem. If a cycle ever appears the tool refuses to report a number instead of looping or
+  guessing.
+- **No function pointers** → every call edge is statically resolvable from the disassembly, so the
+  graph is complete. An indirect call would force "could reach any address-taken function", making
+  any bound useless; the tool treats finding one as a hard error.
+
+Method: GCC `-fstack-usage` gives per-function frame sizes; `objdump -dr` gives the call edges;
+the tool computes the maximum sum along any path from each public entry point.
+
+| Target | `pfc_encode` | `pfc_decode` | Worst case |
+|--------|--------------|--------------|------------|
+| x86-64 (host, `-O2`) | 560 B | 632 B | **632 B** |
+| **PowerPC BE 32-bit (flight target ABI, `-O2`)** | 384 B | **464 B** | **464 B** |
+
+The deepest path is the same shape on both targets — `pfc_decode → pfc_image_decode →
+pfc_image_decode_band → pfc_resid_decode → pfc_uint_decode → pfc_rc_decode_bits →
+pfc_rc_dec_renorm` — i.e. the image codec's per-sample decode chain, not any framing or dispatch
+path. CI gates both at `STACK_BUDGET` = 1024 B, comfortably above both so it catches a structural
+regression (a new deep call chain) rather than ordinary codegen drift.
+
+**Caveats, stated rather than buried** — this is a flight artifact, so its limits matter:
+1. `.su` frame sizes exclude the return address pushed by `call`, and any red-zone use. Treat the
+   figures as a tight lower bound and apply margin; the tool prints a suggested 100% margin.
+2. One `memset` edge into libc has no `.su` entry and is reported as unresolved-external rather
+   than silently counted as zero.
+3. GCC labels `pfc_encode`/`pfc_decode`'s own frames `dynamic,bounded` on x86-64 (but `static` on
+   PowerPC), so on the host those two frames are GCC's own bound rather than a fixed size — another
+   reason the flight-target number, not the host number, is the one to quote.
+
+### SEU fault injection (R11) — `test/seu_inject.c`
+
+§2.5 of `mission-safety.md` used to *assert* two things about single-event upsets in the encoder's
+working memory. `make seu` now measures them. It flips one bit in `pfc_ctx` mid-encode and observes
+what reaches the ground.
+
+Injection uses the linker's `--wrap` on `pfc_resid_encode`, so `src/` compiles **completely
+unmodified** — no test-only `#ifdef` hooks inside MISRA-reviewed flight code. Every codec calls
+that function once per sample, giving single-sample injection granularity.
+
+Result over 1 500 uniform-random trials (64×64 16-bit image, 4 bands):
+
+| outcome | count | |
+|---------|-------|---|
+| CLEAN (no observable effect) | 1 496 | 99.7% |
+| **DETECTED (CRC/status caught it)** | **0** | **0.0%** |
+| SILENT (decode said OK, data wrong) | 4 | 0.3% |
+
+**The headline is the zero.** Not one encoder-side upset was detected by any mechanism in the
+system. That is not a bug — it is the direct, measured consequence of what §2.5 already said in
+prose: the CRC is computed *after* the corruption, over the already-wrong payload, so a corrupted
+block is perfectly self-consistent. What the measurement adds is that this is the *only* outcome —
+there is no incidental detection to fall back on. Encoder-side SEU is a **silent** failure mode,
+end to end.
+
+Two further findings the prose did not contain:
+
+1. **Containment holds, but "contained" is not "small".** No silent corruption crossed a band
+   boundary, confirming the block-independence argument. But within a band the damage is close to
+   total: mean 673 corrupted samples, worst **1 017 of a 1 024-sample band**. A single flipped bit
+   can silently destroy essentially an entire band. The correct reading of §2.5's mitigation is
+   "the blast radius is bounded by the band size", which is only reassuring if the band is small.
+2. **Risk is wildly non-uniform across `pfc_ctx`, in the opposite direction to its size.**
+   `scratch[]` + `xform[]` are ~99% of the 330 KB and are mostly harmless (overwritten before use):
+   2 silent results in 1 182 hits. The tiny model-state regions are far more dangerous per bit —
+   `freq[][]` gave 1 silent in 10 hits, `tot[]` 1 in 2. This is the actionable result: the regions
+   worth protecting with EDAC/scrubbing or a checksum are a few KB, not the whole workmem, so
+   hardening them is cheap. The harness therefore runs a second **stratified** pass with equal
+   trials per region, because uniform sampling barely reaches these small regions (n=2 for `tot[]`
+   is not a statistic). Stratified figures are *conditional* risks and must be weighted by region
+   size before any mission-level conclusion.
+
+`make seu` is an on-demand analysis tool, **not** a CI gate — it takes minutes and its output is a
+measurement rather than a pass/fail. Trial count is `SEU_TRIALS`.
 
 See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 

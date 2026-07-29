@@ -59,12 +59,23 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   same corpus as `native` (test_pfc + stress) with instrumented objects and gates on line/branch
   percentage — 98.4% lines / 89.3% branches project-wide as of this writing, gated at 95%/80% in
   CI (`coverage` job in `flight-ci.yml`). Per-file detail in `docs/requirements.md`.
-- **Remaining gap: MC/DC.** gcov measures statement and branch coverage, not modified
-  condition/decision coverage — a compound boolean like `a && b || c` can hit every branch outcome
-  without exercising every condition's independent effect. Highest-criticality code (range coder
-  renorm, framing, predictor edges) wants MC/DC for a real DO-178C-spirit claim; this needs a
-  different tool (e.g. `llvm-cov` with `-fcoverage-mcdc`, or a dedicated MC/DC analyzer) and is not
-  yet attempted.
+- **MC/DC: now measured, and it is the weakest structural number in this document.** The concern
+  stated here previously — that a compound boolean can hit every branch outcome without exercising
+  every condition's independent effect — turned out to be not merely theoretical. Measured with
+  clang 18's `-fcoverage-mcdc` (`make mcdc`, `mcdc` CI job): **55.65% MC/DC (64 of 115 conditions)**
+  against 98.4% line and 89.4% branch on the *same corpus*. Worst: `pfc_spectral.c` 34.8%,
+  `pfc_columnar.c` 36.4%, `pfc.c` 45.0%.
+  `test/test_mcdc.c` closes the most tractable and highest-value of those (argument guards, the
+  magic-byte check on the untrusted-input path), with vectors chosen for condition independence,
+  taking the total to **65.22% (75 of 115)** and `pfc.c` specifically from 45% to 100%.
+  **40 conditions remain**, concentrated in the spectral/columnar decoders' multi-factor wire-header
+  validation chains — harder to reach, since each needs a crafted header satisfying several
+  untrusted fields at once.
+  The CI gate is an explicit **ratchet** — set just under the current measurement so regressions
+  fail, raised as conditions get covered — **not a compliance claim**. DO-178C wants ~100% MC/DC on
+  decision-heavy safety-critical code; this is nowhere near that yet, and the remaining conditions
+  (largely in the spectral and columnar decoders' multi-factor validation chains) are the real
+  outstanding structural-coverage work. See `requirements.md` for the per-file breakdown.
 
 ### 2.3 Formal methods (stronger than testing for the safety-critical claims)
 - **Bounded model checking** (CBMC) of the decoder: prove *no out-of-bounds read for any input up
@@ -98,6 +109,26 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   budget on either width — left as a hand-verified proof-sketch in the source comment rather than
   an unreliable CI gate; the idiom is standard and provably correct by basic integer-division
   properties. See `requirements.md` for the full writeup.
+- **Done: `pfc_block_write` proved, closing an asymmetry that had been left open.** When the
+  `size_t`-wraparound bounds-check bug was found in `pfc_block_read`, the identical addition-based
+  pattern in `pfc_block_write` was rewritten the same way *defensively* — and then never actually
+  proved. That gap is now closed (`proofs/cbmc/harness_block_write.c`, `make cbmc`, **`0 of 152
+  failed / VERIFICATION SUCCESSFUL`** under `--32`). The write side is worth proving on its own
+  terms, not just for symmetry: `plen` reaching it derives from the range coder's output length,
+  and the *encoder* is the component that runs on the 32-bit spacecraft hardware where the
+  wraparound is actually reachable — with no ground operator to notice a malformed frame. The
+  proved contract differs from the read side in one deliberate way: on rejection `pos` must be
+  **completely unchanged** (a rejected write must not leave a hole), whereas `pfc_block_read`
+  deliberately *does* advance on a CRC mismatch to stay in framing sync.
+- **Scope note — why `pfc_block_write` and not the per-codec header parsers.** The previous
+  "remaining scope" line named the four codecs' header parsers as the next target. Attempting them
+  showed why that was the wrong pick: each parser is embedded in its codec's full decode loop, so
+  a proof drags in the range coder and adaptive model — precisely the state-explosion that made the
+  `pfc_bound`/round-trip proofs below fail to converge. Proving them would require bounding
+  `count`/`height` so tightly that the result would say little. `pfc_block_write` is bounds-only
+  arithmetic, structurally identical to the proof that *did* converge, and covers a real
+  flight-side threat. Better a sound proof of the tractable thing than a weak proof of the
+  fashionable one.
 - **Attempted: `pfc_bound` sufficiency + round-trip correctness for the smallest SEQ case
   (count=1, elem=1, either signedness, ANY 1-byte input) — did not converge, same outcome as
   `pfc_size_mul` above and for a similar reason.** Two harnesses were written and run (32-bit
@@ -127,18 +158,68 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   qemu-user emulation is real BE *execution*, a meaningfully stronger check than static analysis,
   but it is still not the actual RAD750/LEON/RISC-V target hardware or RTOS — that remains a real
   gap even with this CI job green.
-- **WCET and stack-depth analysis**: bound worst-case execution time per block on the target and
-  prove maximum stack usage (no recursion → tractable). Encode throughput must clear the instrument
-  data rate with margin.
+- **Stack-depth analysis: DONE, and it did not need the hardware.** This was previously bundled
+  with WCET as "needs the real target", which was wrong — frame sizes and the call graph are
+  properties of the *compiled object code*, so cross-compiling for the target ABI is sufficient;
+  only timing genuinely needs silicon. `make stackdepth` / `make stackdepth-ppc`
+  (`tools/stack_depth.py`, `stackdepth` CI job) computes the bound by longest-path over
+  `-fstack-usage` frames: **464 bytes worst case on the flight target ABI** (big-endian 32-bit
+  PowerPC, via `pfc_decode`), 632 B on x86-64, both gated in CI at 1024 B. The bound is *exact
+  rather than estimated* because no recursion makes the call graph a DAG and no function pointers
+  make it complete — and the tool asserts both, failing loudly rather than reporting a wrong
+  number if either Power-of-Ten rule ever regresses. Caveats (return-address overhead not counted,
+  one unresolved libc `memset` edge) are documented in `requirements.md`.
+- **WCET analysis: still genuinely blocked on hardware.** Bounding worst-case execution time per
+  block requires the actual target CPU (cache/pipeline/memory behaviour), not an emulator — encode
+  throughput must clear the instrument data rate with margin, and that number is meaningless
+  without real silicon.
 - **Compiler qualification**: pin and qualify the exact flight toolchain version.
 
 ### 2.5 Space environment (SEU / radiation)
-- The CRC protects the *downlink* (channel) — but a **single-event upset** can flip a bit in the
-  *encoder's* working memory (context tables, range-coder state) mid-encode. Mitigations, mostly
-  system-level: EDAC/scrubbed RAM, periodic re-initialisation, and — already in our favour — **small
-  independent blocks** that bound the blast radius of any corruption to one block. Document the
-  fault model and rely on the platform's EDAC; consider redundant or checksummed working state for
-  the highest assurance.
+**This section used to assert its fault model. It is now measured** — `make seu`
+(`test/seu_inject.c`) flips a bit in `pfc_ctx` mid-encode via linker `--wrap` (so `src/` compiles
+unmodified, no test hooks in flight code) and observes what reaches the ground. Full numbers and
+method in `requirements.md`; what changed here:
+
+- **🔴 It found a real bug: an SEU-induced INFINITE LOOP in the range coder — since fixed.** A
+  flipped bit that zeroes a `freq[][]` entry makes `pfc_rc_encode` compute
+  `range = (range/tot) * 0 == 0`; thereafter `low ^ (low + 0) == 0` is permanently below
+  `PFC_RC_TOP` and `range <<= 8` can never restore it, so `pfc_rc_enc_renorm` spins forever.
+  On a spacecraft that is a hung compression task and a watchdog reset — **strictly worse than the
+  silent corruption this section anticipated**, because it is a liveness failure, not a data one.
+  It was also a latent **JPL Power-of-Ten Rule 2 violation**: the renorm loops are `while` loops
+  whose termination depends on data values, with no statically provable bound. This was the
+  concrete demonstration that the missing bound was reachable.
+  `freq >= 1` holds on uncorrupted state, so it needs memory corruption to trigger — precisely the
+  fault model this section is about. **Fixed** by bounding both renorm loops
+  (`PFC_RC_RENORM_MAX`); the encoder reports `overflow`, which every codec already handles by
+  falling back to store-raw, so a corrupted model costs one block's compression instead of hanging.
+  Output on healthy state is byte-identical (all compression ratios unchanged). Regression test:
+  `test_renorm_bound`. **Lesson worth keeping: the fault-injection harness earned its cost on its
+  first serious run, and it found a failure class — hang — that no fuzzer, sanitizer, or proof in
+  this pipeline was looking for**, because they all model bad *input*, not bad *state*.
+- **The CRC detected ZERO encoder-side upsets** (0 of 1 500 trials). This confirms, rather than
+  contradicts, what this section always said — the CRC protects the *channel*, and is computed
+  *after* the corruption, so a corrupted block is self-consistent. The measurement's contribution
+  is showing there is no incidental detection either: encoder-side SEU is a **wholly silent**
+  failure mode. 99.7% of upsets had no observable effect; the remaining 0.3% produced silently
+  wrong data with a PFC_OK status.
+- **Containment holds — but "contained" is not "small".** No corruption crossed a band boundary,
+  so the small-independent-blocks argument is validated. However, within a band the damage is near
+  total: worst observed **1 017 corrupted samples out of a 1 024-sample band**. The honest
+  statement of the mitigation is "blast radius is bounded by the band size", which only reassures
+  to the extent the band is small. At `PFC_BAND_ROWS`=16 on a wide sensor, a band is not small.
+- **Risk is concentrated in the smallest regions, which makes hardening cheap.** `scratch[]` +
+  `xform[]` are ~99% of the 330 KB workmem and are largely harmless (overwritten before use):
+  2 silent results in 1 182 hits. The model state is far more dangerous per bit — `freq[][]` 1 in
+  10, `tot[]` 1 in 2. **Actionable consequence:** the state worth protecting with EDAC, scrubbing,
+  or a periodic checksum is a few KB, not the whole context. That is a much easier ask of the
+  platform than protecting all of working memory, and it is the concrete recommendation this
+  section previously could not make.
+- Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
+  The new evidence sharpens where to spend that budget rather than replacing it.
+- **Not yet done:** the same measurement on the other four codecs (only IMAGE is exercised), and
+  a multi-bit / burst upset model. Single-bit, single-codec is a start, not a complete fault model.
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
@@ -197,17 +278,25 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
    overflow to `--unsigned-overflow-check`) was rewritten as an explicit branch. Confirmed on CI
    run #28: `** 0 of 165 failed (1 iterations) / VERIFICATION SUCCESSFUL`. Full writeup:
    `requirements.md`. **`pfc_bound` sufficiency + round-trip correctness attempted, did not
-   converge** (see §2.3) — same "not worth an unreliable CI gate" call as `pfc_size_mul`. Remaining
-   scope: extend to the per-codec header parsers that also touch untrusted fields (a bounds-only
-   proof, the SAT-friendly case this toolchain has proven it can handle).
+   converge** (see §2.3) — same "not worth an unreliable CI gate" call as `pfc_size_mul`.
+   **`pfc_block_write` now also proved** (`0 of 152 failed`), closing the read/write asymmetry left
+   when that bug class was fixed defensively on the write side but never verified. The per-codec
+   header parsers were evaluated as the next target and deliberately *not* pursued — they are
+   embedded in the full decode loop, so they inherit the same state explosion that sank the
+   round-trip proof; see the scope note in §2.3.
 5. **Done: line + branch coverage, automated in CI.** `make coverage` (gcov/gcovr) over the
    `native` corpus (test_pfc + stress), gated at 95% line / 80% branch project-wide — below the
    measured 98.4%/89.3% baseline, so it catches a real regression without blocking legitimate new
    code. See `coverage` job in `flight-ci.yml` and §2.2. **Remaining gap: MC/DC** — not measured by
    gcov, needs a different tool; see §2.2.
 6. **Target bring-up on real hardware**: qemu-user emulation (confirmed working in CI) is real BE
-   *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap;
-   WCET + stack analysis need the real target, not an emulator.
+   *execution*, but a dev board (RAD750/LEON/RISC-V-class) and the target RTOS are still a gap.
+   **WCET** genuinely needs that hardware. **Stack depth turned out not to** — it's a property of
+   the compiled object code, so cross-compiling for the target ABI was enough; done, see §2.4 and
+   item 9 below.
+9. **Done: worst-case stack-depth bound (R10).** 464 B on the flight target ABI, 632 B on x86-64,
+   gated in CI at 1024 B — exact rather than estimated, because no-recursion and no-function-
+   pointers make the call graph a complete DAG, and `tools/stack_depth.py` asserts both. See §2.4.
 7. **Attempted, did not converge: formal `pfc_bound` sufficiency + small-input round-trip proofs**
    (CBMC) — see §2.3. Left as a testing-covered (not formally proven) property, same call as
    `pfc_size_mul`. Extending CBMC to the per-codec header bounds-checks (item 4's remaining scope)
