@@ -28,11 +28,22 @@ static void pfc_rc_put(pfc_rc_enc *e, uint8_t b)
     e->pos++;
 }
 
+/* The `guard` counter gives this loop the statically provable bound JPL Power-of-Ten Rule 2
+ * requires. It cannot trigger on uncorrupted state (see PFC_RC_RENORM_MAX in pfc_internal.h);
+ * under memory corruption it converts an unbounded hang into `overflow`, which every codec already
+ * handles by falling back to store-raw for that block. That is the right degradation: a corrupted
+ * model costs one block's compression instead of hanging the spacecraft's encoder. */
 static void pfc_rc_enc_renorm(pfc_rc_enc *e)
 {
+    unsigned guard = 0u;
     while (((e->low ^ (e->low + e->range)) < PFC_RC_TOP) ||
            ((e->range < PFC_RC_BOT) &&
             ((e->range = (0u - e->low) & (PFC_RC_BOT - 1u)), 1))) {
+        if (guard >= PFC_RC_RENORM_MAX) {
+            e->overflow = 1;
+            return;
+        }
+        guard++;
         pfc_rc_put(e, (uint8_t)(e->low >> 24));
         e->low <<= 8;
         e->range <<= 8;
@@ -97,11 +108,20 @@ uint32_t pfc_rc_getfreq(pfc_rc_dec *d, uint32_t tot)
     return (d->code - d->low) / d->range;
 }
 
+/* Same bound as the encoder side, and it matters more here: the decoder consumes untrusted
+ * downlink bytes, so a corrupted stream reaching a zero-range state must not be able to hang the
+ * ground station. On hitting the bound the decoder simply stops renormalising; the block's data is
+ * already garbage, and the surrounding CRC/containment machinery reports it (R6). */
 static void pfc_rc_dec_renorm(pfc_rc_dec *d)
 {
+    unsigned guard = 0u;
     while (((d->low ^ (d->low + d->range)) < PFC_RC_TOP) ||
            ((d->range < PFC_RC_BOT) &&
             ((d->range = (0u - d->low) & (PFC_RC_BOT - 1u)), 1))) {
+        if (guard >= PFC_RC_RENORM_MAX) {
+            return;
+        }
+        guard++;
         d->code = (d->code << 8) | pfc_rc_get(d);
         d->low <<= 8;
         d->range <<= 8;

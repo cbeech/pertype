@@ -12,6 +12,27 @@
 #define PFC_RC_TOP ((uint32_t)1u << 24)
 #define PFC_RC_BOT ((uint32_t)1u << 16)
 
+/* Hard iteration bound for the renormalisation loops (pfc_arith.c).
+ *
+ * JPL Power-of-Ten Rule 2 requires every loop to have a statically provable upper bound. The
+ * renorm loops are `while` loops whose termination depends on the VALUES of low/range, so they had
+ * no such bound -- and that was not a theoretical gap. SEU fault injection (test/seu_inject.c)
+ * demonstrated a concrete hang: a single flipped bit that zeroes a `freq[][]` entry makes
+ * `pfc_rc_encode` compute `range = (range/tot) * 0 == 0`, after which `low ^ (low + 0) == 0` is
+ * permanently below PFC_RC_TOP and `range <<= 8` can never restore it. The loop spins forever --
+ * on a spacecraft that is a hung compression task and a watchdog reset, a strictly worse outcome
+ * than the silent data corruption docs/mission-safety.md 2.5 anticipated.
+ *
+ * freq >= 1 is an invariant in normal operation (pfc_model_reset seeds every entry >= 1,
+ * pfc_model_rescale's (f+1)>>1 cannot reach 0, pfc_model_update only adds), so this bound is
+ * unreachable on uncorrupted state and changes no output. It exists to convert an unbounded hang
+ * under memory corruption into a bounded, detectable failure.
+ *
+ * 8 is generous: each iteration shifts low and range left by 8 bits, so a 32-bit value is fully
+ * consumed in 4: legitimate renormalisation cannot need more. Verified empirically -- the full
+ * test corpus produces byte-identical output with this bound in place. */
+#define PFC_RC_RENORM_MAX 8u
+
 /* Adaptive model tuning. MODEL_MAX keeps the total below PFC_RC_BOT for coder correctness. */
 #define PFC_MODEL_INC 24u
 #define PFC_MODEL_MAX ((uint32_t)1u << 13)

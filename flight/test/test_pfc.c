@@ -481,6 +481,41 @@ static void test_more_guards(void)
     CHECK(pfc_decode(e, o2, dst, 1, &out, g_work) == PFC_E_BOUND, "decode columnar dst too small");
 }
 
+/* Regression for a real fault-tolerance defect found by SEU fault injection (test/seu_inject.c):
+ * a single flipped bit that zeroes a freq[][] entry made pfc_rc_encode compute range = 0, after
+ * which pfc_rc_enc_renorm's exit condition could never become false -- an INFINITE LOOP, i.e. a
+ * hung encoder on the spacecraft, strictly worse than the silent corruption 2.5 anticipated. It
+ * was also a latent JPL Power-of-Ten Rule 2 violation (unbounded loop). Fixed by bounding both
+ * renorm loops with PFC_RC_RENORM_MAX; the encoder now reports overflow, which every codec already
+ * handles by falling back to store-raw.
+ *
+ * freq >= 1 is an invariant on uncorrupted state, so this is only reachable via memory corruption
+ * -- which is precisely the flight fault model. The test therefore corrupts the model directly
+ * rather than waiting for a random upset to find it. It must TERMINATE; that is the assertion. */
+static void test_renorm_bound(void)
+{
+    pfc_rc_enc e;
+    uint8_t out[256];
+    size_t i;
+
+    pfc_model_reset(g_work);
+    /* Zero every frequency in context 0: the strongest form of the corruption, guaranteeing
+     * range==0 on the next encode into that context regardless of which symbol is selected. */
+    for (i = 0u; i < PFC_NSYM; i++) {
+        g_work->freq[0][i] = 0u;
+    }
+    pfc_rc_enc_init(&e, out, sizeof out);
+    pfc_resid_encode(&e, g_work, 0u, 5);   /* hung forever before the fix */
+
+    CHECK(e.overflow == 1, "renorm bound: zeroed model reports overflow instead of hanging");
+
+    /* And the healthy path must be untouched -- no early bail-out on good state. */
+    pfc_model_reset(g_work);
+    pfc_rc_enc_init(&e, out, sizeof out);
+    pfc_resid_encode(&e, g_work, 0u, 5);
+    CHECK(e.overflow == 0, "renorm bound: healthy model still encodes without overflow");
+}
+
 int main(void)
 {
     printf("libpfc test suite  (workmem = %zu bytes)\n", pfc_workmem_bytes());
@@ -506,6 +541,7 @@ int main(void)
     test_validation();
     test_corruption_all();
     test_more_guards();
+    test_renorm_bound();
 
     free(g_work);
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
