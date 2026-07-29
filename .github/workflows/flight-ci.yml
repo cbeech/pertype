@@ -64,6 +64,49 @@ jobs:
         working-directory: flight
         run: make coverage
 
+  # MC/DC (modified condition/decision) coverage -- the structural metric DO-178C wants at the
+  # highest criticality, and strictly stronger than the `coverage` job's branch percentage: a
+  # compound decision can hit both outcomes without any evidence its individual conditions are
+  # load-bearing. gcov cannot measure this at all, which is why it stayed an open gap; it needs
+  # clang 18+, which Debian bookworm does not carry (bookworm tops out at clang 16), hence the
+  # upstream apt.llvm.org repo below.
+  #
+  # MCDC_MIN is a RATCHET set just under the current measurement, NOT a compliance threshold --
+  # a passing run here does not mean "MC/DC compliant". See docs/requirements.md.
+  mcdc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang 18 (apt.llvm.org — bookworm only has up to clang 16)
+        run: |
+          apt-get update && apt-get install -y wget gnupg build-essential python3
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update && apt-get install -y clang-18 llvm-18
+      - name: make mcdc — condition coverage, gated on the ratchet
+        working-directory: flight
+        run: make mcdc
+
+  # Worst-case stack-depth bound (R10, §2.4). Runs on BOTH the host ABI and the real flight target
+  # ABI (big-endian 32-bit PowerPC) because frame layout is ABI-specific -- the host number is not
+  # a proxy for the flight number. The tool asserts the two properties that make this bound exact
+  # rather than estimated (no recursion, no function pointers) and fails loudly if either
+  # regresses, so this job doubles as a guard on those JPL Power-of-Ten rules.
+  stackdepth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools + PowerPC cross toolchain
+        run: apt-get update && apt-get install -y build-essential python3 gcc-powerpc-linux-gnu
+      - name: Worst-case stack depth — host ABI
+        working-directory: flight
+        run: make stackdepth
+      - name: Worst-case stack depth — flight target ABI (big-endian PowerPC)
+        working-directory: flight
+        run: make stackdepth-ppc
+
   # CBMC bounded proof (R6, formal): pfc_block_read -- the shared framing primitive every
   # codec's decoder calls to parse untrusted downlink bytes -- never reads out of bounds, proved
   # under a 32-bit size_t model (the real RAD750/LEON/RISC-V-32 flight targets), not the 64-bit
