@@ -65,12 +65,15 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   clang 18's `-fcoverage-mcdc` (`make mcdc`, `mcdc` CI job): **55.65% MC/DC (64 of 115 conditions)**
   against 98.4% line and 89.4% branch on the *same corpus*. Worst: `pfc_spectral.c` 34.8%,
   `pfc_columnar.c` 36.4%, `pfc.c` 45.0%.
-  `test/test_mcdc.c` closes the most tractable and highest-value of those (argument guards, the
-  magic-byte check on the untrusted-input path), with vectors chosen for condition independence,
-  taking the total to **65.22% (75 of 115)** and `pfc.c` specifically from 45% to 100%.
-  **40 conditions remain**, concentrated in the spectral/columnar decoders' multi-factor wire-header
-  validation chains — harder to reach, since each needs a crafted header satisfying several
-  untrusted fields at once.
+  `test/test_mcdc.c` (68 assertions) closes those, with vectors chosen for condition independence:
+  argument guards, the magic-byte check, and the per-codec wire-header validation chains for SEQ,
+  COLUMNAR and SPECTRAL. Total **55.65% → 76.52% (88 of 115)**; `pfc.c` and `pfc_frame.c` reach
+  100%, `pfc_spectral.c` 34.8% → 60.9%, `pfc_columnar.c` 36.4% → 63.6%.
+  **27 conditions remain**, and they are a harder class: the residual `pfc_image.c` /
+  `pfc_arith.c` conditions live inside the per-sample predictor and the range coder's
+  renormalisation loop, where a condition's independent effect depends on coder state accumulated
+  over many prior symbols rather than on a directly-constructible input. Closing those needs
+  state-seeded tests below the public API or a solver-assisted search, not more crafted headers.
   The CI gate is an explicit **ratchet** — set just under the current measurement so regressions
   fail, raised as conditions get covered — **not a compliance claim**. DO-178C wants ~100% MC/DC on
   decision-heavy safety-critical code; this is nowhere near that yet, and the remaining conditions

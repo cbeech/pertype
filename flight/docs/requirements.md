@@ -133,7 +133,7 @@ because it undercuts the comfortable reading of the numbers above:
 |--------|----------|
 | lines | 98.4% |
 | branches | 89.4% |
-| **MC/DC conditions** | **55.65%** (64 of 115) at first measurement → **65.22%** (75 of 115) after `test_mcdc.c` |
+| **MC/DC conditions** | **55.65%** (64 of 115) at first measurement → **76.52%** (88 of 115) after `test_mcdc.c` |
 
 That is not a contradiction; it is precisely what MC/DC exists to expose. A decision like
 `(a == NULL) || (b == NULL) || (c == NULL)` reaches both outcomes — 100% branch — as soon as one
@@ -141,29 +141,32 @@ test passes all-valid and one passes a single NULL. Nothing about that demonstra
 conditions are load-bearing: invert one of them and both tests still pass. MC/DC requires showing
 each condition *independently* flips the result, which needs N+1 vectors for an N-way chain.
 
-`test/test_mcdc.c` was added to close the most tractable and highest-value of these — the
-argument guards and the magic-byte check on the untrusted-input path — with vectors chosen for
-condition independence rather than behaviour alone. These are real robustness tests, not
-metric-chasing: the magic-byte cases would catch a mistyped index (`s[2]` checked twice, leaving
-one byte unvalidated) that every existing behavioural test misses, because those only ever corrupt
-the whole header at once. Effect, per file:
+`test/test_mcdc.c` (68 assertions) was added to close these, with vectors chosen for condition
+independence rather than behaviour alone. These are real robustness tests, not metric-chasing:
+the magic-byte cases would catch a mistyped index (`s[2]` checked twice, leaving one byte
+unvalidated) that every existing behavioural test misses, because those only ever corrupt the whole
+header at once; and several of the wire-header clauses guard *liveness*, not just validity — a
+zero `block`/`block_recs`/`band` field would leave the corresponding decode loop unable to advance.
+Effect, per file:
 
 | file | before | after |
 |------|--------|-------|
 | `pfc.c` | 45.0% | **100%** (20/20) |
+| `pfc_frame.c` | 50.0% | **100%** (4/4) |
 | `pfc_model.c` | 100% | 100% (2/2) |
+| `pfc_seq.c` | 66.7% | **80.0%** (12/15) |
 | `pfc_image.c` | 75.0% | 75.0% (24/32) |
-| `pfc_seq.c` | 66.7% | 66.7% (10/15) |
 | `pfc_arith.c` | 66.7% | 66.7% (4/6) |
-| `pfc_frame.c` | 50.0% | 50.0% (2/4) |
+| `pfc_columnar.c` | 36.4% | **63.6%** (7/11) |
+| `pfc_spectral.c` | 34.8% | **60.9%** (14/23) |
 | `pfc_internal.h` | 50.0% | 50.0% (1/2) |
-| `pfc_columnar.c` | 36.4% | 36.4% (4/11) |
-| `pfc_spectral.c` | 34.8% | 34.8% (8/23) |
 
-**40 conditions remain uncovered**, concentrated in the spectral and columnar decoders'
-multi-factor validation chains. Those are the harder cases — reaching them needs crafted wire
-headers that satisfy several untrusted fields simultaneously, not just an argument permutation —
-and they are the real outstanding structural-coverage work.
+**27 conditions remain uncovered.** The remainder are genuinely harder than what was closed here:
+the residual `pfc_image.c` and `pfc_arith.c` conditions sit inside the per-sample predictor and the
+range coder's renormalisation loop, where a condition's independent effect depends on coder state
+built up over many prior symbols rather than on a directly-constructible input. Reaching those
+needs either state-seeded unit tests below the public API or a solver-assisted input search — a
+different class of work from crafting a header, and the real outstanding structural-coverage task.
 
 **The gate is a ratchet, not a compliance claim.** `MCDC_MIN` sits just under the current
 measurement so regressions fail the build, and is raised as conditions get covered. DO-178C wants

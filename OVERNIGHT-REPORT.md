@@ -14,7 +14,7 @@ gated on `make check` passing first.
 | # | Task | Status |
 |---|------|--------|
 | 0 | Sustained fuzzing | running — corpus 1 473, **0 crashes** |
-| 1 | MC/DC coverage measurement + CI gate | ✅ done — 55.65% → 65.22% |
+| 1 | MC/DC coverage measurement + CI gate | ✅ done — **55.65% → 76.52%** |
 | 2 | Worst-case stack-depth analysis | ✅ done — 464 B on flight target |
 | 3 | SEU fault-injection harness | ✅ done — **found a real hang bug** |
 | 4 | CBMC proof extension | ✅ done — `pfc_block_write` proved |
@@ -36,8 +36,17 @@ coder, which was also a latent JPL Power-of-Ten Rule 2 violation. Details under 
 4 workers seeded from that same corpus. Honest caveat for the writeup: this is **two segments, not
 one continuous run**. Corpus and crash artifacts persist to the session scratchpad
 (`scratchpad/fuzz/{corpus,artifacts}`) — which incidentally sidesteps, for this run, the CI
-corpus-persistence limitation documented in `mission-safety.md` §2.6. Final result appended on
-completion.
+corpus-persistence limitation documented in `mission-safety.md` §2.6.
+
+**Interim: corpus grown 901 → 1 743, zero crash artifacts.**
+
+Two worker logs (`fuzz-1`, `fuzz-4`) contain the single line `Segmentation fault` and nothing else.
+Investigated rather than assumed: both are 19 bytes with **no libFuzzer startup banner**, meaning
+the process died before executing any input — a worker startup failure, not a crash in the target
+(libFuzzer writes a `crash-*` artifact plus an ASan report for those, and none exist). Confirmed
+definitively by replaying the **entire 1 583-entry corpus** through the current build in a single
+process: all inputs pass, exit 0. Worth recording as a caveat on the fuzzing evidence — effective
+worker count was lower than requested for part of the run — but not a defect.
 
 ### Task 2 — worst-case stack-depth analysis ✅ DONE
 **This item was mis-scoped in the roadmap and that is the main finding.** §2.4 previously bundled
@@ -69,6 +78,24 @@ Wired as `make stackdepth` / `make stackdepth-ppc` + a `stackdepth` CI job on bo
 gated at `STACK_BUDGET`=1024 B. Docs: new R10 requirement, traceability row, `requirements.md`
 section, §2.4 rewritten, roadmap item 6 corrected.
 
+### Bonus finding — the optional-tool skip guards never skipped
+`make coverage` failed with `gcovr: No such file or directory` *immediately after printing its own
+"gate skipped" message*. Root cause: the idiom
+
+```make
+@command -v foo >/dev/null 2>&1 || { echo "... (CI gate skipped)"; exit 0; }
+```
+
+does not skip anything — `exit 0` ends only that **recipe line's** shell, and make then runs the
+next line regardless. Five gates used it (`misra`, `cbmc`, `coverage`, `mcdc`, `stackdepth-ppc`);
+two predate tonight. The bug stayed latent because CI always has the tools installed — i.e. it only
+ever misfired in exactly the situation the guard exists for, and the log it produced ("skipping…"
+then dying inside the skipped gate) was actively misleading.
+
+Fixed by detecting each tool once at parse time and wrapping the recipe in a make conditional,
+which genuinely short-circuits. Verified in a container with all five tools deliberately absent:
+every gate exits 0 having run nothing, while a gate whose toolchain *is* present still executes.
+
 ### Task 1 — MC/DC coverage ✅ DONE (headline finding of the night)
 clang 18's `-fcoverage-mcdc` (bookworm tops out at clang 16, so this needs the upstream
 `apt.llvm.org` repo — the same shape of problem as the CBMC `.deb`).
@@ -79,18 +106,32 @@ worst files `pfc_spectral.c` 34.8%, `pfc_columnar.c` 36.4%, `pfc.c` 45.0%.
 
 Added `test/test_mcdc.c` targeting condition *independence* rather than behaviour — for an N-way
 `||` chain you need N+1 vectors (all-false, then each condition true alone), which no existing test
-provided. 30 new assertions, all passing. **Result: 65.22% (75/115), with `pfc.c` going 45% → 100%.**
+provided. **68 assertions, all passing. Result: 55.65% → 76.52% (88/115).**
 
-These are genuine robustness tests, not metric-chasing: the magic-byte cases would catch a mistyped
+| file | before | after |
+|------|--------|-------|
+| `pfc.c` | 45.0% | **100%** |
+| `pfc_frame.c` | 50.0% | **100%** |
+| `pfc_seq.c` | 66.7% | **80.0%** |
+| `pfc_columnar.c` | 36.4% | **63.6%** |
+| `pfc_spectral.c` | 34.8% | **60.9%** |
+
+These are genuine robustness tests, not metric-chasing. The magic-byte cases would catch a mistyped
 index (`s[2]` checked twice, leaving a header byte unvalidated) that every existing behavioural test
-misses, because those only ever corrupt the whole header at once.
+misses, because those only ever corrupt the whole header at once. Several wire-header clauses guard
+*liveness* rather than validity — a zero `block` / `block_recs` / `band` field would leave the
+corresponding decode loop unable to advance.
 
 Shipped as `make mcdc` + `tools/mcdc_gate.py` + an `mcdc` CI job on both workflows, and
-`make check` now runs the new tests too. **The gate is an explicit ratchet (`MCDC_MIN`=62), not a
-compliance claim** — DO-178C wants ~100% and this is nowhere near it. 40 conditions remain,
-concentrated in the spectral/columnar multi-factor wire-header chains, which need crafted headers
-satisfying several untrusted fields at once. That is the real outstanding work and it is documented
-as such rather than papered over.
+`make check` now runs the new tests too. **The gate is an explicit ratchet (`MCDC_MIN`, raised
+55→62→73 as coverage climbed), not a compliance claim** — DO-178C wants ~100%.
+
+**27 conditions remain, and they are a harder class than what was closed.** The residual
+`pfc_image.c` / `pfc_arith.c` conditions live inside the per-sample predictor and the range coder's
+renormalisation loop, where a condition's independent effect depends on coder state accumulated
+over many prior symbols rather than on a directly-constructible input. Closing them needs
+state-seeded tests below the public API or a solver-assisted search — not more crafted headers.
+Documented as such rather than papered over.
 
 ### Task 3 — SEU fault injection ✅ DONE — and it found a REAL BUG (a hang)
 Harness injects via linker `--wrap` on `pfc_resid_encode`, so `src/` compiles **completely

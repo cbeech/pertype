@@ -267,9 +267,307 @@ static void mcdc_version_and_codec(void)
     free(work);
 }
 
+/* ---------------------------------------------------------------------------------------
+ * pfc_frame.c's bounds guards, on both the read and write side:
+ *     read:  (p > len) || ((len - p) < PFC_BLKHDR)
+ *     write: (p > cap) || ((cap - p) < PFC_BLKHDR)
+ * 2 conditions each -> 3 vectors each. These matter well beyond the metric: this is the exact
+ * check whose earlier addition-based form could wrap size_t on a 32-bit target, and it is the
+ * single point every codec's decoder funnels through. The two conditions guard different things --
+ * `p > len` catches a position already past the end, `(len - p) < PFC_BLKHDR` catches a position
+ * in bounds but with no room for a header -- and only exercising each in isolation shows both are
+ * live. Note the second cannot even be evaluated safely unless the first is false, which is why
+ * the ordering is load-bearing rather than stylistic.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_frame_bounds(void)
+{
+    uint8_t buf[64];
+    const uint8_t *payload = NULL;
+    size_t plen = 0, pos;
+    uint8_t flags = 0;
+    pfc_status st;
+
+    memset(buf, 0, sizeof buf);
+
+    /* --- read side --- */
+    /* Vector 0: both conditions false (room for a header). Rejection here is by CRC/length, NOT
+     * by the bounds guard -- what matters is that the guard itself did not fire, and `pos` is
+     * still valid. */
+    pos = 0u;
+    st = pfc_block_read(buf, sizeof buf, &pos, &payload, &plen, &flags);
+    ck(pos <= sizeof buf, "frame read: in-bounds start leaves pos within len");
+
+    /* Vector 1: p > len alone. */
+    pos = 40u;
+    st = pfc_block_read(buf, 10u, &pos, &payload, &plen, &flags);
+    ck(st == PFC_E_CORRUPT, "frame read: pos past len rejected");
+    ck(pos == 40u, "frame read: pos unchanged when past len");
+
+    /* Vector 2: p <= len, but fewer than PFC_BLKHDR bytes remain. */
+    pos = 5u;
+    st = pfc_block_read(buf, 10u, &pos, &payload, &plen, &flags);
+    ck(st == PFC_E_CORRUPT, "frame read: truncated header rejected");
+    ck(pos == 5u, "frame read: pos unchanged on truncated header");
+
+    /* Boundary pair for the payload-length check `n > rem`: exactly-fits must be accepted by the
+     * bounds guard, one-past must not. Build a real record so only the length check decides. */
+    {
+        uint8_t rec[32];
+        size_t cap_pos = 0u;
+        uint8_t pay[4] = { 1u, 2u, 3u, 4u };
+        memset(rec, 0, sizeof rec);
+        st = pfc_block_write(rec, sizeof rec, &cap_pos, pay, sizeof pay, 0u);
+        ck(st == PFC_OK, "frame write: well-sized record accepted");
+
+        pos = 0u;
+        st = pfc_block_read(rec, cap_pos, &pos, &payload, &plen, &flags);
+        ck(st == PFC_OK, "frame read: exactly-fitting record accepted");
+        ck(plen == sizeof pay, "frame read: payload length round-trips");
+
+        /* Same record, one byte short: the length field now exceeds what remains. */
+        pos = 0u;
+        st = pfc_block_read(rec, cap_pos - 1u, &pos, &payload, &plen, &flags);
+        ck(st == PFC_E_CORRUPT, "frame read: length exceeding remainder rejected");
+    }
+
+    /* --- write side --- */
+    /* Vector 1: p > cap alone. */
+    {
+        uint8_t pay[4] = { 9u, 9u, 9u, 9u };
+        pos = 40u;
+        st = pfc_block_write(buf, 10u, &pos, pay, sizeof pay, 0u);
+        ck(st == PFC_E_BOUND, "frame write: pos past cap rejected");
+        ck(pos == 40u, "frame write: pos unchanged on rejection");
+
+        /* Vector 2: p <= cap but no room for a header. */
+        pos = 5u;
+        st = pfc_block_write(buf, 10u, &pos, pay, sizeof pay, 0u);
+        ck(st == PFC_E_BOUND, "frame write: no room for header rejected");
+
+        /* Payload that does not fit the remaining space, header room notwithstanding. */
+        pos = 0u;
+        st = pfc_block_write(buf, PFC_BLKHDR + 2u, &pos, pay, sizeof pay, 0u);
+        ck(st == PFC_E_BOUND, "frame write: oversized payload rejected");
+        ck(pos == 0u, "frame write: pos unchanged when payload does not fit");
+    }
+}
+
+/* ---------------------------------------------------------------------------------------
+ * pfc_seq.c's decode-side header validation:
+ *     ((elem != 1) && (elem != 2) && (elem != 4)) || (count == 0) || (block == 0)
+ * A 5-condition mixed &&/|| decision reached only through a crafted wire header, which is why it
+ * was among the least-covered. Each vector below makes exactly one clause decisive.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_seq_header(void)
+{
+    uint8_t src[64];
+    uint8_t enc[512];
+    uint8_t bad[512];
+    uint8_t dec[64];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    memset(src, 0, sizeof src);
+    memset(&p, 0, sizeof p);
+    p.count = 32u; p.elem = 2u; p.is_signed = 0u;
+    if (pfc_encode(PFC_CODEC_SEQ, &p, src, 64u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup encode failed\n"); g_fail++; free(work); return;
+    }
+
+    /* Vector 0: every condition false -- a valid header decodes. */
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "seq header: valid header accepted");
+
+    /* Vector 1: elem invalid alone (byte 6), count and block left valid. */
+    memcpy(bad, enc, enc_len);
+    bad[6] = 3u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "seq header: elem=3 alone rejected");
+
+    /* Vector 2: count == 0 alone (bytes 8..11). */
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0u; bad[9] = 0u; bad[10] = 0u; bad[11] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "seq header: count=0 alone rejected");
+
+    /* Vector 3: block == 0 alone (bytes 12..15) -- would otherwise be an infinite decode loop,
+     * so this guard is load-bearing for liveness, not just validity. */
+    memcpy(bad, enc, enc_len);
+    bad[12] = 0u; bad[13] = 0u; bad[14] = 0u; bad[15] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "seq header: block=0 alone rejected");
+
+    /* elem == 1 and elem == 4 are the other two accepted values; exercising them makes the
+     * remaining conditions of the && chain individually decisive rather than short-circuited. */
+    memset(&p, 0, sizeof p);
+    p.count = 64u; p.elem = 1u;
+    ck(pfc_encode(PFC_CODEC_SEQ, &p, src, 64u, enc, sizeof enc, &enc_len, work) == PFC_OK,
+       "seq header: elem=1 encodes");
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "seq header: elem=1 decodes");
+    memset(&p, 0, sizeof p);
+    p.count = 16u; p.elem = 4u;
+    ck(pfc_encode(PFC_CODEC_SEQ, &p, src, 64u, enc, sizeof enc, &enc_len, work) == PFC_OK,
+       "seq header: elem=4 encodes");
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "seq header: elem=4 decodes");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * pfc_columnar.c's decode-side header guard:
+ *     (rw == 0) || (rw > PFC_BLOCK_BYTES) || (cnt == 0) || (block_recs == 0)
+ * 4 conditions -> 5 vectors. Real teeth: the `block_recs` clause is the fix for a heap-buffer-
+ * overflow libFuzzer found (an unbounded block_recs read straight off the wire indexed past the
+ * fixed xform[] scratch buffer). Exercising each clause alone proves none of the four has been
+ * accidentally short-circuited by an earlier one.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_columnar_header(void)
+{
+    uint8_t src[96];
+    uint8_t enc[1024];
+    uint8_t bad[1024];
+    uint8_t dec[96];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    memset(src, 0, sizeof src);
+    memset(&p, 0, sizeof p);
+    p.width = 6u; p.count = 16u;                 /* 6-byte records x 16 = 96 bytes */
+    if (pfc_encode(PFC_CODEC_COLUMNAR, &p, src, 96u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup encode failed\n"); g_fail++; free(work); return;
+    }
+
+    /* Vector 0: all four conditions false. */
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "columnar header: valid header accepted");
+
+    /* Vector 1: rw == 0 alone (bytes 8..11). */
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0u; bad[9] = 0u; bad[10] = 0u; bad[11] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "columnar header: rw=0 alone rejected");
+
+    /* Vector 2: rw > PFC_BLOCK_BYTES alone (65537). */
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0x01u; bad[9] = 0x00u; bad[10] = 0x01u; bad[11] = 0x00u;   /* 0x00010001 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "columnar header: rw>PFC_BLOCK_BYTES alone rejected");
+
+    /* Vector 3: cnt == 0 alone (bytes 12..15). */
+    memcpy(bad, enc, enc_len);
+    bad[12] = 0u; bad[13] = 0u; bad[14] = 0u; bad[15] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "columnar header: cnt=0 alone rejected");
+
+    /* Vector 4: block_recs == 0 alone (bytes 16..19) -- without this guard the decode loop's
+     * `r0 += block_recs` never advances, i.e. an infinite loop, so it is a liveness guard. */
+    memcpy(bad, enc, enc_len);
+    bad[16] = 0u; bad[17] = 0u; bad[18] = 0u; bad[19] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "columnar header: block_recs=0 alone rejected");
+
+    /* Capacity guard, exercised on its own: a valid header whose declared size exceeds cap. */
+    ck(pfc_decode(enc, enc_len, dec, 8u, &out, work) == PFC_E_BOUND,
+       "columnar header: cap smaller than declared size rejected");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * pfc_spectral.c's decode-side header guards -- the least-covered file in the project:
+ *     (bd != 8) && (bd != 16)
+ *     (width == 0) || (height == 0) || (count == 0) || (band == 0) || (width > PFC_MAX_COLS)
+ * 7 conditions across two decisions. SPECTRAL has the most bug history here (a header-size gap
+ * found by libFuzzer, then the four-factor size product that overflows even 64-bit size_t), so
+ * pinning each clause independently is worth more here than anywhere else.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_spectral_header(void)
+{
+    uint8_t src[128];
+    uint8_t enc[2048];
+    uint8_t bad[2048];
+    uint8_t dec[128];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    memset(src, 0, sizeof src);
+    memset(&p, 0, sizeof p);
+    p.width = 4u; p.height = 4u; p.count = 4u; p.bitdepth = 16u;   /* 4*4*4*2 = 128 bytes */
+    if (pfc_encode(PFC_CODEC_SPECTRAL, &p, src, 128u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup encode failed\n"); g_fail++; free(work); return;
+    }
+
+    /* Vector 0: everything valid. */
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "spectral header: valid header accepted");
+
+    /* bitdepth: both accepted values, plus a rejected one. bd is at byte 6. */
+    memcpy(bad, enc, enc_len);
+    bad[6] = 12u;                                  /* neither 8 nor 16 -> both conditions true */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: bitdepth=12 rejected");
+
+    /* width == 0 alone (bytes 8..11). */
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0u; bad[9] = 0u; bad[10] = 0u; bad[11] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: width=0 alone rejected");
+
+    /* width > PFC_MAX_COLS alone -- distinct clause from width==0. */
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0x01u; bad[9] = 0x00u; bad[10] = 0x01u; bad[11] = 0x00u;   /* 65537 > 8192 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: width>PFC_MAX_COLS alone rejected");
+
+    /* height == 0 alone (bytes 12..15). */
+    memcpy(bad, enc, enc_len);
+    bad[12] = 0u; bad[13] = 0u; bad[14] = 0u; bad[15] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: height=0 alone rejected");
+
+    /* count == 0 alone (bytes 16..19). */
+    memcpy(bad, enc, enc_len);
+    bad[16] = 0u; bad[17] = 0u; bad[18] = 0u; bad[19] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: count=0 alone rejected");
+
+    /* band == 0 alone (bytes 20..23) -- liveness guard: the row loop advances by `band`. */
+    memcpy(bad, enc, enc_len);
+    bad[20] = 0u; bad[21] = 0u; bad[22] = 0u; bad[23] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: band=0 alone rejected");
+
+    /* Truncated below SPECTRAL's own 24-byte header -- the check added for the libFuzzer-found
+     * overflow, since the dispatcher only guarantees the generic 20 bytes. */
+    ck(pfc_decode(enc, 22u, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "spectral header: len below PFC_SPEC_HDR rejected");
+
+    /* 8-bit is the other accepted bitdepth; exercise it so that condition is decisive too. */
+    memset(&p, 0, sizeof p);
+    p.width = 4u; p.height = 4u; p.count = 4u; p.bitdepth = 8u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, src, 64u, enc, sizeof enc, &enc_len, work) == PFC_OK,
+       "spectral header: bitdepth=8 encodes");
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "spectral header: bitdepth=8 decodes");
+
+    free(work);
+}
+
 int main(void)
 {
     printf("MC/DC-targeted tests (decision-structure, not just behaviour)\n\n");
+    mcdc_frame_bounds();
+    mcdc_seq_header();
+    mcdc_columnar_header();
+    mcdc_spectral_header();
     mcdc_encode_arg_guard();
     mcdc_decode_arg_guard();
     mcdc_decode_magic();

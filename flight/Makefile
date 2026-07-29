@@ -149,7 +149,7 @@ endif
 # regression fails the build, and is raised as conditions get covered. It is deliberately far below
 # 100% -- see docs/requirements.md for the honest gap statement. Do not read a passing `make mcdc`
 # as "MC/DC compliant".
-MCDC_MIN ?= 62
+MCDC_MIN ?= 73
 CLANG ?= clang-18
 LLVMCOV ?= llvm-cov-18
 LLVMPROF ?= llvm-profdata-18
