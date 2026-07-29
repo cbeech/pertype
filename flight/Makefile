@@ -5,6 +5,21 @@
 # is freestanding-friendly C99 (no malloc, integer-only). This Makefile is the HOST build for
 # tests and CI.
 
+# Optional-tool detection, resolved once at parse time.
+#
+# These exist because several gates need a tool that isn't present in every environment (a bare dev
+# box, a cross-compile-only container). The intent has always been "skip cleanly if absent, run if
+# present". The previous idiom --
+#     @command -v foo >/dev/null 2>&1 || { echo "skipped"; exit 0; }
+# -- did NOT do that: `exit 0` ends only THAT recipe line's shell, and make then cheerfully runs the
+# next line, so a missing tool printed "skipped" and then failed anyway. Caught when `make coverage`
+# died with "gcovr: No such file or directory" immediately after announcing it would be skipped.
+# Detecting at parse time and guarding the whole recipe with a make conditional actually skips it.
+HAVE_CPPCHECK := $(shell command -v cppcheck 2>/dev/null)
+HAVE_CBMC     := $(shell command -v cbmc 2>/dev/null)
+HAVE_GCOVR    := $(shell command -v gcovr 2>/dev/null)
+HAVE_PPCGCC   := $(shell command -v powerpc-linux-gnu-gcc 2>/dev/null)
+
 CC      ?= cc
 CSTD    ?= -std=c99
 WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes
@@ -68,9 +83,12 @@ asan: clean test
 # verified-safe patterns that conflict with an Advisory rule. Anything NOT in that list still
 # fails the build; this gate stays meaningful, not silenced wholesale.
 misra:
-	@command -v cppcheck >/dev/null 2>&1 || { echo "cppcheck not installed (CI gate skipped)"; exit 0; }
+ifeq ($(HAVE_CPPCHECK),)
+	@echo "cppcheck not installed (CI gate skipped)"
+else
 	cppcheck --std=c99 --addon=misra --enable=warning,style --error-exitcode=2 \
 		--suppressions-list=.cppcheck-suppressions $(INC) src/
+endif
 
 # CBMC bounded proof of pfc_block_read (see proofs/cbmc/harness_block_read.c): the shared
 # block-framing primitive every codec's decoder calls to parse untrusted downlink data never
@@ -80,7 +98,9 @@ misra:
 CBMC_CHECKS := --bounds-check --pointer-check --unsigned-overflow-check --signed-overflow-check \
                --unwind 40 --unwinding-assertions
 cbmc:
-	@command -v cbmc >/dev/null 2>&1 || { echo "cbmc not installed (CI gate skipped)"; exit 0; }
+ifeq ($(HAVE_CBMC),)
+	@echo "cbmc not installed (CI gate skipped)"
+else
 	cbmc --32 --c99 $(INC) \
 		proofs/cbmc/harness_block_read.c src/pfc_frame.c src/pfc_crc.c \
 		--function harness_pfc_block_read $(CBMC_CHECKS)
@@ -88,6 +108,7 @@ cbmc:
 	cbmc --32 --c99 $(INC) \
 		proofs/cbmc/harness_block_write.c src/pfc_frame.c src/pfc_crc.c \
 		--function harness_pfc_block_write $(CBMC_CHECKS)
+endif
 
 # Structural coverage (line + branch, via gcov/gcovr). Same corpus as `check`'s functional gates
 # (test_pfc + stress): both instrumented binaries link the SAME coverage objects, so running both
@@ -105,7 +126,9 @@ $(COVDIR)/%.o: src/%.c
 	$(CC) $(COVFLAGS) -c $< -o $@
 
 coverage:
-	@command -v gcovr >/dev/null 2>&1 || { echo "gcovr not installed (CI gate skipped)"; exit 0; }
+ifeq ($(HAVE_GCOVR),)
+	@echo "gcovr not installed (CI gate skipped)"
+else
 	rm -rf $(COVDIR)
 	@mkdir -p $(COVDIR)
 	$(MAKE) $(COVOBJ)
@@ -115,6 +138,7 @@ coverage:
 	./$(COVDIR)/stress 5000 150000
 	gcovr --root . --filter 'src/' --branches --print-summary \
 		--fail-under-line 95 --fail-under-branch 80
+endif
 
 # MC/DC (modified condition/decision) coverage -- the structural metric DO-178C wants at the
 # highest criticality, and strictly stronger than the branch coverage `make coverage` gates.
@@ -132,8 +156,11 @@ LLVMPROF ?= llvm-profdata-18
 MCDCDIR := build/mcdc
 
 MCDCFLAGS := -O0 -g -fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc
+HAVE_CLANG := $(shell command -v $(CLANG) 2>/dev/null)
 mcdc:
-	@command -v $(CLANG) >/dev/null 2>&1 || { echo "$(CLANG) not installed (CI gate skipped)"; exit 0; }
+ifeq ($(HAVE_CLANG),)
+	@echo "$(CLANG) not installed (CI gate skipped)"
+else
 	@rm -rf $(MCDCDIR)
 	@mkdir -p $(MCDCDIR)
 	$(CLANG) $(CSTD) $(MCDCFLAGS) $(INC) $(SRC) test/test_pfc.c  -o $(MCDCDIR)/test_pfc
@@ -147,6 +174,7 @@ mcdc:
 	cd $(MCDCDIR) && $(LLVMCOV) export ./test_pfc -object ./stress -object ./test_mcdc \
 		-instr-profile=merged.profdata --format=text > cov.json
 	python3 tools/mcdc_gate.py $(MCDCDIR)/cov.json --min-percent $(MCDC_MIN)
+endif
 
 # The MC/DC-targeted tests also run as ordinary tests in `make check` -- they assert real
 # behaviour (each guard rejects what it should), not just coverage shape.
@@ -200,8 +228,9 @@ stackdepth:
 # Worth running separately because frame layout is ABI-specific -- the host number is not a proxy
 # for the flight number, and in practice PowerPC's frames differ measurably from x86-64's.
 stackdepth-ppc:
-	@command -v powerpc-linux-gnu-gcc >/dev/null 2>&1 || \
-		{ echo "powerpc cross toolchain not installed (CI gate skipped)"; exit 0; }
+ifeq ($(HAVE_PPCGCC),)
+	@echo "powerpc cross toolchain not installed (CI gate skipped)"
+else
 	@rm -rf $(STACKDIR)-ppc
 	@mkdir -p $(STACKDIR)-ppc
 	@for f in $(SRC); do \
@@ -212,6 +241,7 @@ stackdepth-ppc:
 		--build-dir $(STACKDIR)-ppc --objects $(STACKDIR)-ppc/*.o \
 		--label "powerpc-linux-gnu-gcc $(CFLAGS) (flight target ABI)" \
 		$(STACK_ENTRIES) --max-bytes $(STACK_BUDGET)
+endif
 
 # Deterministic fixture emitter — the R4 endianness-neutrality proof. Built once natively (host
 # endianness) and once cross-compiled for a big-endian target (CI job `bigendian`), each run's
