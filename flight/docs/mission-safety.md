@@ -198,24 +198,27 @@ method in `requirements.md`; what changed here:
   `test_renorm_bound`. **Lesson worth keeping: the fault-injection harness earned its cost on its
   first serious run, and it found a failure class — hang — that no fuzzer, sanitizer, or proof in
   this pipeline was looking for**, because they all model bad *input*, not bad *state*.
-- **The CRC detected ZERO encoder-side upsets** (0 of 1 500 trials). This confirms, rather than
+- **The CRC detected ZERO encoder-side upsets** (0 of 7 200 trials). This confirms, rather than
   contradicts, what this section always said — the CRC protects the *channel*, and is computed
   *after* the corruption, so a corrupted block is self-consistent. The measurement's contribution
   is showing there is no incidental detection either: encoder-side SEU is a **wholly silent**
-  failure mode. 99.7% of upsets had no observable effect; the remaining 0.3% produced silently
+  failure mode. 99.9% of upsets had no observable effect; the remaining 0.1% produced silently
   wrong data with a PFC_OK status.
-- **Containment holds — but "contained" is not "small".** No corruption crossed a band boundary,
-  so the small-independent-blocks argument is validated. However, within a band the damage is near
-  total: worst observed **1 017 corrupted samples out of a 1 024-sample band**. The honest
-  statement of the mitigation is "blast radius is bounded by the band size", which only reassures
-  to the extent the band is small. At `PFC_BAND_ROWS`=16 on a wide sensor, a band is not small.
-- **Risk is concentrated in the smallest regions, which makes hardening cheap.** `scratch[]` +
-  `xform[]` are ~99% of the 330 KB workmem and are largely harmless (overwritten before use):
-  2 silent results in 1 182 hits. The model state is far more dangerous per bit — `freq[][]` 1 in
-  10, `tot[]` 1 in 2. **Actionable consequence:** the state worth protecting with EDAC, scrubbing,
-  or a periodic checksum is a few KB, not the whole context. That is a much easier ask of the
-  platform than protecting all of working memory, and it is the concrete recommendation this
-  section previously could not make.
+- **Containment holds — but "contained" is not "small".** Across **175 observed silent
+  corruptions, not one crossed a band boundary**, so the small-independent-blocks argument is
+  validated with evidence rather than asserted. However, within a band the damage is near total:
+  worst observed **1 017 corrupted samples out of a 1 024-sample band**. The honest statement of
+  the mitigation is "blast radius is bounded by the band size", which only reassures to the extent
+  the band is small. At `PFC_BAND_ROWS`=16 on a wide sensor, a band is not small.
+- **Risk is inverse to region size, and that is the useful part.** Stratified injection (300 trials
+  per region) gives conditional silent-corruption rates of **`tot[]` 20.3%, `mant[][]` 19.7%,
+  `freq[][]` 7.7%, `bias_*[]` 7.0%** — versus **`scratch[]` 0.7% and `xform[]` 0.0%**, which
+  together are 99% of the memory but are overwritten before use.
+  **Actionable consequence, and the concrete recommendation this section previously could not
+  make: the four model regions total 3 012 bytes — 0.91% of the 330 KB workmem — and carry
+  essentially all the risk.** Protecting ~3 KB with EDAC, scrubbing, or a periodic checksum
+  addresses the dominant failure mode at roughly 1/100th the cost of protecting the whole context.
+  That is a realistic ask of a flight platform in a way "harden all working memory" is not.
 - Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
   The new evidence sharpens where to spend that budget rather than replacing it.
 - **Not yet done:** the same measurement on the other four codecs (only IMAGE is exercised), and

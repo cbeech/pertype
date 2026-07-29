@@ -96,19 +96,23 @@ as such rather than papered over.
 Harness injects via linker `--wrap` on `pfc_resid_encode`, so `src/` compiles **completely
 unmodified** — no test-only `#ifdef` hooks in MISRA-reviewed flight code.
 
-**Measured (1 500 uniform trials, 64×64 16-bit, 4 bands):** 99.7% CLEAN, 0.3% SILENT,
+**Measured (7 200 uniform trials, 64×64 16-bit, 4 bands):** 99.9% CLEAN, 0.1% SILENT,
 **0.0% DETECTED**. The zero is the headline: not one encoder-side upset was caught by anything.
 That *confirms* rather than contradicts §2.5 — the CRC is computed after the corruption — but shows
 there is no incidental detection either. Encoder-side SEU is a wholly silent failure mode.
 
 Two further results the prose did not contain:
-- **Containment holds, but "contained" ≠ "small".** Nothing crossed a band boundary, so
-  block-independence is validated. But within a band damage is near-total: worst **1 017 corrupted
-  samples of a 1 024-sample band**. One flipped bit can silently destroy an entire band.
-- **Risk is inverse to region size, which makes hardening cheap.** `scratch[]`+`xform[]` are ~99%
-  of the 330 KB and nearly harmless (2 silent in 1 182 hits); model state is far worse per bit
-  (`freq[][]` 1 in 10, `tot[]` 1 in 2). **Actionable:** the state worth protecting with EDAC or a
-  checksum is a few KB, not the whole workmem — a much easier ask of the platform, and a concrete
+- **Containment holds, but "contained" ≠ "small".** Across **175 silent corruptions, none crossed
+  a band boundary** — block-independence validated with evidence. But within a band damage is
+  near-total: worst **1 017 corrupted samples of a 1 024-sample band**. One flipped bit can
+  silently destroy an entire band.
+- **Risk is inverse to region size, which makes hardening cheap.** Stratified injection (300
+  trials/region): `tot[]` 20.3%, `mant[][]` 19.7%, `freq[][]` 7.7%, `bias_*[]` 7.0% silent — versus
+  `scratch[]` 0.7% and `xform[]` 0.0%, which are 99% of the memory but overwritten before use.
+  **Actionable: the four model regions total 3 012 B — 0.91% of the 330 KB workmem — and carry
+  essentially all the risk.** Protecting ~3 KB with EDAC or a checksum addresses the dominant
+  failure mode at ~1/100th the cost of hardening the whole context. That is a realistic ask of a
+  flight platform in a way "harden all working memory" is not — and it is a concrete
   recommendation §2.5 previously could not make.
 
 #### 🔴 The real bug: SEU-induced infinite loop in the range coder

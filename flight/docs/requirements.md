@@ -216,13 +216,13 @@ Injection uses the linker's `--wrap` on `pfc_resid_encode`, so `src/` compiles *
 unmodified** — no test-only `#ifdef` hooks inside MISRA-reviewed flight code. Every codec calls
 that function once per sample, giving single-sample injection granularity.
 
-Result over 1 500 uniform-random trials (64×64 16-bit image, 4 bands):
+Result over 7 200 uniform-random trials (64×64 16-bit image, 4 bands):
 
 | outcome | count | |
 |---------|-------|---|
-| CLEAN (no observable effect) | 1 496 | 99.7% |
+| CLEAN (no observable effect) | 7 191 | 99.9% |
 | **DETECTED (CRC/status caught it)** | **0** | **0.0%** |
-| SILENT (decode said OK, data wrong) | 4 | 0.3% |
+| SILENT (decode said OK, data wrong) | 9 | 0.1% |
 
 **The headline is the zero.** Not one encoder-side upset was detected by any mechanism in the
 system. That is not a bug — it is the direct, measured consequence of what §2.5 already said in
@@ -233,20 +233,34 @@ end to end.
 
 Two further findings the prose did not contain:
 
-1. **Containment holds, but "contained" is not "small".** No silent corruption crossed a band
-   boundary, confirming the block-independence argument. But within a band the damage is close to
-   total: mean 673 corrupted samples, worst **1 017 of a 1 024-sample band**. A single flipped bit
-   can silently destroy essentially an entire band. The correct reading of §2.5's mitigation is
-   "the blast radius is bounded by the band size", which is only reassuring if the band is small.
-2. **Risk is wildly non-uniform across `pfc_ctx`, in the opposite direction to its size.**
-   `scratch[]` + `xform[]` are ~99% of the 330 KB and are mostly harmless (overwritten before use):
-   2 silent results in 1 182 hits. The tiny model-state regions are far more dangerous per bit —
-   `freq[][]` gave 1 silent in 10 hits, `tot[]` 1 in 2. This is the actionable result: the regions
-   worth protecting with EDAC/scrubbing or a checksum are a few KB, not the whole workmem, so
-   hardening them is cheap. The harness therefore runs a second **stratified** pass with equal
-   trials per region, because uniform sampling barely reaches these small regions (n=2 for `tot[]`
-   is not a statistic). Stratified figures are *conditional* risks and must be weighted by region
-   size before any mission-level conclusion.
+1. **Containment holds, but "contained" is not "small".** Across 175 observed silent corruptions,
+   **not one crossed a band boundary** — the block-independence argument is validated with real
+   evidence. But within a band the damage is close to total: mean 504 corrupted samples, worst
+   **1 017 of a 1 024-sample band**. A single flipped bit can silently destroy essentially an
+   entire band. The correct reading of §2.5's mitigation is "the blast radius is bounded by the
+   band size", which only reassures to the extent the band is small.
+2. **Risk is inverse to region size — which is exactly what makes hardening affordable.** Uniform
+   sampling barely reaches the small model regions (they are <1% of the workmem), so the harness
+   runs a second **stratified** pass with equal trials per region. At 300 trials each:
+
+   | region | size | share of `pfc_ctx` | silent rate (conditional) |
+   |--------|------|--------------------|---------------------------|
+   | `tot[]` (context totals) | 144 B | 0.04% | **20.33%** |
+   | `mant[][]` (mantissa model) | 132 B | 0.04% | **19.67%** |
+   | `freq[][]` (category model) | 2 376 B | 0.72% | 7.67% |
+   | `bias_*[]` (image bias) | 360 B | 0.11% | 7.00% |
+   | `scratch[]` (block payload) | 262 160 B | 79.27% | 0.67% |
+   | `xform[]` (de-interleave) | 65 536 B | 19.82% | 0.00% |
+
+   **The actionable number: the four model regions total 3 012 bytes — 0.91% of the 330 KB
+   workmem — and carry essentially all of the risk.** Protecting ~3 KB with EDAC, scrubbing, or a
+   periodic checksum addresses the dominant failure mode; protecting all 330 KB would be
+   ~100× the cost for almost no additional benefit. `scratch[]`/`xform[]` are large but nearly
+   harmless because they are overwritten before use.
+
+   These are *conditional* risks, not orbit rates — weight by the size column before drawing any
+   mission-level conclusion. (Multiply through and the model regions still dominate: 0.91% of the
+   area at ~10–20% severity versus 99% of the area at ≤0.67%.)
 
 `make seu` is an on-demand analysis tool, **not** a CI gate — it takes minutes and its output is a
 measurement rather than a pass/fail. Trial count is `SEU_TRIALS`.
