@@ -222,12 +222,9 @@ method in `requirements.md`; what changed here:
   wrong for SPECTRAL**, and that is now stated rather than assumed. The containment property and
   the codec's compression win are in direct tension: you cannot exploit inter-band correlation and
   simultaneously have bands fail independently.
-  **Open question, explicitly not answered here:** whether the same propagation also weakens R6
-  containment for ordinary *downlink* corruption in SPECTRAL. The mechanism suggests it might — a
-  CRC-rejected band is zero-filled, and that zero-filled band still feeds band *z+1*'s prediction —
-  but this harness only measured encoder-side faults, so it is a hypothesis to test, not a finding.
-  The existing bit-flip/truncation tests assert "reports corruption, does not crash", not
-  "damage confined to one block", so they would not have caught it either.
+  **That open question is now ANSWERED, and the answer is yes — see §2.5.1 below.** Downlink
+  corruption propagates the same way, so this is not an SEU-only caveat: **R6 as written is wrong
+  for SPECTRAL.**
 - **Containment holds for the other three codecs — but "contained" is not "small".** For IMAGE,
   within a band the damage is near total: worst observed **2 035 corrupted bytes out of a
   2 048-byte block**. The honest statement of the mitigation is "blast radius is bounded by the
@@ -244,9 +241,66 @@ method in `requirements.md`; what changed here:
   That is a realistic ask of a flight platform in a way "harden all working memory" is not.
 - Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
   The new evidence sharpens where to spend that budget rather than replacing it.
-- **Not yet done:** a multi-bit / burst upset model (single-bit only so far), FLOAT (which shares
-  COLUMNAR's implementation), and the downlink-propagation question raised above. Single-bit is a
-  start, not a complete fault model.
+- **Not yet done:** a multi-bit / burst upset model (single-bit only so far) and FLOAT (which
+  shares COLUMNAR's implementation). Single-bit is a start, not a complete fault model.
+
+### 2.5.1 R6 is wrong for SPECTRAL — downlink corruption propagates too (measured, and mitigated)
+
+`make containment` (`test/downlink_containment.c`) flips **one bit in one block's payload**, so that
+block's CRC fails and every other block stays valid, then measures which bands differ:
+
+| codec | bands damaged | verdict |
+|-------|---------------|---------|
+| IMAGE (control — no inter-band prediction) | 1 of 6 | **contained** |
+| **SPECTRAL** | **6 of 6** | **propagated** |
+
+The IMAGE control is what makes this attributable: same corruption, same geometry, same block size.
+The only difference is that SPECTRAL predicts band *z* from band *z−1*. Mechanism, visible in
+`pfc_spectral.c`: a CRC-rejected block is filled with mid-grey by `spec_fill_block()`, and every
+later band then predicts against that wrong reference — those later blocks' own CRCs are **valid**,
+so they decode "correctly" into wrong data.
+
+**So R6's "a corrupt/truncated frame loses one block" is false for SPECTRAL.** Two honest
+qualifications: the failure is **not silent** (decode still returns `PFC_E_CORRUPT`, so the ground
+station knows something is wrong — it is the *extent* that is misdocumented, not the detection);
+and this is **inherent to inter-band prediction**, which is precisely where SPECTRAL's compression
+advantage over per-band coding comes from. Containment and compression are in direct tension here.
+
+**Mitigation, implemented and default-off: inter-band refresh bands.** `pfc_params::elem` (unused
+by this codec otherwise) sets an interval N; every N'th band is coded spatially-only, so damage
+cannot propagate past the next refresh band. The interval travels in the stream header (the
+previously reserved byte 7), so streams stay self-describing and a ground decoder never needs
+out-of-band configuration. Measured:
+
+| refresh | ratio | cost vs off | bands damaged (of 12) |
+|---------|-------|-------------|-----------------------|
+| **0 (default)** | 8.31× | — | **12** |
+| 6 | 7.75× | **+7.30%** | 6 |
+| 8 | 7.74× | +7.37% | 8 |
+| 4 | 7.25× | +14.68% | 4 |
+| 2 | 6.09× | +36.56% | 2 |
+
+**`refresh=0` is byte-identical to the pre-feature encoder** (asserted in `test_spectral_refresh`),
+so this changes nothing for existing callers — enabling it is a deliberate mission decision, not a
+silent default change. Every interval round-trips losslessly (R1), and the independent Python
+ground decoder honours the header field too (R7, `spectral-refresh4` cross-check case).
+
+**The cost is real, and strongly data-dependent — this is the number to argue about.** An earlier
+measurement of this same feature on a *weakly* inter-band-correlated synthetic cube suggested
++0.88% at refresh=4, which was misleading and has been discarded: where bands are barely
+correlated the inter-band predictor is doing little work, so giving it up looks nearly free. The
+table above uses a strongly correlated cube — the shape real hyperspectral data actually has, and
+the regime where the predictor earns its keep — and there the same setting costs **+14.68%**.
+Expect real AVIRIS to sit in this range rather than the optimistic one.
+
+**Pick the interval to divide the band count evenly.** Note refresh=6 *dominates* refresh=8 above:
+identical cost (both produce two refresh bands in a 12-band cube) but a tighter propagation bound.
+An interval that does not divide Z wastes compression without buying containment.
+
+**Still unverified on real data.** These are synthetic cubes; the containment benefit is exact
+(structural — N bands by construction) but the price should be re-measured on real AVIRIS before
+being quoted in a mission context. The `~/sci_data` hyperspectral pool lives on the Linux
+workstation, not the machine this was measured on.
 - **Recommended follow-up, in priority order:** (1) settle whether SPECTRAL's inter-band
   propagation also weakens downlink R6 containment — that determines whether this is an
   SEU-only caveat or a broader correction to R6; (2) if it is broader, either document SPECTRAL as

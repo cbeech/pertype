@@ -358,13 +358,27 @@ def _med_s(a, b, c):                       # signed MED (LOCO-I)
 def _decode_spectral(stream):
     """Mirror pfc_spectral.c: BSQ cube, inter-band MED-of-difference prediction. 24-byte header."""
     bd = stream[6]
+    # Byte 7 is the inter-band refresh interval (0 = off, i.e. the original prediction chain).
+    # Every N'th band is coded spatially-only so a corrupt block cannot poison the prediction
+    # reference for the whole cube -- see pfc_spectral.c spec_has_prev() and mission-safety.md
+    # 2.5.1. This decoder must mirror that rule exactly or R7 (independent reference) is void for
+    # any stream written with refresh enabled.
+    refresh = stream[7]
     W, H, Z, band = struct.unpack_from("<IIII", stream, 8)
     es = 2 if bd > 8 else 1
     cube = [0] * (Z * H * W)
     n = len(stream)
     pos = 24
+
+    def _has_prev(z):
+        if z == 0:
+            return False
+        if refresh == 0:
+            return True
+        return (z % refresh) != 0
+
     for z in range(Z):
-        bz, bzp, has_prev = z * H * W, (z - 1) * H * W if z > 0 else 0, z > 0
+        bz, bzp, has_prev = z * H * W, (z - 1) * H * W if z > 0 else 0, _has_prev(z)
         y0 = 0
         while y0 < H:
             y1 = min(y0 + band, H)

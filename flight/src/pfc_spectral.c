@@ -81,12 +81,35 @@ static int spec_predict(const void *p, uint8_t bd, size_t bz, size_t bzp, int ha
     return haveN ? dN : dW;
 }
 
+/* Does band z reference band z-1?
+ *
+ * Band 0 never does (there is nothing before it). With `refresh` non-zero, every refresh'th band
+ * is additionally coded spatially-only -- a "refresh band" that deliberately gives up inter-band
+ * prediction to BOUND ERROR PROPAGATION. Without it, one corrupt block poisons the prediction
+ * reference for every subsequent band in the cube, so a single-block loss becomes a whole-cube
+ * loss (measured: test/downlink_containment.c; see docs/mission-safety.md 2.5). With it, damage
+ * cannot spread past the next refresh band.
+ *
+ * refresh == 0 disables the feature entirely and reproduces the original behaviour byte-for-byte,
+ * which is why it is the default: this must not silently change existing streams' output. */
+static int spec_has_prev(uint32_t z, uint8_t refresh)
+{
+    if (z == 0u) {
+        return 0;
+    }
+    if (refresh == 0u) {
+        return 1;
+    }
+    return ((z % (uint32_t)refresh) != 0u) ? 1 : 0;
+}
+
 static void spec_encode_block(pfc_rc_enc *e, pfc_ctx *w, const void *src, uint8_t bd,
-                              uint32_t width, uint32_t height, uint32_t z, uint32_t y0, uint32_t y1)
+                              uint32_t width, uint32_t height, uint32_t z, uint32_t y0, uint32_t y1,
+                              uint8_t refresh)
 {
     size_t bz = (size_t)z * height * width;
     size_t bzp = (z > 0u) ? (size_t)(z - 1u) * height * width : 0u;
-    int has_prev = (z > 0u);
+    int has_prev = spec_has_prev(z, refresh);
     uint32_t x, y;
     pfc_model_reset(w);
     for (y = y0; y < y1; y++) {
@@ -101,11 +124,12 @@ static void spec_encode_block(pfc_rc_enc *e, pfc_ctx *w, const void *src, uint8_
 }
 
 static void spec_decode_block(pfc_rc_dec *d, pfc_ctx *w, void *dst, uint8_t bd,
-                              uint32_t width, uint32_t height, uint32_t z, uint32_t y0, uint32_t y1)
+                              uint32_t width, uint32_t height, uint32_t z, uint32_t y0, uint32_t y1,
+                              uint8_t refresh)
 {
     size_t bz = (size_t)z * height * width;
     size_t bzp = (z > 0u) ? (size_t)(z - 1u) * height * width : 0u;
-    int has_prev = (z > 0u);
+    int has_prev = spec_has_prev(z, refresh);
     uint32_t x, y;
     pfc_model_reset(w);
     for (y = y0; y < y1; y++) {
@@ -165,6 +189,9 @@ pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *ds
                                size_t *pos, pfc_ctx *w)
 {
     uint8_t es = (p->bitdepth > 8u) ? 2u : 1u;
+    /* SPECTRAL reuses pfc_params::elem -- unread by this codec otherwise -- as the inter-band
+     * refresh interval, so the knob is selectable per call without an ABI change. See pfc.h. */
+    uint8_t refresh = p->elem;
     uint32_t band = PFC_BAND_ROWS;
     size_t at;
     uint32_t z, y0;
@@ -178,7 +205,12 @@ pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *ds
     dst[4] = (uint8_t)PFC_VERSION;
     dst[5] = (uint8_t)PFC_CODEC_SPECTRAL;
     dst[6] = p->bitdepth;
-    dst[7] = 0u;
+    /* Byte 7 was reserved-zero. It now carries the inter-band refresh interval, which is why a
+     * stream written by an older encoder (0) decodes identically under the new decoder: 0 means
+     * "no refresh bands", i.e. exactly the original prediction chain. The value is carried ON THE
+     * WIRE rather than being a decoder build option so streams stay self-describing -- a ground
+     * decoder must not need to know how the spacecraft was configured. */
+    dst[7] = refresh;
     pfc_put_u32(&dst[8], p->width);
     pfc_put_u32(&dst[12], p->height);
     pfc_put_u32(&dst[16], p->count);
@@ -196,7 +228,7 @@ pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *ds
             if (y1 > p->height) { y1 = p->height; }
             raw_bytes = (size_t)(y1 - y0) * p->width * es;
             pfc_rc_enc_init(&e, w->scratch, raw_bytes);
-            spec_encode_block(&e, w, src, p->bitdepth, p->width, p->height, z, y0, y1);
+            spec_encode_block(&e, w, src, p->bitdepth, p->width, p->height, z, y0, y1, refresh);
             if ((e.overflow != 0) || (e.pos >= raw_bytes)) {
                 spec_store_raw(w->scratch, src, p->bitdepth, p->width, p->height, z, y0, y1);
                 plen = raw_bytes; flags = PFC_BLK_FLAG_RAW;
@@ -214,7 +246,7 @@ pfc_status pfc_spectral_encode(const pfc_params *p, const void *src, uint8_t *ds
 pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t cap,
                                size_t *out, pfc_ctx *w, int *corrupt)
 {
-    uint8_t bd, es;
+    uint8_t bd, es, refresh;
     uint32_t width, height, count, band, z, y0;
     size_t pos;
     size_t total;
@@ -227,6 +259,7 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
     if (len < PFC_SPEC_HDR) { return PFC_E_CORRUPT; }
 
     bd = s[6];
+    refresh = s[7];        /* 0 on every pre-existing stream => original behaviour */
     width = pfc_get_u32(&s[8]);
     height = pfc_get_u32(&s[12]);
     count = pfc_get_u32(&s[16]);
@@ -286,7 +319,7 @@ pfc_status pfc_spectral_decode(const uint8_t *s, size_t len, void *dst, size_t c
             } else {
                 pfc_rc_dec dec;
                 pfc_rc_dec_init(&dec, payload, plen);
-                spec_decode_block(&dec, w, dst, bd, width, height, z, y0, y1);
+                spec_decode_block(&dec, w, dst, bd, width, height, z, y0, y1, refresh);
             }
         }
     }

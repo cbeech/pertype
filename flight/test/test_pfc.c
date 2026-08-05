@@ -516,6 +516,61 @@ static void test_renorm_bound(void)
     CHECK(e.overflow == 0, "renorm bound: healthy model still encodes without overflow");
 }
 
+/* SPECTRAL inter-band refresh bands (pfc_params::elem, 0 = off). Two properties matter and both
+ * are load-bearing:
+ *   (a) refresh=0 must be BYTE-IDENTICAL to the pre-feature encoder, or the feature silently
+ *       changed every existing caller's output;
+ *   (b) every interval must still round-trip losslessly (R1) -- a containment feature that breaks
+ *       losslessness would be a far worse bug than the propagation it fixes.
+ * The containment benefit itself is measured separately (test/downlink_containment.c). */
+static void test_spectral_refresh(void)
+{
+    const uint32_t W = 16u, H = 16u, Z = 8u;
+    size_t n_in = (size_t)W * H * Z * 2u;
+    size_t cap = pfc_bound(PFC_CODEC_SPECTRAL, n_in);
+    uint8_t *src = malloc(n_in), *dec = malloc(n_in);
+    uint8_t *enc = malloc(cap), *ref = malloc(cap);
+    size_t ref_len = 0;
+    const uint8_t intervals[4] = { 0u, 2u, 3u, 4u };
+    uint32_t s = 7u;
+    size_t i;
+    int k;
+
+    for (i = 0u; i < (n_in / 2u); i++) {
+        s = s * 1664525u + 1013904223u;
+        ((uint16_t *)src)[i] = (uint16_t)(((i % 61u) * 17u) + ((s >> 26) & 3u));
+    }
+
+    for (k = 0; k < 4; k++) {
+        pfc_params p;
+        size_t enc_len = 0, dout = 0;
+        memset(&p, 0, sizeof p);
+        p.width = W; p.height = H; p.count = Z; p.bitdepth = 16u;
+        p.elem = intervals[k];
+        CHECK(pfc_encode(PFC_CODEC_SPECTRAL, &p, src, n_in, enc, cap, &enc_len, g_work) == PFC_OK,
+              "spectral refresh: encode OK");
+        memset(dec, 0, n_in);
+        CHECK(pfc_decode(enc, enc_len, dec, n_in, &dout, g_work) == PFC_OK,
+              "spectral refresh: decode OK");
+        CHECK(memcmp(src, dec, n_in) == 0, "spectral refresh: lossless round-trip (R1)");
+        if (k == 0) { memcpy(ref, enc, enc_len); ref_len = enc_len; }
+    }
+
+    /* Re-encode with refresh=0 and demand the exact original bytes back. */
+    {
+        pfc_params p;
+        size_t enc_len = 0;
+        memset(&p, 0, sizeof p);
+        p.width = W; p.height = H; p.count = Z; p.bitdepth = 16u; p.elem = 0u;
+        CHECK(pfc_encode(PFC_CODEC_SPECTRAL, &p, src, n_in, enc, cap, &enc_len, g_work) == PFC_OK,
+              "spectral refresh: baseline re-encode OK");
+        CHECK((enc_len == ref_len) && (memcmp(enc, ref, enc_len) == 0),
+              "spectral refresh: refresh=0 is byte-identical (no silent change)");
+    }
+
+    free(src); free(dec); free(enc); free(ref);
+}
+
 int main(void)
 {
     printf("libpfc test suite  (workmem = %zu bytes)\n", pfc_workmem_bytes());
@@ -542,6 +597,7 @@ int main(void)
     test_corruption_all();
     test_more_guards();
     test_renorm_bound();
+    test_spectral_refresh();
 
     free(g_work);
     printf("\n%d passed, %d failed\n", g_pass, g_fail);

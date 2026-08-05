@@ -12,7 +12,7 @@ and the test(s) that exercise it. IDs are stable; tests live in `flight/test/` a
 | **R3** | **Bounded memory.** Working set ≤ compile-time maxima; footprint = `pfc_workmem_bytes()`. | Inspection + test |
 | **R4** | **Deterministic & portable.** Integer-only; canonical little-endian wire format (big-endian encoder ⇄ little-endian decoder). | Inspection (no FP in `src/`) + independent LE decoder + real big-endian execution |
 | **R5** | **No expansion.** Output never exceeds `pfc_bound()`; incompressible blocks store raw. | Test (random data within bound, all codecs); formal proof attempted, did not converge |
-| **R6** | **Error containment.** Each block independently CRC-protected; a corrupt/truncated frame loses one block, is reported, never reads OOB or crashes — on any `size_t` width. | Test (bit-flip + truncation) + ASan/UBSan + fuzz + formal proof (32-bit model) |
+| **R6** | **Error containment.** Each block independently CRC-protected; a corrupt/truncated frame is reported, never reads OOB or crashes — on any `size_t` width. ⚠️ **"loses one block" holds for IMAGE/SEQ/COLUMNAR/FLOAT but NOT for SPECTRAL**, whose inter-band prediction propagates a single block loss across the rest of the cube (measured; mitigable via refresh bands — see §2.5.1). | Test (bit-flip + truncation) + ASan/UBSan + fuzz + formal proof (32-bit model) + per-codec containment measurement |
 | **R7** | **Independent reference.** An independent implementation decodes the C encoder's output byte-for-byte. | Cross-check (pure-Python ground decoder vs C encoder) |
 | **R8** | **Coding-standard compliance.** MISRA-C:2012 + JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit casts). | Static analysis (`cppcheck --addon=misra`), triaged rule-by-rule |
 | **R9** | **Structural coverage.** Line and branch coverage stay above a floor set below the measured baseline, every push. | Coverage-instrumented test run (gcov/gcovr) |
@@ -208,6 +208,36 @@ regression (a new deep call chain) rather than ordinary codegen drift.
 3. GCC labels `pfc_encode`/`pfc_decode`'s own frames `dynamic,bounded` on x86-64 (but `static` on
    PowerPC), so on the host those two frames are GCC's own bound rather than a fixed size — another
    reason the flight-target number, not the host number, is the one to quote.
+
+### Downlink containment (R6) — `test/downlink_containment.c`
+
+R6 says a corrupt frame "loses one block". `make containment` tests that directly: flip **one bit
+in one block's payload** (failing only that block's CRC) and count which bands differ.
+
+| codec | bands damaged (of 6) | verdict |
+|-------|----------------------|---------|
+| IMAGE (control) | 1 | contained |
+| **SPECTRAL** | **6** | **propagated** |
+
+The IMAGE control is what makes the result attributable — identical corruption, geometry and block
+size; the only difference is inter-band prediction. **R6 is therefore wrong as written for
+SPECTRAL.** It is not a silent failure (decode still returns `PFC_E_CORRUPT`), and it is inherent
+to the inter-band prediction that gives SPECTRAL its compression advantage — containment and ratio
+are in direct tension for this codec.
+
+**Mitigation, implemented, default-off:** `pfc_params::elem` sets an inter-band refresh interval N;
+every N'th band is coded spatially-only, bounding propagation to N bands. Carried in the stream
+header (previously-reserved byte 7) so streams remain self-describing — the independent Python
+ground decoder honours it too (R7 case `spectral-refresh4`). `refresh=0` is **byte-identical** to
+the pre-feature encoder (asserted in `test_spectral_refresh`), so nothing changes for existing
+callers.
+
+**The cost is substantial and data-dependent:** on a strongly inter-band-correlated cube,
+refresh=4 bounds damage to 4 of 12 bands but costs **+14.68%**; refresh=6 costs +7.30%. (An earlier
+figure of +0.88% was measured on a weakly-correlated cube where the inter-band predictor was barely
+working — misleading, and discarded.) Pick an interval that divides the band count evenly: refresh=6
+dominates refresh=8 on a 12-band cube — same cost, tighter bound. Still synthetic-only; re-measure
+on real AVIRIS before quoting. See `mission-safety.md` §2.5.1.
 
 ### SEU fault injection (R11) — `test/seu_inject.c`
 

@@ -100,6 +100,10 @@ def main():
     for z in range(Z):
         cube[z] = (base + z * 40 + ((np.arange(H)[:, None] + np.arange(W)[None, :] + z) & 7)).astype(np.uint16)
     check("spectral-cube16", 5, Params(W, H, Z, 16, 0, 0), cube.tobytes())
+    # Same cube with inter-band refresh bands enabled (elem = refresh interval). Without this case
+    # R7 would only ever prove the independent decoder on the refresh=0 path, leaving the whole
+    # containment feature unverified against an independent implementation.
+    check("spectral-refresh4", 5, Params(W, H, Z, 16, 4, 0), cube.tobytes())
     try:
         import scipy.io as sio
         mat = os.path.expanduser("~/sci_data/hyperspectral/Indian_pines_corrected.mat")

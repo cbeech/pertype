@@ -60,7 +60,15 @@ typedef enum {
  *  SEQ:      count integers of elem bytes (1/2/4), is_signed; src is native ints. 1-D delta.
  *  FLOAT:    count floats of elem bytes (4/8); src is raw float bytes. Byte-plane split (lossless).
  *  COLUMNAR: count records of width bytes each (row-major); de-interleave + per-plane delta.
- *  SPECTRAL: count bands, each height*width samples (BSQ), bitdepth in {8,16}; native uint8/uint16. */
+ *  SPECTRAL: count bands, each height*width samples (BSQ), bitdepth in {8,16}; native uint8/uint16.
+ *            `elem` is reused here as the INTER-BAND REFRESH INTERVAL (0 = off, the default).
+ *            Non-zero means every N'th band is coded spatially-only, giving up inter-band
+ *            prediction for that band in exchange for BOUNDING ERROR PROPAGATION: without it, one
+ *            corrupt block poisons the prediction reference for every later band, so a one-block
+ *            loss becomes a whole-cube loss (measured — see docs/mission-safety.md §2.5). With
+ *            N set, damage cannot spread past the next refresh band, at a small compression cost.
+ *            0 reproduces the original behaviour byte-for-byte, so existing callers are unaffected;
+ *            the value travels in the stream header, so decoding never needs out-of-band config. */
 typedef struct {
     uint32_t width;       /* IMAGE/SPECTRAL: pixels/row.  COLUMNAR: bytes/record. */
     uint32_t height;      /* IMAGE/SPECTRAL: rows per band. */
