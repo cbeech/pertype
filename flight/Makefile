@@ -33,7 +33,7 @@ OBJ     := $(SRC:.c=.o)
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
 .PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage \
-        stackdepth stackdepth-ppc seu mcdc mcdctest
+        stackdepth stackdepth-ppc seu mcdc mcdctest containment
 all: test
 
 # Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
@@ -183,6 +183,16 @@ build/test_mcdc: $(OBJ) test/test_mcdc.c
 	$(CC) $(CSTD) $(WARN) $(CFLAGS) $(INC) $(OBJ) test/test_mcdc.c -o $@
 mcdctest: build/test_mcdc
 	./build/test_mcdc
+
+# Downlink-corruption containment (R6): flip one bit in one block's payload, then measure whether
+# the damage stays in that block. Reports rather than asserts, because the answer is currently
+# codec-dependent and one of the answers is "no": IMAGE contains it, SPECTRAL propagates across
+# every subsequent band (see docs/mission-safety.md 2.5). Run alongside `seu` -- that one covers
+# encoder-side faults, this one covers the channel-side faults R6 is actually written about.
+containment:
+	@mkdir -p build
+	$(CC) $(CSTD) $(WARN) -O1 -g $(INC) $(SRC) test/downlink_containment.c -o build/containment
+	./build/containment
 
 # SEU (single-event-upset) fault injection into the ENCODER's working memory -- see
 # test/seu_inject.c and docs/mission-safety.md §2.5. Measures what no other gate here can: the
