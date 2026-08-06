@@ -33,7 +33,7 @@ OBJ     := $(SRC:.c=.o)
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
 .PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage \
-        stackdepth stackdepth-ppc seu mcdc mcdctest containment
+        stackdepth stackdepth-ppc seu mcdc mcdctest containment seudetect
 all: test
 
 # Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
@@ -193,6 +193,16 @@ containment:
 	@mkdir -p build
 	$(CC) $(CSTD) $(WARN) -O1 -g $(INC) $(SRC) test/downlink_containment.c -o build/containment
 	./build/containment
+
+# Measures whether a cheap software self-check could make encoder-side SEU DETECTABLE.
+# Answer, recorded here so the idea is not retried blind: no -- only 19.7% of silent corruptions
+# are caught, because pfc_model_rescale recomputes tot from freq and thereby launders the
+# corruption, and mant[]/bias_*[] carry no redundancy at all. See docs/mission-safety.md 2.5.
+# Kept as a gate-able experiment so the conclusion can be re-verified if the model ever changes.
+seudetect:
+	@mkdir -p build
+	$(CC) $(CSTD) $(WARN) -O2 $(INC) $(SRC) test/seu_detect.c 		-Wl,--wrap=pfc_resid_encode -Wl,--wrap=pfc_model_reset -o build/seu_detect
+	./build/seu_detect $(SEU_TRIALS)
 
 # SEU (single-event-upset) fault injection into the ENCODER's working memory -- see
 # test/seu_inject.c and docs/mission-safety.md §2.5. Measures what no other gate here can: the

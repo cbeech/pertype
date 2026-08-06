@@ -301,13 +301,39 @@ An interval that does not divide Z wastes compression without buying containment
 (structural — N bands by construction) but the price should be re-measured on real AVIRIS before
 being quoted in a mission context. The `~/sci_data` hyperspectral pool lives on the Linux
 workstation, not the machine this was measured on.
-- **Recommended follow-up, in priority order:** (1) settle whether SPECTRAL's inter-band
-  propagation also weakens downlink R6 containment — that determines whether this is an
-  SEU-only caveat or a broader correction to R6; (2) if it is broader, either document SPECTRAL as
-  having explicitly weaker containment than the other codecs, or offer a periodic
-  "refresh band" (spatial-only, no inter-band reference) at a configurable interval to bound
-  propagation depth at a modest compression cost; (3) checksum the ~3 KB of model state per block
-  so encoder-side upsets become detectable rather than silent.
+- **Tested and rejected: detecting encoder-side SEU in software is harder than it looks.** The
+  obvious cheap idea — the model already maintains `tot[ctx] == sum(freq[ctx][*])` everywhere, so
+  verifying it costs *zero storage* — was measured (`scratchpad` harness, 400 trials/region) and
+  **catches only 19.7% of silent corruptions** while tripping on 31.7% of harmless ones: poor
+  sensitivity and noisy. Two reasons, both instructive:
+  1. **The model's own maintenance launders the corruption.** `pfc_model_rescale` recomputes
+     `tot` from `freq`, so a flipped `tot` is silently made self-consistent again *after* the wrong
+     value has already been coded into the stream. Detection rate for `tot[]` upsets is only 34.8%
+     for exactly this reason.
+  2. **Half the model has no redundancy to check.** `mant[][]` and `bias_*[]` (492 B) carry no
+     equivalent invariant: 0% detected, and they accounted for 97 of the 183 silent corruptions.
+  A stored checksum does not rescue this either, for a more basic reason: the model is **adaptive**,
+  so it legitimately mutates on every symbol — there is no stable value to checksum. Making it work
+  would require either duplicating the model and comparing (2× the 330 KB workmem) or re-checksumming
+  per symbol, both of which cost far more than they are worth on a flight encoder.
+  **This strengthens rather than weakens the existing recommendation:** encoder-side SEU protection
+  belongs at the *platform* level (EDAC/scrubbed RAM), not in the codec. The value of this
+  measurement is that it closes off the cheap software alternatives with evidence instead of
+  leaving them as tempting untested options.
+- **Follow-up status** (this list previously had three open items; all three are now closed):
+  - ~~(1) settle whether SPECTRAL's propagation also weakens *downlink* R6 containment~~ →
+    **DONE, and it does.** See §2.5.1. R6 is corrected.
+  - ~~(2) if broader, document it or offer periodic spatial refresh bands~~ → **DONE, both.**
+    R6 row corrected in `requirements.md`; refresh bands implemented default-off with a measured
+    containment/ratio curve.
+  - ~~(3) checksum the ~3 KB of model state so encoder-side upsets become detectable~~ →
+    **TESTED AND REJECTED** — see the bullet above. Software-level detection cannot work cheaply
+    here because the model is adaptive (nothing stable to checksum) and its own rescale launders
+    corruption. **Encoder-side SEU protection belongs at the platform level (EDAC).**
+  - **Genuinely open, in priority order:** (a) multi-bit / burst upset model (single-bit only so
+    far); (b) FLOAT not separately measured (shares COLUMNAR's implementation); (c) re-measure the
+    refresh-band compression cost on **real AVIRIS** — the current figures are synthetic and the
+    containment benefit is exact while the price is not yet verified on real data.
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
