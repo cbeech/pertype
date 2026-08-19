@@ -1,0 +1,206 @@
+name: flight-ci
+
+# Runs the toolchain-gated flight-core gates that can't run on a plain dev machine: MISRA static
+# analysis, libFuzzer, and a genuine big-endian cross-compile + qemu-user execution (proves R4,
+# the endianness-neutral wire-format claim). See flight/docs/requirements.md for what each gate
+# verifies and flight/docs/mission-safety.md for how this fits the broader qualification path.
+#
+# Authored 2026 in an /overnight run without a local C toolchain (Windows host, no Docker/WSL
+# touched to avoid retriggering a prior crash) — every job here is UNVERIFIED until its first
+# real run on this runner. Do not treat this file's existence as evidence the gates pass; treat
+# a green run of this workflow as that evidence.
+
+on:
+  push:
+    branches: ["flight-core", "master", "main"]
+    paths: ["flight/**", ".github/workflows/flight-ci.yml"]
+  pull_request:
+    paths: ["flight/**", ".github/workflows/flight-ci.yml"]
+  workflow_dispatch:
+
+jobs:
+  # The gates that only need a stock gcc + python3 (make check: strict -Werror build, ASan/UBSan,
+  # the independent-decoder cross-check (R7), decoder fuzz, and randomised property/edge stress).
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools + python3/numpy (test_crosscheck.py's only hard dependency)
+        # actions/setup-python@v5 doesn't work here: it downloads a prebuilt Python matching the
+        # runner's self-reported OS/arch against GitHub's release manifest, and this self-hosted
+        # act-based runner (a bare node:20-bookworm container, not one of the blessed hosted-
+        # runner images) doesn't match any entry -- "version 3.12 ... not found for this
+        # operating system". Simpler and more robust on a Debian-based image: apt has python3 and
+        # python3-numpy directly, no PyPI/manifest lookup needed at all.
+        run: apt-get update && apt-get install -y build-essential python3 python3-numpy
+      - name: make check — strict + asan + crosscheck + fuzz + stress
+        working-directory: flight
+        run: make check
+
+  # MISRA-C:2012 gate (JPL Power-of-Ten discipline). Real cppcheck from apt, not the from-source
+  # build that destabilised a dev machine earlier — apt's build is prebuilt, no local compile.
+  misra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: apt-get update && apt-get install -y cppcheck
+      - name: MISRA-C:2012 static analysis
+        working-directory: flight
+        run: make misra
+
+  # Structural coverage (line + branch, gcov/gcovr) over the same corpus `native` exercises
+  # (test_pfc + stress). Gate is set below the measured baseline (98.4% line / 89.3% branch
+  # project-wide, see docs/requirements.md) to leave headroom for legitimate new code while still
+  # catching a real regression. NOT MC/DC -- gcov doesn't measure condition/decision coverage;
+  # that remains an open gap, see docs/mission-safety.md §2.2.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools + gcovr
+        run: apt-get update && apt-get install -y build-essential gcovr
+      - name: make coverage — line + branch, gated on the measured baseline
+        working-directory: flight
+        run: make coverage
+
+  # MC/DC (modified condition/decision) coverage -- the structural metric DO-178C wants at the
+  # highest criticality, and strictly stronger than the `coverage` job's branch percentage: a
+  # compound decision can hit both outcomes without any evidence its individual conditions are
+  # load-bearing. gcov cannot measure this at all, which is why it stayed an open gap; it needs
+  # clang 18+, which Debian bookworm does not carry (bookworm tops out at clang 16), hence the
+  # upstream apt.llvm.org repo below.
+  #
+  # MCDC_MIN is a RATCHET set just under the current measurement, NOT a compliance threshold --
+  # a passing run here does not mean "MC/DC compliant". See docs/requirements.md.
+  mcdc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang 18 (apt.llvm.org — bookworm only has up to clang 16)
+        run: |
+          apt-get update && apt-get install -y wget gnupg build-essential python3
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update && apt-get install -y clang-18 llvm-18
+      - name: make mcdc — condition coverage, gated on the ratchet
+        working-directory: flight
+        run: make mcdc
+
+  # Worst-case stack-depth bound (R10, §2.4). Runs on BOTH the host ABI and the real flight target
+  # ABI (big-endian 32-bit PowerPC) because frame layout is ABI-specific -- the host number is not
+  # a proxy for the flight number. The tool asserts the two properties that make this bound exact
+  # rather than estimated (no recursion, no function pointers) and fails loudly if either
+  # regresses, so this job doubles as a guard on those JPL Power-of-Ten rules.
+  stackdepth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools + PowerPC cross toolchain
+        run: apt-get update && apt-get install -y build-essential python3 gcc-powerpc-linux-gnu
+      - name: Worst-case stack depth — host ABI
+        working-directory: flight
+        run: make stackdepth
+      - name: Worst-case stack depth — flight target ABI (big-endian PowerPC)
+        working-directory: flight
+        run: make stackdepth-ppc
+
+  # CBMC bounded proof (R6, formal): pfc_block_read -- the shared framing primitive every
+  # codec's decoder calls to parse untrusted downlink bytes -- never reads out of bounds, proved
+  # under a 32-bit size_t model (the real RAD750/LEON/RISC-V-32 flight targets), not the 64-bit
+  # host every other job here implicitly runs under. See proofs/cbmc/harness_block_read.c: this
+  # proof exists because a payload_len field near UINT32_MAX could wrap the old bounds check's
+  # size_t arithmetic on a 32-bit target while never doing so in 64-bit CI -- a real bug found
+  # authoring this proof, fixed in the same change (see docs/requirements.md).
+  cbmc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No Debian apt package for bookworm, so this installs the upstream release .deb directly —
+      # verify its sha256 against the digest GitHub's release API reports for this exact asset
+      # (independently re-checked by hand when this was authored) before executing dpkg on it.
+      # gcc-multilib provides the 32-bit libc headers `--32` needs to preprocess at all (verified
+      # locally: without it, cbmc --32 fails with "bits/libc-header-start.h: No such file").
+      - name: Install cbmc (checksum-verified upstream release .deb) + 32-bit libc headers
+        run: |
+          apt-get update && apt-get install -y gcc-multilib
+          curl -fsSL -o /tmp/cbmc.deb \
+            https://github.com/diffblue/cbmc/releases/download/cbmc-6.10.0/ubuntu-22.04-cbmc-6.10.0-Linux.deb
+          echo "75421d8037afe2ff6bde4e31c054218b7eb88e19aa7590435ec44b57a39347bd  /tmp/cbmc.deb" | sha256sum -c -
+          dpkg -i /tmp/cbmc.deb || apt-get install -y -f
+      - name: CBMC proof — pfc_block_read never reads OOB (32-bit size_t model)
+        working-directory: flight
+        run: make cbmc
+
+  # libFuzzer + ASan/UBSan on the decoder (untrusted downlink input, R6). Bounded wall-clock so
+  # the job terminates on its own; any crash/leak found within that window fails the job.
+  libfuzzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: apt-get update && apt-get install -y clang
+      # Corpus persistence across runs was attempted via actions/cache (ratchet key pattern) and
+      # confirmed NOT working on the self-hosted Gitea instance this branch actually pushes to
+      # (run #23: both restore and save failed with "Request timeout" against
+      # /_apis/artifactcache/... -- no server-side cache backend configured there). A second
+      # attempt via actions/upload-artifact + download-artifact was considered and deliberately not
+      # pursued: v4's cross-run fetch needs a prior run-id lookup (no built-in "restore latest"),
+      # and that protocol's Gitea compatibility is itself unverified -- not worth trading one
+      # unverified integration for another for a bounded 300s job. Formally accepted as a
+      # limitation (see docs/mission-safety.md §2.6): each run fuzzes a fresh 300s from an empty
+      # corpus rather than compounding across runs.
+      - name: Build the libFuzzer harness
+        working-directory: flight
+        run: |
+          mkdir -p build fuzz-corpus
+          clang -std=c99 -g -O1 -fsanitize=address,undefined,fuzzer -Iinclude \
+                src/*.c test/fuzz_pfc.c -o build/fuzz_pfc
+      # 5 minutes per run, from an empty corpus every time -- see the accepted-limitation note
+      # above on why coverage doesn't compound across runs here.
+      - name: Fuzz the decoder for 5 minutes
+        working-directory: flight
+        run: ./build/fuzz_pfc fuzz-corpus -max_total_time=300 -max_len=65536
+      # If a crash was found, its bytes are already in the job log (as hex + base64), but saving
+      # the actual crash-*/leak-* file makes local reproduction trivial instead of hand-decoding
+      # the log.
+      - name: Upload crash artifact (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libfuzzer-crash
+          path: flight/crash-*
+          if-no-files-found: ignore
+
+  # Big-endian validation (R4): cross-compile for 32-bit big-endian PowerPC (RAD750-class) and
+  # run under qemu-user. Two checks, both needed: (1) the full lossless test suite executed ON
+  # emulated BE hardware — proves no endian-dependent bug in the codec internals; (2) the
+  # deterministic emit.c fixture built once natively (LE) and once cross-compiled (BE), byte-
+  # compared — proves the WIRE FORMAT itself is canonical regardless of the encoding host's
+  # endianness, which is the literal R4 claim.
+  bigendian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the PowerPC (big-endian) cross toolchain + qemu-user
+        run: apt-get update && apt-get install -y gcc-powerpc-linux-gnu qemu-user
+      - name: Native (little-endian) reference run of emit.c, then clean
+        working-directory: flight
+        run: |
+          make build/emit
+          ./build/emit > /tmp/emit-le.out
+          make clean
+      - name: Cross-compile the test suite + emit.c for big-endian PowerPC (static)
+        working-directory: flight
+        run: make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' build/test_pfc build/emit
+      - name: Run the full lossless test suite on emulated big-endian hardware
+        working-directory: flight
+        run: qemu-ppc ./build/test_pfc
+      - name: Cross-endian wire-format proof (R4) — BE encoder output must match the LE reference
+        working-directory: flight
+        run: |
+          qemu-ppc ./build/emit > /tmp/emit-be.out
+          cmp /tmp/emit-le.out /tmp/emit-be.out
+          echo "R4 VERIFIED: big-endian and little-endian encoders produce byte-identical output"

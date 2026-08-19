@@ -44,3 +44,4 @@ secrets.*
 
 # Native build artifacts
 *.so
+/RESUME.md
