@@ -66,8 +66,23 @@ The standalone `pertype` CLI ships as a single self-contained binary per OS, bui
 - The binary covers `train`/`compress`/`decompress` + auto-routing (text/byte/CSV/columnar/
   telemetry — patent-clean, no video). The image/audio/video/scientific codecs stay in the
   Python `pip` package. Both install paths documented in the README.
-- Remaining (optional, post-first-release): aarch64-Linux target, Homebrew tap / Scoop / winget
-  manifests, `cargo binstall` metadata, Python wheels via `cibuildwheel`.
+- Remaining (optional, post-first-release): see "Deferred distribution items" below.
+
+## Deferred distribution items
+
+The following were identified as post-first-release polish. They are now **explicitly deferred**
+under roadmap decision D1 (pertype receives bug-fix attention only; no new features or packaging
+work until a concrete integrator or release justifies it):
+
+| Item | Why deferred |
+|------|--------------|
+| **aarch64-Linux target** | No hardware demand identified; the existing x86_64-linux-musl binary covers the likely server/CI users. Revisit if an ARM64 Linux user appears. |
+| **Homebrew tap / Scoop / winget manifests** | Package-manager manifests are nice-to-have, but `cargo install pertype`, `pip install pertype`, and the GitHub Release binary already cover the three main install paths. Revisit for `v0.2.0` if there is user demand. |
+| **`cargo binstall` metadata** | Depends on the above manifests being worth maintaining; defer with them. |
+| **Python wheels via `cibuildwheel`** | The sdist + wheel published to PyPI already install on all platforms; pre-built wheels would only speed up installs. Revisit if install-time compilation becomes a support burden. |
+| **Trusted Publishing one-time registry config** | Requires manual configuration on the PyPI and crates.io accounts (the repo-side workflow is already in `.github/workflows/publish.yml`). This is blocked on the account owner completing the registry-side setup, not on code changes. |
+
+The first three channels (GitHub Release, PyPI, crates.io) are live and sufficient for `v0.1.0`.
 
 ## Done since this plan
 - **`v0.1.0` GitHub Release cut** (2026-06-22) — the release matrix produced all four per-OS
