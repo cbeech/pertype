@@ -106,11 +106,23 @@ def main():
     check("spectral-refresh4", 5, Params(W, H, Z, 16, 4, 0), cube.tobytes())
     try:
         import scipy.io as sio
-        mat = os.path.expanduser("~/sci_data/hyperspectral/Indian_pines_corrected.mat")
+        candidates = [
+            os.path.expanduser("~/sci_data/hyperspectral/Indian_pines_corrected.mat"),
+            os.path.join(os.path.dirname(__file__), "..", "..", ".tmp_aviris", "ip_ia_.mat"),
+        ]
+        mat = None
+        for c in candidates:
+            if os.path.exists(c):
+                mat = c
+                break
+        if mat is None:
+            raise FileNotFoundError("Indian_pines_corrected.mat not found in candidate paths")
         a = np.asarray(sio.loadmat(mat)["indian_pines_corrected"]).transpose(2, 0, 1).astype("<u2")
         a = np.ascontiguousarray(a[:20])     # first 20 bands, full 145x145
         zz, hh, ww = a.shape
         check("spectral-aviris", 5, Params(ww, hh, zz, 16, 0, 0), a.tobytes())
+        # Also verify the refresh-band path on real data (R7 coverage of the containment feature).
+        check("spectral-aviris-refresh4", 5, Params(ww, hh, zz, 16, 4, 0), a.tobytes())
     except Exception as e:
         print(f"  (skip real AVIRIS spectral cross-check: {e})")
 

@@ -25,6 +25,7 @@ venv/
 
 # Local harness state
 /.claude/
+/.tmp_aviris/
 
 # Session handoff notes (kept locally, not published — may contain machine-specific paths)
 /HANDOFF.md

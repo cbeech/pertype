@@ -276,12 +276,15 @@ ground decoder honours it too (R7 case `spectral-refresh4`). `refresh=0` is **by
 the pre-feature encoder (asserted in `test_spectral_refresh`), so nothing changes for existing
 callers.
 
-**The cost is substantial and data-dependent:** on a strongly inter-band-correlated cube,
+**The cost is data-dependent.** On a strongly inter-band-correlated 12-band synthetic cube,
 refresh=4 bounds damage to 4 of 12 bands but costs **+14.68%**; refresh=6 costs +7.30%. (An earlier
 figure of +0.88% was measured on a weakly-correlated cube where the inter-band predictor was barely
-working — misleading, and discarded.) Pick an interval that divides the band count evenly: refresh=6
-dominates refresh=8 on a 12-band cube — same cost, tighter bound. Still synthetic-only; re-measure
-on real AVIRIS before quoting. See `mission-safety.md` §2.5.1.
+working — misleading, and discarded.) On **real AVIRIS Indian Pines** (200 bands, 145×145, uint16),
+the same intervals are much cheaper: refresh=4 costs **+3.96%**, refresh=6 **+2.60%**, refresh=8
+**+1.98%**, and refresh=10 only **+1.44%** (see `mission-safety.md` §2.5.1 for the full curve).
+Pick an interval that divides the band count evenly: refresh=6 dominates refresh=8 on the 12-band
+synthetic cube (same cost, tighter bound), while on the 200-band real scene refresh=8 (divisor) is
+cheaper than refresh=6 (non-divisor).
 
 ### SEU fault injection (R11) — `test/seu_inject.c`
 

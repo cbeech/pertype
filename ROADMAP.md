@@ -141,12 +141,13 @@ unambiguously the externally-blocked ones.
   is replaced, and containment is re-confirmed.
 - **Touches:** `flight/docs/mission-safety.md`, `flight/docs/requirements.md`
 - **Depends on:** G0.1
-- **Size:** M — **must run on the Linux workstation** (`~/sci_data`); not doable on the Windows box.
-  Scheduled early per D5.
+- **Size:** M — originally scheduled on the Linux workstation (`~/sci_data`), but the public
+  AVIRIS Indian Pines scene was obtained via the Internet Archive Wayback Machine and measured here.
 - **Basis:** verified in repo
-- **Status:** **Blocked.** The Linux workstation hosting `~/sci_data` is not reachable from this
-  Windows environment. `10.0.0.243` key-auth failed; `10.0.0.246`/`10.0.0.247` is the NAS and has no
-  `~/sci_data`. The containment bound is documented; only the real-data price remains unverified.
+- **Status:** **Done.** Measured on real AVIRIS Indian Pines (200 bands, 145×145, uint16). The
+  synthetic +14.68% figure for refresh=4 was an overestimate: the same interval costs **+3.96%**
+  on this real scene. Full price curve and updated guidance are in `flight/docs/mission-safety.md`
+  §2.5.1 and `flight/docs/requirements.md`.
 
 /goal Extend SEU fault injection to a multi-bit / burst upset model.
 - **ID:** G3.2

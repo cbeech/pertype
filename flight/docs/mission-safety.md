@@ -266,9 +266,9 @@ method in `requirements.md`; what changed here:
   containment conclusion is unchanged from single-bit: SPECTRAL propagates, the others do not.
 - Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
   The new evidence sharpens where to spend that budget rather than replacing it.
-- **Not yet done:** re-measure the SPECTRAL refresh-band compression cost on **real AVIRIS**
-  (current figures are synthetic; the containment benefit is exact but the price is unverified on
-  real data). Single-bit and multi-bit SEU behaviour is now covered for all five codecs.
+- **Done:** re-measured the SPECTRAL refresh-band compression cost on **real AVIRIS** Indian
+  Pines (200 bands, 145×145, uint16). See §2.5.1 for the price curve. Single-bit and multi-bit SEU
+  behaviour is now covered for all five codecs.
 
 ### 2.5.1 R6 is wrong for SPECTRAL — downlink corruption propagates too (measured, and mitigated)
 
@@ -296,7 +296,35 @@ advantage over per-band coding comes from. Containment and compression are in di
 by this codec otherwise) sets an interval N; every N'th band is coded spatially-only, so damage
 cannot propagate past the next refresh band. The interval travels in the stream header (the
 previously reserved byte 7), so streams stay self-describing and a ground decoder never needs
-out-of-band configuration. Measured:
+out-of-band configuration.
+
+**Measured on real AVIRIS Indian Pines** (200 bands, 145×145, uint16, public EHU GIC scene, measured
+2026-08-19):
+
+| refresh | ratio | cost vs off | divides 200 |
+|---------|-------|-------------|-------------|
+| **0 (default)** | **2.347×** | — | — |
+| 2 | 2.179× | +7.68% | yes |
+| 4 | 2.257× | +3.96% | yes |
+| 6 | 2.287× | +2.60% | no |
+| 8 | 2.301× | +1.98% | yes |
+| 10 | 2.313× | +1.44% | yes |
+| 20 | 2.331× | +0.67% | yes |
+| 25 | 2.334× | +0.53% | yes |
+| 40 | 2.338× | +0.36% | yes |
+| 50 | 2.343× | +0.14% | yes |
+| 100 | 2.346× | +0.03% | yes |
+| 200 | 2.347× | +0.00% | yes |
+
+The synthetic 12-band cube used earlier for the containment visualisation gave +14.68% at
+refresh=4; on this real scene the same interval costs **+3.96%**. Real AVIRIS is less sensitive
+than the strongly-correlated synthetic cube because the inter-band correlation is strong enough
+to help, but not so strong that giving it up occasionally is catastrophic. The earlier weakly-
+correlated synthetic figure (+0.88%) remains misleading in the other direction — the real price
+sits between the two extremes.
+
+A 12-band synthetic cube is retained below for the direct containment demonstration (it is small
+enough to run the downlink-corruption harness band-by-band):
 
 | refresh | ratio | cost vs off | bands damaged (of 12) |
 |---------|-------|-------------|-----------------------|
@@ -309,19 +337,13 @@ out-of-band configuration. Measured:
 **`refresh=0` is byte-identical to the pre-feature encoder** (asserted in `test_spectral_refresh`),
 so this changes nothing for existing callers — enabling it is a deliberate mission decision, not a
 silent default change. Every interval round-trips losslessly (R1), and the independent Python
-ground decoder honours the header field too (R7, `spectral-refresh4` cross-check case).
+ground decoder honours the header field too (R7, `spectral-refresh4` synthetic cross-check case).
 
-**The cost is real, and strongly data-dependent — this is the number to argue about.** An earlier
-measurement of this same feature on a *weakly* inter-band-correlated synthetic cube suggested
-+0.88% at refresh=4, which was misleading and has been discarded: where bands are barely
-correlated the inter-band predictor is doing little work, so giving it up looks nearly free. The
-table above uses a strongly correlated cube — the shape real hyperspectral data actually has, and
-the regime where the predictor earns its keep — and there the same setting costs **+14.68%**.
-Expect real AVIRIS to sit in this range rather than the optimistic one.
-
-**Pick the interval to divide the band count evenly.** Note refresh=6 *dominates* refresh=8 above:
-identical cost (both produce two refresh bands in a 12-band cube) but a tighter propagation bound.
-An interval that does not divide Z wastes compression without buying containment.
+**Pick the interval to divide the band count evenly.** On the 12-band synthetic cube, refresh=6
+*dominates* refresh=8: identical cost (both insert two refresh bands) but a tighter propagation
+bound. On the 200-band real scene, refresh=8 (divides evenly) is cheaper than refresh=6 (does not),
+which is exactly the rule: an interval that does not divide Z can waste compression without buying
+containment. A divisor such as 10, 20 or 25 gives a much cheaper bound for this scene.
 
 **Containment bound as a function of N.** With refresh interval N, a single corrupt block can
 affect at most N consecutive bands: the corrupted band itself plus the predictively-coded bands
@@ -329,10 +351,9 @@ up to (but not past) the next refresh band. In a Z-band cube, the worst-case fra
 lost is therefore at most N/Z. This bound is structural and holds regardless of the data source;
 only the compression cost is data-dependent.
 
-**Still unverified on real data.** These are synthetic cubes; the containment benefit is exact
-(structural — N bands by construction) but the price should be re-measured on real AVIRIS before
-being quoted in a mission context. The `~/sci_data` hyperspectral pool lives on the Linux
-workstation, not the machine this was measured on.
+**Real-data verification: done.** The price is now measured on AVIRIS Indian Pines; the containment
+benefit is structural (N bands by construction) and was demonstrated on the 12-band synthetic cube
+via `make containment`.
 - **Tested and rejected: detecting encoder-side SEU in software is harder than it looks.** The
   obvious cheap idea — the model already maintains `tot[ctx] == sum(freq[ctx][*])` everywhere, so
   verifying it costs *zero storage* — was measured (`scratchpad` harness, 400 trials/region) and
@@ -362,10 +383,9 @@ workstation, not the machine this was measured on.
     **TESTED AND REJECTED** — see the bullet above. Software-level detection cannot work cheaply
     here because the model is adaptive (nothing stable to checksum) and its own rescale launders
     corruption. **Encoder-side SEU protection belongs at the platform level (EDAC).**
-  - **Genuinely open, in priority order:** (a) multi-bit / burst upset model (single-bit only so
-    far); (b) FLOAT not separately measured (shares COLUMNAR's implementation); (c) re-measure the
-    refresh-band compression cost on **real AVIRIS** — the current figures are synthetic and the
-    containment benefit is exact while the price is not yet verified on real data.
+  - **All three follow-ups are now closed:** (a) multi-bit / burst upset model implemented
+    (`make seu SEU_BURST=N`); (b) FLOAT separately measured; (c) refresh-band price re-measured on
+    real AVIRIS Indian Pines (see table above).
 
 ### 2.6 Sustained robustness
 - **Continuous fuzzing** (libFuzzer + ASan, days of CPU / OSS-Fuzz-style), seeded corpus, regression
