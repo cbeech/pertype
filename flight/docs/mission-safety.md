@@ -323,6 +323,12 @@ Expect real AVIRIS to sit in this range rather than the optimistic one.
 identical cost (both produce two refresh bands in a 12-band cube) but a tighter propagation bound.
 An interval that does not divide Z wastes compression without buying containment.
 
+**Containment bound as a function of N.** With refresh interval N, a single corrupt block can
+affect at most N consecutive bands: the corrupted band itself plus the predictively-coded bands
+up to (but not past) the next refresh band. In a Z-band cube, the worst-case fraction of the cube
+lost is therefore at most N/Z. This bound is structural and holds regardless of the data source;
+only the compression cost is data-dependent.
+
 **Still unverified on real data.** These are synthetic cubes; the containment benefit is exact
 (structural — N bands by construction) but the price should be re-measured on real AVIRIS before
 being quoted in a mission context. The `~/sci_data` hyperspectral pool lives on the Linux

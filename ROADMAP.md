@@ -144,6 +144,9 @@ unambiguously the externally-blocked ones.
 - **Size:** M — **must run on the Linux workstation** (`~/sci_data`); not doable on the Windows box.
   Scheduled early per D5.
 - **Basis:** verified in repo
+- **Status:** **Blocked.** The Linux workstation hosting `~/sci_data` is not reachable from this
+  Windows environment. `10.0.0.243` key-auth failed; `10.0.0.246`/`10.0.0.247` is the NAS and has no
+  `~/sci_data`. The containment bound is documented; only the real-data price remains unverified.
 
 /goal Extend SEU fault injection to a multi-bit / burst upset model.
 - **ID:** G3.2
@@ -280,6 +283,9 @@ readable.
 - **Depends on:** G0.1
 - **Size:** M
 - **Basis:** inferred
+- **Status:** **Deferred under D2.** No funded flight opportunity or third-party integrator is
+  currently expected; the speculative audience does not justify the engineering cost. Revisit if
+  an integrator appears.
 
 ### R3 — Guidance for choosing a refresh interval
 **Pitch:** Refresh bands are default-off with a cost from +7% to +37% depending on interval, and the
@@ -298,6 +304,10 @@ without that context.
 - **Depends on:** G3.1 (so the numbers quoted are the real-data ones)
 - **Size:** S
 - **Basis:** verified in repo
+- **Status:** **Done.** The `elem` docstring in `flight/include/pfc.h` now states the
+  divides-evenly rule with the 12-band example, and `flight/docs/mission-safety.md` §2.5.1 adds
+  the explicit containment bound (at most N consecutive bands for interval N). The cost numbers
+  remain synthetic until G3.1 is unblocked; the bound itself is structural and data-independent.
 
 ### R4 — Independent review of the traceability matrix
 **Pitch:** `requirements.md`'s matrix is explicitly solo-authored and §2.1 names independent audit
@@ -316,6 +326,9 @@ valuable now the matrix is public.
 - **Depends on:** G1.3
 - **Size:** S for you; the review is external.
 - **Basis:** verified in repo
+- **Status:** **Deferred under D2.** No funded flight opportunity is near enough to justify
+  asking an external reviewer for their time. `requirements.md` continues to describe the matrix
+  as solo-authored and unreviewed. Revisit if a real flight prospect appears.
 
 ### R5 — Real-target bring-up on a dev board — SHELVED (D2)
 **Pitch:** The largest remaining gap. `bigendian` CI proves big-endian execution under qemu-user,

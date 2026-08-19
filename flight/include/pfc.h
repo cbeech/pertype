@@ -68,7 +68,13 @@ typedef enum {
  *            loss becomes a whole-cube loss (measured — see docs/mission-safety.md §2.5). With
  *            N set, damage cannot spread past the next refresh band, at a small compression cost.
  *            0 reproduces the original behaviour byte-for-byte, so existing callers are unaffected;
- *            the value travels in the stream header, so decoding never needs out-of-band config. */
+ *            the value travels in the stream header, so decoding never needs out-of-band config.
+ *
+ *            Choosing N: pick a value that divides the band count (count) evenly. An interval
+ *            that does not divide Z wastes compression without tightening containment. Example:
+ *            for a 12-band cube, N=6 and N=8 both insert two refresh bands, but N=6 bounds damage
+ *            to at most 6 bands while N=8 bounds it to at most 8; prefer the divisor. See
+ *            docs/mission-safety.md §2.5.1 for measured cost/containment curves. */
 typedef struct {
     uint32_t width;       /* IMAGE/SPECTRAL: pixels/row.  COLUMNAR: bytes/record. */
     uint32_t height;      /* IMAGE/SPECTRAL: rows per band. */
