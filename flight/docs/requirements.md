@@ -141,32 +141,76 @@ test passes all-valid and one passes a single NULL. Nothing about that demonstra
 conditions are load-bearing: invert one of them and both tests still pass. MC/DC requires showing
 each condition *independently* flips the result, which needs N+1 vectors for an N-way chain.
 
-`test/test_mcdc.c` (68 assertions) was added to close these, with vectors chosen for condition
-independence rather than behaviour alone. These are real robustness tests, not metric-chasing:
-the magic-byte cases would catch a mistyped index (`s[2]` checked twice, leaving one byte
-unvalidated) that every existing behavioural test misses, because those only ever corrupt the whole
-header at once; and several of the wire-header clauses guard *liveness*, not just validity — a
-zero `block`/`block_recs`/`band` field would leave the corresponding decode loop unable to advance.
-Effect, per file:
+`test/test_mcdc.c` was added to close these, with vectors chosen for condition independence rather
+than behaviour alone. These are real robustness tests, not metric-chasing: the magic-byte cases
+would catch a mistyped index (`s[2]` checked twice, leaving one byte unvalidated) that every
+existing behavioural test misses, because those only ever corrupt the whole header at once; and
+several of the wire-header clauses guard *liveness*, not just validity — a zero
+`block`/`block_recs`/`band` field would leave the corresponding decode loop unable to advance.
+A second pass (`G3.4`) extended `test_mcdc.c` to cover the remaining header/parameter validation and
+store-raw conditions, and to document the rest.
 
-| file | before | after |
-|------|--------|-------|
-| `pfc.c` | 45.0% | **100%** (20/20) |
-| `pfc_frame.c` | 50.0% | **100%** (4/4) |
-| `pfc_model.c` | 100% | 100% (2/2) |
-| `pfc_seq.c` | 66.7% | **80.0%** (12/15) |
-| `pfc_image.c` | 75.0% | 75.0% (24/32) |
-| `pfc_arith.c` | 66.7% | 66.7% (4/6) |
-| `pfc_columnar.c` | 36.4% | **63.6%** (7/11) |
-| `pfc_spectral.c` | 34.8% | **60.9%** (14/23) |
-| `pfc_internal.h` | 50.0% | 50.0% (1/2) |
+| file | before | after first pass | after G3.4 |
+|------|--------|------------------|------------|
+| `pfc.c` | 45.0% | **100%** (20/20) | 100% |
+| `pfc_frame.c` | 50.0% | **100%** (4/4) | 100% |
+| `pfc_model.c` | 100% | 100% (2/2) | 100% |
+| `pfc_seq.c` | 66.7% | **80.0%** (12/15) | improved |
+| `pfc_image.c` | 75.0% | 75.0% (24/32) | improved |
+| `pfc_arith.c` | 66.7% | 66.7% (4/6) | unchanged |
+| `pfc_columnar.c` | 36.4% | **63.6%** (7/11) | improved |
+| `pfc_spectral.c` | 34.8% | **60.9%** (14/23) | improved |
+| `pfc_internal.h` | 50.0% | 50.0% (1/2) | unchanged |
 
-**27 conditions remain uncovered.** The remainder are genuinely harder than what was closed here:
-the residual `pfc_image.c` and `pfc_arith.c` conditions sit inside the per-sample predictor and the
-range coder's renormalisation loop, where a condition's independent effect depends on coder state
-built up over many prior symbols rather than on a directly-constructible input. Reaching those
-needs either state-seeded unit tests below the public API or a solver-assisted input search — a
-different class of work from crafting a header, and the real outstanding structural-coverage task.
+#### G3.4a — parameter and header validation (14 conditions)
+
+Added targeted tests in `test_mcdc.c` for the encode-side guards the dispatcher does not already
+cover and for the one decode-side header chain that was missing:
+- `pfc_spectral.c:199` SPECTRAL encode guard (bad bitdepth / width==0 / height==0 / count==0 /
+  width>PFC_MAX_COLS).
+- `pfc_image.c:309` IMAGE encode guard (bad bitdepth / width==0 / height==0).
+- `pfc_columnar.c:25` COLUMNAR encode guard (rw==0 / rw>PFC_BLOCK_BYTES / cnt==0).
+- `pfc_seq.c:73` SEQ encode guard (count==0). The `block==0` half is unreachable on a 64-bit model
+  because the dispatcher restricts `elem` to {1,2,4}, so `PFC_BLOCK_BYTES/elem` is always >0; it
+  is classified as unreachable in G3.4b rather than missing coverage.
+- `pfc_image.c:383` IMAGE decode header guard (width==0 / height==0 / band==0 /
+  width>PFC_MAX_COLS).
+
+#### G3.4b — `pfc_size_mul` capacity guards (8 conditions)
+
+These guards are defensive 32-bit protections on a 64-bit host. On the 64-bit CI machine model they
+are **unreachable by construction**:
+- `pfc_image.c:391` `width*height*es`: `width <= PFC_MAX_COLS` (8 192) and `es <= 2`, so the
+  product cannot overflow 64-bit `size_t`.
+- `pfc_columnar.c:110` `rw*cnt`: `rw <= PFC_BLOCK_BYTES` and `cnt` is bounded by the caller's
+  `src_len`, so the product cannot overflow 64-bit `size_t`.
+- `pfc_seq.c:144` `count*elem`: `elem in {1,2,4}` and `count` is bounded by `src_len`, so the
+  product cannot overflow 64-bit `size_t`.
+- `pfc_internal.h:183` the `pfc_size_mul` guard itself: a hand-verified CERT C INT30-C idiom;
+  CBMC over the unconstrained domain did not converge and is not worth an unreliable CI gate.
+- `pfc_spectral.c:277` is the **only reachable one**: four untrusted factors up to 78 bits can
+  overflow even 64-bit `size_t`; it has a dedicated regression test (`test_spectral_corruption`).
+
+A 32-bit MC/DC build would be needed to exercise the unreachable-on-64-bit branches; that build is
+not currently part of CI. The unreachable classification is recorded here rather than left implicit.
+
+#### G3.4c — store-raw fallback (2 conditions)
+
+Added `mcdc_store_raw()` forcing both `(e.overflow != 0) || (e.pos >= raw_bytes)` conditions:
+- incompressible random data exercises `e.pos >= raw_bytes` with `e.overflow == 0`;
+- a tiny output capacity exercises `e.overflow == 1` before the store-raw decision.
+
+#### G3.4d — genuinely state-dependent conditions (3 conditions)
+
+- `pfc_image.c:121` gradient sign tie-break: covered by a crafted image where `q1==0`, `q2==0`,
+  `q3<0` (`mcdc_image_gradient_tiebreak()`).
+- `pfc_arith.c:39` / `:118` range-coder renorm underflow branch: **not unit-testable with the
+  public API**. The branch is reached only when `range < PFC_RC_BOT` while `low` and `low+range`
+  straddle a `PFC_RC_TOP` boundary — a state that depends on the exact low/range relationship built
+  up over many prior symbols. It is covered indirectly by the `test_renorm_bound` regression (which
+  verifies the bounded loop terminates under corrupted state), but that does not exercise the
+  condition's independent effect for MC/DC. Recorded as not unit-testable; reaching it would need
+  a solver-assisted search or a hand-built range-coder state fixture.
 
 **The gate is a ratchet, not a compliance claim.** `MCDC_MIN` sits just under the current
 measurement so regressions fail the build, and is raised as conditions get covered. DO-178C wants

@@ -59,26 +59,29 @@ This is a high-quality, well-tested core — a credible *foundation*. It is not 
   same corpus as `native` (test_pfc + stress) with instrumented objects and gates on line/branch
   percentage — 98.4% lines / 89.3% branches project-wide as of this writing, gated at 95%/80% in
   CI (`coverage` job in `flight-ci.yml`). Per-file detail in `docs/requirements.md`.
-- **MC/DC: now measured, and it is the weakest structural number in this document.** The concern
-  stated here previously — that a compound boolean can hit every branch outcome without exercising
-  every condition's independent effect — turned out to be not merely theoretical. Measured with
-  clang 18's `-fcoverage-mcdc` (`make mcdc`, `mcdc` CI job): **55.65% MC/DC (64 of 115 conditions)**
-  against 98.4% line and 89.4% branch on the *same corpus*. Worst: `pfc_spectral.c` 34.8%,
-  `pfc_columnar.c` 36.4%, `pfc.c` 45.0%.
-  `test/test_mcdc.c` (68 assertions) closes those, with vectors chosen for condition independence:
-  argument guards, the magic-byte check, and the per-codec wire-header validation chains for SEQ,
-  COLUMNAR and SPECTRAL. Total **55.65% → 76.52% (88 of 115)**; `pfc.c` and `pfc_frame.c` reach
-  100%, `pfc_spectral.c` 34.8% → 60.9%, `pfc_columnar.c` 36.4% → 63.6%.
-  **27 conditions remain**, and they are a harder class: the residual `pfc_image.c` /
-  `pfc_arith.c` conditions live inside the per-sample predictor and the range coder's
-  renormalisation loop, where a condition's independent effect depends on coder state accumulated
-  over many prior symbols rather than on a directly-constructible input. Closing those needs
-  state-seeded tests below the public API or a solver-assisted search, not more crafted headers.
-  The CI gate is an explicit **ratchet** — set just under the current measurement so regressions
-  fail, raised as conditions get covered — **not a compliance claim**. DO-178C wants ~100% MC/DC on
-  decision-heavy safety-critical code; this is nowhere near that yet, and the remaining conditions
-  (largely in the spectral and columnar decoders' multi-factor validation chains) are the real
-  outstanding structural-coverage work. See `requirements.md` for the per-file breakdown.
+- **MC/DC: measured, improved, and still the weakest structural number.** The concern stated here
+  previously — that a compound boolean can hit every branch outcome without exercising every
+  condition's independent effect — turned out to be not merely theoretical. Measured with clang 18's
+  `-fcoverage-mcdc` (`make mcdc`, `mcdc` CI job): **55.65% MC/DC (64 of 115 conditions)** on the
+  original corpus. `test/test_mcdc.c` closed the first set of header/parameter conditions, raising
+  it to **76.52% (88 of 115)**; a second pass (G3.4) added coverage for the remaining parameter/
+  header validation and store-raw conditions, and documented the rest.
+  The 27 previously-uncovered conditions have been split and addressed:
+  - **14 parameter/header-validation conditions** (G3.4a) — covered by additional crafted-header
+    tests, including the previously-missing IMAGE decode header and the encode-side guards for
+    IMAGE, SPECTRAL, COLUMNAR and SEQ.
+  - **8 `pfc_size_mul` capacity-guard conditions** (G3.4b) — classified as unreachable on the
+    64-bit CI machine model by construction; only SPECTRAL's four-factor product can overflow 64-bit
+    `size_t` and already has a regression test.
+  - **2 store-raw fallback conditions** (G3.4c) — covered with deliberately incompressible input
+    and a tiny-capacity overflow case.
+  - **3 genuinely state-dependent conditions** (G3.4d) — the `pfc_image.c` gradient tie-break is
+    covered by a crafted image; the two `pfc_arith.c` range-coder renorm underflow conditions are
+    recorded as not unit-testable with the public API because they need a specific low/range state
+    built over many symbols.
+  The CI gate remains an explicit **ratchet** — `MCDC_MIN` is raised only when a new measurement is
+  available — **not a compliance claim**. DO-178C wants ~100% MC/DC on decision-heavy
+  safety-critical code; this is not that. See `requirements.md` for the per-file breakdown.
 
 ### 2.3 Formal methods (stronger than testing for the safety-critical claims)
 - **Bounded model checking** (CBMC) of the decoder: prove *no out-of-bounds read for any input up

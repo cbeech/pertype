@@ -30,6 +30,13 @@
 #include <string.h>
 
 static int g_pass, g_fail;
+static uint32_t g_rng;
+
+static uint32_t rnd32(void)
+{
+    g_rng = (g_rng * 1664525u) + 1013904223u;
+    return g_rng;
+}
 
 static void ck(int cond, const char *what)
 {
@@ -561,6 +568,223 @@ static void mcdc_spectral_header(void)
     free(work);
 }
 
+/* ---------------------------------------------------------------------------------------
+ * pfc_image.c decode-side header guard:
+ *     (width == 0) || (height == 0) || (band == 0) || (width > PFC_MAX_COLS)
+ * IMAGE decode headers were not covered at all by the existing MC/DC tests.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_image_header_decode(void)
+{
+    uint8_t src[64];
+    uint8_t enc[512];
+    uint8_t bad[512];
+    uint8_t dec[64];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    memset(src, 0, sizeof src);
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.height = 4u; p.bitdepth = 16u;
+    if (pfc_encode(PFC_CODEC_IMAGE, &p, src, sizeof src, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup encode failed\n"); g_fail++; free(work); return;
+    }
+
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "image decode header: valid accepted");
+
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0u; bad[9] = 0u; bad[10] = 0u; bad[11] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "image decode header: width=0 alone rejected");
+
+    memcpy(bad, enc, enc_len);
+    bad[12] = 0u; bad[13] = 0u; bad[14] = 0u; bad[15] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "image decode header: height=0 alone rejected");
+
+    memcpy(bad, enc, enc_len);
+    bad[16] = 0u; bad[17] = 0u; bad[18] = 0u; bad[19] = 0u;
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "image decode header: band=0 alone rejected");
+
+    memcpy(bad, enc, enc_len);
+    bad[8] = 0x01u; bad[9] = 0x00u; bad[10] = 0x01u; bad[11] = 0x00u;   /* 65537 > PFC_MAX_COLS */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_CORRUPT,
+       "image decode header: width>PFC_MAX_COLS alone rejected");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Encode-side parameter guards that the dispatcher does NOT check:
+ *   pfc_spectral.c:199  (bitdepth, width, height, count)
+ *   pfc_image.c:309     (bitdepth, width, height)
+ *   pfc_columnar.c:25   (rw, cnt)
+ *   pfc_seq.c:73        (count, block)
+ * Exercising each rejected clause independently pins the encode-side guard chains.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_encode_param_guards(void)
+{
+    uint8_t buf[128];
+    uint8_t dst[512];
+    size_t out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+    memset(buf, 0, sizeof buf);
+
+    /* SPECTRAL encode guard (pfc_spectral.c:199). */
+    memset(&p, 0, sizeof p);
+    p.width = 4u; p.height = 4u; p.count = 4u; p.bitdepth = 16u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_OK,
+       "spectral encode guard: valid accepted");
+    p.bitdepth = 12u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "spectral encode guard: bad bitdepth alone rejected");
+    p.bitdepth = 16u; p.width = 0u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "spectral encode guard: width=0 alone rejected");
+    p.width = 4u; p.height = 0u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "spectral encode guard: height=0 alone rejected");
+    p.height = 4u; p.count = 0u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "spectral encode guard: count=0 alone rejected");
+    p.count = 4u; p.width = 0x00010001u;
+    ck(pfc_encode(PFC_CODEC_SPECTRAL, &p, buf, 128u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "spectral encode guard: width>PFC_MAX_COLS alone rejected");
+
+    /* IMAGE encode guard (pfc_image.c:309). */
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.height = 4u; p.bitdepth = 16u;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_OK,
+       "image encode guard: valid accepted");
+    p.bitdepth = 12u;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "image encode guard: bad bitdepth alone rejected");
+    p.bitdepth = 16u; p.width = 0u;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "image encode guard: width=0 alone rejected");
+    p.width = 8u; p.height = 0u;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "image encode guard: height=0 alone rejected");
+
+    /* COLUMNAR encode guard (pfc_columnar.c:25). */
+    memset(&p, 0, sizeof p);
+    p.width = 4u; p.count = 16u;
+    ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_OK,
+       "columnar encode guard: valid accepted");
+    p.width = 0u;
+    ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "columnar encode guard: width=0 alone rejected");
+    p.width = 0x10001u;
+    ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "columnar encode guard: width>PFC_BLOCK_BYTES alone rejected");
+    p.width = 4u; p.count = 0u;
+    ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "columnar encode guard: count=0 alone rejected");
+
+    /* SEQ encode guard (pfc_seq.c:73). count==0 is reachable; block==0 is not, because the
+     * dispatcher only allows elem in {1,2,4}, so PFC_BLOCK_BYTES/elem is always >0. */
+    memset(&p, 0, sizeof p);
+    p.count = 32u; p.elem = 2u;
+    ck(pfc_encode(PFC_CODEC_SEQ, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_OK,
+       "seq encode guard: valid accepted");
+    p.count = 0u;
+    ck(pfc_encode(PFC_CODEC_SEQ, &p, buf, 64u, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "seq encode guard: count=0 alone rejected");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * pfc_image.c gradient sign tie-break (line 121):
+ *     (q1 < 0) || ((q1 == 0) && (q2 < 0)) || ((q1 == 0) && (q2 == 0) && (q3 < 0))
+ * The third tier needs q1==0, q2==0, q3<0. Construct a small 16-bit image where the up-right
+ * and vertical gradients are flat, but the up-left vs left gradient is strongly negative.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_image_gradient_tiebreak(void)
+{
+    uint16_t img[8 * 4];
+    uint8_t enc[512];
+    uint8_t dec[sizeof img];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    memset(img, 0, sizeof img);
+    /* Pixel layout (x,y): c=(0,0)=100, b=(1,0)=100, d=(2,0)=100, a=(0,1)=200. */
+    img[0 * 8 + 0] = 100u;   /* (0,0) c */
+    img[0 * 8 + 1] = 100u;   /* (1,0) b */
+    img[0 * 8 + 2] = 100u;   /* (2,0) d */
+    img[1 * 8 + 0] = 200u;   /* (0,1) a */
+
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.height = 4u; p.bitdepth = 16u;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, img, sizeof img, enc, sizeof enc, &enc_len, work) == PFC_OK,
+       "image gradient tie-break: crafted image encodes");
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "image gradient tie-break: round-trips");
+    ck(memcmp(dec, img, sizeof img) == 0,
+       "image gradient tie-break: lossless");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Store-raw fallback decisions:
+ *   pfc_columnar.c:73  (e.overflow != 0) || (e.pos >= block_bytes)
+ *   pfc_seq.c:111      (e.overflow != 0) || (e.pos >= raw_bytes)
+ * Random input already hits the decision, but not each half independently. We force:
+ *   - incompressible data -> pos >= raw_bytes, overflow == 0 (pure store-raw)
+ *   - a tiny capacity that triggers overflow before pos reaches raw_bytes
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_store_raw(void)
+{
+    uint8_t rnd[256];
+    uint8_t dst[16];                 /* small enough to force overflow on SEQ */
+    uint8_t dec[256];
+    size_t out = 0, enc_len = 0;
+    pfc_params p;
+    pfc_ctx *work = malloc(pfc_workmem_bytes());
+    unsigned i;
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+
+    /* Incompressible SEQ: random bytes -> pos >= raw_bytes with overflow == 0. */
+    g_rng = 12345u;
+    for (i = 0u; i < sizeof rnd; i++) { rnd[i] = (uint8_t)rnd32(); }
+    memset(&p, 0, sizeof p);
+    p.count = 64u; p.elem = 4u; p.is_signed = 0u;
+    ck(pfc_encode(PFC_CODEC_SEQ, &p, rnd, 256u, dst, sizeof dst, &out, work) == PFC_E_BOUND,
+       "store-raw seq: tiny cap forces overflow before store-raw decision");
+
+    memset(&p, 0, sizeof p);
+    p.count = 64u; p.elem = 4u; p.is_signed = 0u;
+    {
+        uint8_t big_dst[512];
+        ck(pfc_encode(PFC_CODEC_SEQ, &p, rnd, 256u, big_dst, sizeof big_dst, &enc_len, work) == PFC_OK,
+           "store-raw seq: random data encodes (store-raw path)");
+        ck(pfc_decode(big_dst, enc_len, dec, 256u, &out, work) == PFC_OK,
+           "store-raw seq: random data round-trips");
+    }
+
+    /* Incompressible COLUMNAR. */
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.count = 32u;
+    {
+        uint8_t big_dst[512];
+        ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, rnd, 256u, big_dst, sizeof big_dst, &enc_len, work) == PFC_OK,
+           "store-raw columnar: random data encodes (store-raw path)");
+        ck(pfc_decode(big_dst, enc_len, dec, 256u, &out, work) == PFC_OK,
+           "store-raw columnar: random data round-trips");
+    }
+
+    free(work);
+}
+
 int main(void)
 {
     printf("MC/DC-targeted tests (decision-structure, not just behaviour)\n\n");
@@ -568,6 +792,10 @@ int main(void)
     mcdc_seq_header();
     mcdc_columnar_header();
     mcdc_spectral_header();
+    mcdc_image_header_decode();
+    mcdc_image_gradient_tiebreak();
+    mcdc_encode_param_guards();
+    mcdc_store_raw();
     mcdc_encode_arg_guard();
     mcdc_decode_arg_guard();
     mcdc_decode_magic();
