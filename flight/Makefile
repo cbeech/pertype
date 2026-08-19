@@ -213,11 +213,12 @@ seudetect:
 # into MISRA-reviewed flight source: the linker redirects calls to the harness's __wrap_ function,
 # which flips a bit and forwards to __real_. src/ is compiled completely unmodified.
 SEU_TRIALS ?= 3000
+SEU_BURST  ?= 1
 seu:
 	@mkdir -p build
 	$(CC) $(CSTD) $(WARN) -O1 -g $(INC) $(SRC) test/seu_inject.c \
 		-Wl,--wrap=pfc_resid_encode -o build/seu_inject
-	./build/seu_inject $(SEU_TRIALS)
+	./build/seu_inject $(SEU_TRIALS) $(SEU_BURST)
 
 # Worst-case stack-depth bound (see tools/stack_depth.py and docs/mission-safety.md §2.4).
 # Flight software must bound maximum stack usage; for libpfc that bound is EXACT rather than

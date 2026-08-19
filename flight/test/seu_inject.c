@@ -1,4 +1,6 @@
 /* seu_inject.c — single-event-upset fault injection into the ENCODER's working memory.
+ * Supports single-bit upsets and N-bit burst upsets (adjacent bits), plus per-region
+ * stratified sampling, so the fault model can be extended without modifying flight source.
  * SPDX-License-Identifier: Apache-2.0
  *
  * WHY THIS EXISTS
@@ -66,12 +68,17 @@ void __real_pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, int32_t re
 static long     g_call_count;      /* pfc_resid_encode calls so far this encode */
 static long     g_inject_at;       /* inject when g_call_count hits this (-1 = never) */
 static size_t   g_inject_byte;     /* byte offset within pfc_ctx to corrupt */
-static unsigned g_inject_bit;      /* which bit of that byte */
+static unsigned g_inject_bit;      /* starting bit of that byte */
+static unsigned g_inject_width;    /* burst width in bits (>=1) */
 
 void __wrap_pfc_resid_encode(pfc_rc_enc *e, pfc_ctx *w, unsigned ctx, int32_t resid)
 {
     if ((g_inject_at >= 0) && (g_call_count == g_inject_at)) {
-        ((uint8_t *)w)[g_inject_byte] ^= (uint8_t)(1u << g_inject_bit);
+        unsigned i;
+        for (i = 0u; i < g_inject_width; i++) {
+            size_t b = g_inject_byte * 8u + g_inject_bit + i;
+            ((uint8_t *)w)[b / 8u] ^= (uint8_t)(1u << (b % 8u));
+        }
     }
     g_call_count++;
     __real_pfc_resid_encode(e, w, ctx, resid);
@@ -200,14 +207,18 @@ static outcome one_trial(fixture *f, size_t off, unsigned bit, long at, results 
 static void run_pass(fixture *f, int target, long trials, results *res)
 {
     long t;
+    size_t total_bits = sizeof(struct pfc_ctx) * 8u;
     memset(res, 0, sizeof *res);
     res->trials = trials;
     for (t = 0; t < trials; t++) {
-        size_t lo = (target < 0) ? 0u : reg_start[target];
-        size_t hi = (target < 0) ? sizeof(struct pfc_ctx) : reg_end[target];
-        size_t span = hi - lo;
-        size_t off = lo + (size_t)((((uint64_t)rnd() << 8) | (rnd() & 0xFFu)) % span);
-        outcome r = one_trial(f, off, rnd() & 7u, (long)(rnd() % (uint32_t)f->ref_calls), res);
+        size_t lo = (target < 0) ? 0u : reg_start[target] * 8u;
+        size_t hi = (target < 0) ? total_bits : reg_end[target] * 8u;
+        size_t span = (hi > lo + g_inject_width) ? (hi - lo - g_inject_width + 1u) : 1u;
+        size_t start = lo + (size_t)((((uint64_t)rnd() << 16) | ((uint64_t)rnd() << 8)
+                                     | (rnd() & 0xFFu)) % span);
+        size_t off = start / 8u;
+        unsigned bit = (unsigned)(start % 8u);
+        outcome r = one_trial(f, off, bit, (long)(rnd() % (uint32_t)f->ref_calls), res);
         res->tally[r]++;
         res->region_tally[classify(off)][r]++;
     }
@@ -250,6 +261,12 @@ static int setup_fixture(fixture *f, pfc_codec codec)
         f->name = "COLUMNAR 16384 x 8B recs";
         f->p.width = 8u; f->p.count = 16384u;
         f->n_in = (size_t)f->p.width * f->p.count;          /* 128 KB, 2 blocks */
+        f->block_bytes = PFC_BLOCK_BYTES;
+        break;
+    case PFC_CODEC_FLOAT:
+        f->name = "FLOAT 32768 x float32";
+        f->p.count = 32768u; f->p.elem = 4u;
+        f->n_in = (size_t)f->p.count * f->p.elem;           /* 128 KB, 2 blocks */
         f->block_bytes = PFC_BLOCK_BYTES;
         break;
     case PFC_CODEC_SPECTRAL:
@@ -317,13 +334,17 @@ static void report_containment(const fixture *f, long silent, long multi,
 int main(int argc, char **argv)
 {
     long trials = (argc > 1) ? atol(argv[1]) : 3000;
-    const pfc_codec codecs[4] = { PFC_CODEC_IMAGE, PFC_CODEC_SEQ,
-                                  PFC_CODEC_COLUMNAR, PFC_CODEC_SPECTRAL };
+    g_inject_width = (argc > 2) ? (unsigned)atoi(argv[2]) : 1u;
+    if (g_inject_width < 1u) { g_inject_width = 1u; }
+    const pfc_codec codecs[5] = { PFC_CODEC_IMAGE, PFC_CODEC_SEQ,
+                                  PFC_CODEC_COLUMNAR, PFC_CODEC_FLOAT,
+                                  PFC_CODEC_SPECTRAL };
     int c, r;
 
     region_bounds_init();
 
-    printf("SEU injection into encoder working memory (pfc_ctx = %zu B)\n", pfc_workmem_bytes());
+    printf("SEU injection into encoder working memory (pfc_ctx = %zu B, burst = %u bit%s)\n",
+           pfc_workmem_bytes(), g_inject_width, (g_inject_width == 1u) ? "" : "s");
     printf("region sizes:\n");
     for (r = 0; r < REG_N; r++) {
         printf("  %-28s %8zu B (%5.2f%%)\n", region_name[r], reg_end[r] - reg_start[r],

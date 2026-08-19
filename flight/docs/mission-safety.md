@@ -207,11 +207,11 @@ method in `requirements.md`; what changed here:
   is showing there is no incidental detection either: encoder-side SEU is a **wholly silent**
   failure mode. 99.9% of upsets had no observable effect; the remaining 0.1% produced silently
   wrong data with a PFC_OK status.
-- **🔴 Containment does NOT hold for SPECTRAL.** Extending the harness across all four codecs
-  (previously only IMAGE was measured) found that IMAGE, SEQ and COLUMNAR contain the damage — 0
-  of 157, 0 of 87 and 0 of 134 silent corruptions crossed a block boundary respectively — but
-  **SPECTRAL fails: 12 of 15 crossed**, with a worst case of 3 734 corrupted bytes against a
-  1 024-byte block, i.e. damage spanning roughly 3.6 blocks.
+- **🔴 Containment does NOT hold for SPECTRAL.** Extending the harness across all five codecs
+  (previously only IMAGE was measured) found that IMAGE, SEQ, COLUMNAR and FLOAT contain the damage
+  — 0 of 157, 0 of 87, 0 of 134 and 0 of 165 silent corruptions crossed a block boundary
+  respectively — but **SPECTRAL fails: 12 of 15 crossed**, with a worst case of 3 734 corrupted
+  bytes against a 1 024-byte block, i.e. damage spanning roughly 3.6 blocks.
   The mechanism is architectural, not a coding error, and is visible in the source: SPECTRAL
   reconstructs band *z* by reading band *z−1* out of the output buffer
   (`pfc_spectral.c`, `bzp = (z-1)*height*width` / `has_prev`), because its whole compression
@@ -225,11 +225,11 @@ method in `requirements.md`; what changed here:
   **That open question is now ANSWERED, and the answer is yes — see §2.5.1 below.** Downlink
   corruption propagates the same way, so this is not an SEU-only caveat: **R6 as written is wrong
   for SPECTRAL.**
-- **Containment holds for the other three codecs — but "contained" is not "small".** For IMAGE,
+- **Containment holds for the other four codecs — but "contained" is not "small".** For IMAGE,
   within a band the damage is near total: worst observed **2 035 corrupted bytes out of a
   2 048-byte block**. The honest statement of the mitigation is "blast radius is bounded by the
-  block size", which only reassures to the extent the block is small. For SEQ and COLUMNAR the
-  block is 64 KB, so a single upset can silently corrupt up to half a 128 KB payload.
+  block size", which only reassures to the extent the block is small. For SEQ, COLUMNAR and FLOAT
+  the block is 64 KB, so a single upset can silently corrupt up to half a 128 KB payload.
 - **Risk is inverse to region size, and that is the useful part.** Stratified injection (300 trials
   per region) gives conditional silent-corruption rates of **`tot[]` 20.3%, `mant[][]` 19.7%,
   `freq[][]` 7.7%, `bias_*[]` 7.0%** — versus **`scratch[]` 0.7% and `xform[]` 0.0%**, which
@@ -239,10 +239,33 @@ method in `requirements.md`; what changed here:
   essentially all the risk.** Protecting ~3 KB with EDAC, scrubbing, or a periodic checksum
   addresses the dominant failure mode at roughly 1/100th the cost of protecting the whole context.
   That is a realistic ask of a flight platform in a way "harden all working memory" is not.
+- **Multi-bit / burst upsets are now modelled.** `make seu SEU_BURST=N` flips `N` consecutive bits
+  at the injection point (e.g. `SEU_BURST=8`). A 1 000-trial single-bit run vs a 2 000-trial
+  8-bit-burst run on the same fixtures shows the expected qualitative change: burst upsets are
+  slightly more likely to corrupt the small high-value model regions, but containment behaviour
+  is unchanged — IMAGE/SEQ/COLUMNAR/FLOAT stay contained, SPECTRAL still propagates.
+
+  | mode | codec | silent rate | multiblock silent |
+  |------|-------|-------------|-------------------|
+  | single-bit | IMAGE | 0.5% | 0/42 |
+  | single-bit | SEQ | 8.8% | 0/17 |
+  | single-bit | COLUMNAR | 20.0% | 0/31 |
+  | single-bit | FLOAT | 23.2% | 0/35 |
+  | single-bit | SPECTRAL | 0.0% (uniform) / 3 stratified | 3/3 |
+  | 8-bit burst | IMAGE | 0.2% | 0/59 |
+  | 8-bit burst | SEQ | 6.8% | 0/23 |
+  | 8-bit burst | COLUMNAR | 16.0% | 0/51 |
+  | 8-bit burst | FLOAT | 19.2% | 0/60 |
+  | 8-bit burst | SPECTRAL | 0.0% (uniform) / 2 stratified | 1/2 |
+
+  The SPECTRAL fixture here is intentionally small (32×32×4 bands) so the uniform budget rarely
+  lands in the tiny model regions; the stratified rows show what happens when it does. The
+  containment conclusion is unchanged from single-bit: SPECTRAL propagates, the others do not.
 - Remaining system-level mitigations unchanged: EDAC/scrubbed RAM, periodic re-initialisation.
   The new evidence sharpens where to spend that budget rather than replacing it.
-- **Not yet done:** a multi-bit / burst upset model (single-bit only so far) and FLOAT (which
-  shares COLUMNAR's implementation). Single-bit is a start, not a complete fault model.
+- **Not yet done:** re-measure the SPECTRAL refresh-band compression cost on **real AVIRIS**
+  (current figures are synthetic; the containment benefit is exact but the price is unverified on
+  real data). Single-bit and multi-bit SEU behaviour is now covered for all five codecs.
 
 ### 2.5.1 R6 is wrong for SPECTRAL — downlink corruption propagates too (measured, and mitigated)
 

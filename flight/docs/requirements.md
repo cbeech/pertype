@@ -50,7 +50,7 @@ separately, out of scope for now — see `mission-safety.md` §2.1).
 | R4 | Explicit little-endian serialisation helpers `pfc_put_u32`/`pfc_get_u32` (`pfc_internal.h`); no `float`/`double` anywhere in `src/` | Inspection (no FP types); `ground/pfc_decode.py` (independent explicit-LE decoder) via `test_crosscheck.py`; `bigendian` CI job: full test suite under `qemu-ppc` (real BE *execution*) + `emit.c` LE-vs-BE byte-comparison | ✅ stream verified; ✅ **real BE execution confirmed** — all 139 checks green under emulated PowerPC, LE/BE `emit.c` output byte-identical |
 | R5 | `pfc_bound()` closed-form worst-case formula (`pfc.c`); every codec encoder's store-raw fallback when the coded form would exceed capacity | `test_pfc.c`/`stress.c`: random inputs (all codecs) asserted `≤ pfc_bound`, store-raw path exercised | ✅ verified by test (0 failures, 2 real `pfc_bound` under-estimate bugs found+fixed by this same test in an earlier session). **CBMC sufficiency proof attempted (SEQ, count=1), did not converge** — see CBMC section below |
 | R6 | Per-block CRC framing, `pfc_block_write`/`pfc_block_read` (`pfc_frame.c`) + `pfc_crc32` (`pfc_crc.c`); decode repairs (zero-fills) a CRC-mismatched or truncated block instead of propagating it | `test_pfc.c::test_fault_injection`/`::test_truncation`/`::test_corruption_all`/`::test_more_guards`; `make asan` (ASan+UBSan); `fuzz_decode.py` (Python harness, 20 000 iterations); `libfuzzer` CI job (real coverage-guided C fuzzing); **CBMC proofs** of `pfc_block_read` AND `pfc_block_write` (`proofs/cbmc/`, `cbmc` CI job, 32-bit `size_t` model) | ✅ 0 crashes/OOB across all test-based evidence; **libFuzzer found and fixed 2 real heap-buffer-overflows** (SPECTRAL header-size gap, COLUMNAR unbounded `block_recs`) within minutes of first running; **CBMC formally proved** (not sampled) that neither `pfc_block_read` (`0 of 165 failed`) nor `pfc_block_write` (`0 of 152 failed`) accesses out of bounds under a 32-bit model — and authoring the read-side proof found the real `size_t`-wraparound bug it now guards against |
-| R11 | SEU tolerance: per-band model resets + small independently-framed blocks are intended to bound the blast radius of an encoder-side upset (`pfc_model_reset` per block, `pfc_frame.c` framing) | `make seu` (`test/seu_inject.c`): flips a bit in `pfc_ctx` mid-encode via linker `--wrap`, classifies the outcome, and measures how far the damage spreads. Run across all four codecs, with two sampling modes: uniform (orbit rate) and stratified (per-region conditional risk) | ⚠️ **PARTIALLY MET — see the SEU section below.** The CRC detected **zero** encoder-side upsets on any codec, so silent corruption is the realistic failure mode. Containment holds for IMAGE/SEQ/COLUMNAR but **fails for SPECTRAL** (12 of 15 corruptions crossed a block boundary) because inter-band prediction makes its blocks non-independently-decodable. Also found and fixed a real SEU-induced infinite loop in the range coder |
+| R11 | SEU tolerance: per-band model resets + small independently-framed blocks are intended to bound the blast radius of an encoder-side upset (`pfc_model_reset` per block, `pfc_frame.c` framing) | `make seu` (`test/seu_inject.c`): flips 1..N bits in `pfc_ctx` mid-encode via linker `--wrap`, classifies the outcome, and measures how far the damage spreads. Run across all five codecs, with two sampling modes: uniform (orbit rate) and stratified (per-region conditional risk); `SEU_BURST=N` adds adjacent-bit burst upset | ⚠️ **PARTIALLY MET — see the SEU section below.** The CRC detected **zero** encoder-side upsets on any codec, so silent corruption is the realistic failure mode. Containment holds for IMAGE/SEQ/COLUMNAR/FLOAT but **fails for SPECTRAL** (12 of 15 corruptions crossed a block boundary) because inter-band prediction makes its blocks non-independently-decodable. Also found and fixed a real SEU-induced infinite loop in the range coder |
 | R7 | `ground/pfc_decode.py`, a from-scratch pure-Python decoder implementing the same explicit-LE wire format independently of the C encoder | `test_crosscheck.py`: C-encode → Python-decode, compared byte-for-byte to the original | ✅ **10/10** byte-exact, incl. real CyCIF, real AVIRIS hyperspectral, flat run-mode, all codecs |
 | R8 | All of `src/` written to MISRA-C:2012 / JPL Power-of-Ten discipline (integer-only, no recursion, bounded loops, explicit widening casts) | `misra` CI job: `cppcheck --addon=misra` against `.cppcheck-suppressions`; full rule-by-rule triage recorded in `misra-deviations.md` | ✅ 179 findings on first run (gate works); triaged — 4 real + fixed, 27 tool-limitation false positives, 148 deliberate verified-safe deviations; confirmed green in CI with suppressions applied |
 | R9 | N/A (process requirement, not a design property) | `coverage` CI job: `make coverage` (gcov/gcovr) over the `test_pfc` + `stress` corpus, gated at 95% line / 80% branch | ✅ 98.4% lines / 89.3% branches project-wide, gated in CI below that baseline. **MC/DC not measured** — open gap, see `mission-safety.md` §2.2 |
@@ -266,7 +266,7 @@ end to end.
 
 Two further findings the prose did not contain:
 
-1. **Containment holds for three codecs and FAILS for SPECTRAL.** Measured per codec (each input
+1. **Containment holds for four codecs and FAILS for SPECTRAL.** Measured per codec (each input
    sized to span several blocks, so the property is actually testable):
 
    | codec | silent corruptions | crossed a block boundary | worst damage |
@@ -274,6 +274,7 @@ Two further findings the prose did not contain:
    | IMAGE 64×64@16 | 157 | **0** | 2 035 B of a 2 048 B block |
    | SEQ 65536×i16 | 87 | **0** | 65 002 B of a 65 536 B block |
    | COLUMNAR 16384×8B | 134 | **0** | 64 909 B of a 65 536 B block |
+   | FLOAT 32768×f32 | 165 | **0** | 63 074 B of a 65 536 B block |
    | **SPECTRAL 32×32×4@16** | 15 | **12** ⚠ | 3 734 B vs a 1 024 B block (~3.6 blocks) |
 
    SPECTRAL's failure is architectural, not a coding error: it reconstructs band *z* by reading
@@ -281,8 +282,14 @@ Two further findings the prose did not contain:
    MED-of-difference prediction is exactly where its compression advantage comes from. Its blocks
    are independently *framed and CRC'd* but **not independently decodable**, so a silently-wrong
    band feeds the next band's prediction. Containment and the codec's compression win are in direct
-   tension. See `mission-safety.md` §2.5, including the open question of whether the same
-   propagation weakens R6 for ordinary downlink corruption (untested — a hypothesis, not a finding).
+   tension. The same propagation was later confirmed for ordinary **downlink** corruption in
+   `mission-safety.md` §2.5.1.
+
+   The harness also supports multi-bit / burst upset via `make seu SEU_BURST=N`. An 8-bit burst run
+   (2 000 trials for IMAGE, 250 for the others) produced the same qualitative containment picture:
+   IMAGE/SEQ/COLUMNAR/FLOAT stayed contained; SPECTRAL still propagated when the model regions were
+   hit. Burst upsets raised the conditional silent-corruption rates in the small model regions
+   slightly, but did not change the containment conclusion.
 
    Where containment does hold, note that "contained" is not "small": for SEQ and COLUMNAR a block
    is 64 KB, so one upset can silently corrupt up to half a 128 KB payload.
@@ -310,7 +317,8 @@ Two further findings the prose did not contain:
    area at ~10–20% severity versus 99% of the area at ≤0.67%.)
 
 `make seu` is an on-demand analysis tool, **not** a CI gate — it takes minutes and its output is a
-measurement rather than a pass/fail. Trial count is `SEU_TRIALS`.
+measurement rather than a pass/fail. Trial count is `SEU_TRIALS`; burst width is `SEU_BURST`
+(default 1 bit).
 
 See `docs/mission-safety.md` for the gap between this evidence and formal flight qualification.
 
@@ -618,8 +626,8 @@ with its exception. No remaining universal safety claim is unbacked.
 | **Error containment: corrupt/truncated frame reported, never reads OOB or crashes — on any `size_t` width** | R6 | `test_pfc.c` fault/truncation/corruption tests; `make asan`; `fuzz_decode.py` 20k iterations; `libfuzzer` CI job; **CBMC proofs** of `pfc_block_read` (0/165 failed) and `pfc_block_write` (0/152 failed) under 32-bit model. Exception: **SPECTRAL does not contain to one block** — inter-band prediction propagates a single CRC-rejected block forward through the cube (measured, mitigable via refresh bands; documented in §2.5.1). |
 | **`pfc_block_read` never reads OOB** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_read.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/165 failed). |
 | **`pfc_block_write` never writes OOB / leaves `pos` unchanged on rejection** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_write.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/152 failed). |
-| **Encoder-side SEU is wholly silent** (CRC detects zero encoder-side upsets) | `mission-safety.md` §2.5 | Measured: `make seu`, 7 200 single-bit trials across all codecs, **0 CRC detections**; 99.9% no effect, 0.1% silently wrong data with `PFC_OK`. |
-| **IMAGE/SEQ/COLUMNAR contain damage to one block; SPECTRAL does not** | README, R6, §2.5/§2.5.1 | `make containment`: IMAGE 1/6 bands damaged (contained); SPECTRAL 6/6 (propagated). Refresh bands bound propagation at configurable interval. |
+| **Encoder-side SEU is wholly silent** (CRC detects zero encoder-side upsets) | `mission-safety.md` §2.5 | Measured: `make seu`, 7 200 single-bit trials across all five codecs, **0 CRC detections**; 99.9% no effect, 0.1% silently wrong data with `PFC_OK`. `SEU_BURST=N` extends this to adjacent-bit burst upsets. |
+| **IMAGE/SEQ/COLUMNAR/FLOAT contain damage to one block; SPECTRAL does not** | README, R6, §2.5/§2.5.1 | `make seu` and `make containment`: IMAGE/SEQ/COLUMNAR/FLOAT 0 multiblock silent corruptions; SPECTRAL propagates across bands. Refresh bands bound propagation at configurable interval. |
 | **No recursion / no function pointers** (exact stack-depth bound) | R10 | Static analysis of disassembly; `stackdepth` CI job asserts acyclicity and call-graph completeness; 464 B worst case on flight target ABI. |
 
 ## Other open items
