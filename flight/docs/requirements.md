@@ -601,6 +601,27 @@ exercise round-trip correctness and bound sufficiency empirically already), not 
 Re-attempting would need a larger time budget, a hand-built model of the range coder's invariants
 instead of symbolically executing it, or a different solver backend — none pursued here.
 
+## Universal safety-claim audit
+
+Audit of universal quantifiers (`always`, `never`, `every`, `exactly`, `all`, `none`) in safety
+claims across `flight/README.md`, `flight/docs/requirements.md` and
+`flight/docs/mission-safety.md`. Each claim is either tied to a named harness/proof or annotated
+with its exception. No remaining universal safety claim is unbacked.
+
+| Claim | Location | Evidence / exception |
+|-------|----------|----------------------|
+| **No dynamic allocation** — `malloc`/`free`/`recursion` are absent | README, R2 | `nm -uD build/libpfc.so` shows **zero alloc symbols**; `src/` contains no `stdlib.h`; `stackdepth` tool asserts no recursion/function pointers. |
+| **Bounded memory** — footprint = `pfc_workmem_bytes()` | README, R3 | `sizeof(struct pfc_ctx)` is compile-time constant; printed size verified at test startup. |
+| **No expansion** — output never exceeds `pfc_bound()` | README, R5 | `test_pfc.c` + `stress.c` assert `encoded <= pfc_bound` for all codecs; two real under-estimate bugs found+fixed by this harness. Exception: formal CBMC sufficiency proof attempted (smallest SEQ case) and **did not converge** — property remains test-covered, not formally proved. |
+| **Lossless for every valid input** | R1 | 146 unit + 15 063 stress round-trips across all codecs, 0 failures; real CyCIF + real AVIRIS byte-exact. Exception: exhaustive small-input CBMC proof attempted and **did not converge** — covered by testing, not formal proof. |
+| **Deterministic / portable** — integer-only, canonical LE wire format, BE⇄LE interoperability | R4 | No FP types in `src/`; independent Python explicit-LE decoder cross-check; `bigendian` CI job runs full suite under emulated BE PowerPC + `emit.c` LE-vs-BE byte compare. |
+| **Error containment: corrupt/truncated frame reported, never reads OOB or crashes — on any `size_t` width** | R6 | `test_pfc.c` fault/truncation/corruption tests; `make asan`; `fuzz_decode.py` 20k iterations; `libfuzzer` CI job; **CBMC proofs** of `pfc_block_read` (0/165 failed) and `pfc_block_write` (0/152 failed) under 32-bit model. Exception: **SPECTRAL does not contain to one block** — inter-band prediction propagates a single CRC-rejected block forward through the cube (measured, mitigable via refresh bands; documented in §2.5.1). |
+| **`pfc_block_read` never reads OOB** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_read.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/165 failed). |
+| **`pfc_block_write` never writes OOB / leaves `pos` unchanged on rejection** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_write.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/152 failed). |
+| **Encoder-side SEU is wholly silent** (CRC detects zero encoder-side upsets) | `mission-safety.md` §2.5 | Measured: `make seu`, 7 200 single-bit trials across all codecs, **0 CRC detections**; 99.9% no effect, 0.1% silently wrong data with `PFC_OK`. |
+| **IMAGE/SEQ/COLUMNAR contain damage to one block; SPECTRAL does not** | README, R6, §2.5/§2.5.1 | `make containment`: IMAGE 1/6 bands damaged (contained); SPECTRAL 6/6 (propagated). Refresh bands bound propagation at configurable interval. |
+| **No recursion / no function pointers** (exact stack-depth bound) | R10 | Static analysis of disassembly; `stackdepth` CI job asserts acyclicity and call-graph completeness; 464 B worst case on flight target ABI. |
+
 ## Other open items
 
 - **Residual −1.3% vs JPEG-LS** on photon-noisy imagery (−0.5% at band 64) — finer context modelling

@@ -10,7 +10,8 @@ stream is byte-identical across both.
 > byte-for-byte against the C encoder (incl. real CyCIF + AVIRIS); beats CCSDS-121, within −1.3% of
 > JPEG-LS, and the spectral codec is within −1.2% of CCSDS-123 on hyperspectral. 20 000-iteration
 > decoder fuzz + 15 000 randomised stress cases, all ASan/UBSan clean. Remaining items are
-> toolchain-gated (big-endian run, MISRA/libFuzzer reports) — see `docs/requirements.md`.
+> green CI jobs (big-endian, MISRA-C:2012, libFuzzer) — see `.github/workflows/flight-ci.yml` and
+> `docs/requirements.md`.
 
 ## Why a separate core
 
@@ -18,13 +19,16 @@ stream is byte-identical across both.
 non-starter on flight hardware. `libpfc` is the freestanding C99 subset that *can* fly:
 
 - **No dynamic allocation** — never calls `malloc`; all working memory is one caller-supplied
-  `pfc_ctx` of compile-time-known size (262 960 B at defaults; retune with `-DPFC_MAX_COLS` /
+  `pfc_ctx` of compile-time-known size (330 708 B at defaults; retune with `-DPFC_MAX_COLS` /
   `-DPFC_BAND_ROWS`). The compiled library imports **zero** alloc symbols.
 - **Integer-only & deterministic** — no floating point; canonical little-endian wire format, so a
   big-endian RAD750 encoder and a little-endian RISC-V/LEON/x86 ground decoder interoperate.
-- **Error containment** — every block is independently decodable and CRC-32 protected. A corrupted
-  or truncated downlink frame loses exactly one block, is reported, and never reads out of bounds
-  (verified under AddressSanitizer/UBSan).
+- **Error containment** — every block is independently decodable and CRC-32 protected. For IMAGE,
+  SEQ, COLUMNAR and FLOAT, a corrupted or truncated downlink frame loses exactly one block, is
+  reported, and never reads out of bounds. SPECTRAL is the exception: because it predicts each band
+  from the previous one, a single corrupt block can propagate through the remaining bands of that
+  block column (see `docs/mission-safety.md` §2.5.1). Refresh bands (`pfc_params.elem`) bound that
+  propagation at a configurable interval.
 - **No expansion** — `pfc_bound()` is a hard ceiling; incompressible bands fall back to store-raw.
 - **Lossless** — bit-exact round-trip, verified on synthetic and real 16-bit instrument imagery.
 
@@ -86,7 +90,17 @@ band's inter-band difference image spatially (MED) — exploiting the inter-band
 per-band codecs miss. On real AVIRIS Indian Pines (200 bands) it reaches **2.35×, within −1.2% of
 the CCSDS-123 hyperspectral standard** (vs −16.9% for per-band), feeding the same arithmetic coder.
 
-## Licensing
+## Licensing & distribution
 
-`flight/` is **Apache-2.0** (permissive — deployable by government/NASA), separate from the AGPL-3.0
-main `pertype` library. The copyright holder relicenses their own algorithms for the flight core.
+`flight/` is **Apache-2.0** (permissive — deployable by government/NASA), carved out of the
+AGPL-3.0 main `pertype` library at the repository root. The copyright holder relicenses their own
+algorithms for the flight core; everything outside `flight/` remains AGPL-3.0-or-later / commercial
+(see root `LICENSE` / `COMMERCIAL.md`).
+
+**How to consume it:** clone the `pertype` repository and use only the `flight/` directory. It has no
+build dependency on the Python/Rust code in the root; a normal C99 toolchain (`make`) builds
+`flight/` standalone.
+
+**No separate tagged release exists yet.** `libpfc` is published as part of the public `master`
+branch so integrators can review and build it now; a dedicated release artifact is deferred until a
+concrete flight opportunity justifies the packaging work (see `ROADMAP.md` M2).
