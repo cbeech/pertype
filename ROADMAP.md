@@ -13,13 +13,18 @@ on both remotes.
 documents don't overstate what's been measured; `pertype` receives only hygiene. Agreed at
 roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only.**
 
-> ## Track A is complete
+> ## Track A — complete except the reopened MC/DC goals
 >
 > Every Track A goal — G0.1, G0.2, G1.1, G1.2, G1.3, G2.1, G3.1, G3.2, G3.3, G3.4a–d and G4.1 —
 > plus Track B's R3 has landed, in commits `d8f2ad3` … `b4a6d15`. Each goal below carries a
 > **Status** line naming the commit that closed it. R2, R4 and R5 are deferred or shelved under D2
-> and are *not* oversights. **Nothing in Track A is awaiting work**; the open items are the
-> follow-ups flagged in the M3 note below and the human-gated items under "Questions for you".
+> and are *not* oversights.
+>
+> **Exception — G3.4a, G3.4c and G3.4d are reopened.** A per-condition MC/DC re-measurement on
+> 2026-08-24 found all three had been marked done without meeting their done-when: 5 of 14 class-A
+> conditions covered rather than 14, neither class-C condition covered, and the class-D coverage
+> item not covered. Total MC/DC is 80.87%, against a done-when of ≥88%. G3.4b is unaffected and
+> genuinely complete. See each Status line, the M3 follow-up note, and `OVERNIGHT-REPORT.md`.
 
 **Last surveyed:** 2026-08-24 · **Decisions recorded:** 2026-08-15 review
 
@@ -230,10 +235,16 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G0.1
 - **Size:** M
 - **Basis:** verified in repo (measured condition list)
-- **Status:** **Done** (`8402e5a`). Added encode-side parameter-guard tests for SPECTRAL, IMAGE,
-  COLUMNAR and SEQ plus the missing IMAGE decode-header test; `test_mcdc.c` grew to 97 assertions.
-  ⚠️ The `MCDC_MIN` ratchet in this goal's done-when was **not** moved — see the follow-up note
-  under M3.
+- **Status:** ⚠️ **PARTIAL — reopened 2026-08-24.** `8402e5a` added the encode-side
+  parameter-guard tests and the missing IMAGE decode-header test, growing `test_mcdc.c` to 97
+  assertions, and was marked done. A per-condition re-measurement shows the done-when was **not**
+  met: total MC/DC is **80.87%**, not the required ≥88%, and **5 of the 14 class-A conditions are
+  covered**, not 14. Covered: `pfc_image.c:383` (3 of 3). Partly: `pfc_spectral.c:199` (2 of 6 —
+  C3–C6 still open). Untouched: `pfc_image.c:309` (2), `pfc_columnar.c:25` (2), `pfc_seq.c:73` (1).
+  The likely cause is the very distinction MC/DC exists to enforce — the tests reach the
+  *decisions* but do not supply each condition's **independence pair**. The `MCDC_MIN` ratchet was
+  also never moved, which is *why* this went unseen: at a floor of 73 the gate passed comfortably.
+  Floor now raised to 80 against the measured 80.87.
 
 /goal Decide and document the fate of the 8 pfc_size_mul capacity-guard conditions.
 - **ID:** G3.4b
@@ -250,9 +261,11 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G3.4a
 - **Size:** S
 - **Basis:** verified in repo (the unreachability claim is the project's own, in `requirements.md`)
-- **Status:** **Done** (`8402e5a`). All 8 classified: unreachable on a 64-bit model by
-  construction, with the reason recorded in `requirements.md`, except SPECTRAL's four-factor
-  product, which is reachable and already regression-tested.
+- **Status:** ✅ **Done** (`8402e5a`), re-confirmed 2026-08-24. All 8 classified as unreachable
+  on a 64-bit model by construction, with the reason recorded in `requirements.md`, except
+  SPECTRAL's four-factor product, which is reachable and already regression-tested. All 8 are
+  still reported uncovered by `make mcdc`, which is the **expected and correct** outcome — this
+  goal asked for classification, not coverage. Unlike G3.4a/c/d, nothing here was overclaimed.
 
 /goal Cover the 2 store-raw fallback conditions with deliberately incompressible input.
 - **ID:** G3.4c
@@ -264,8 +277,10 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G3.4a
 - **Size:** S
 - **Basis:** verified in repo
-- **Status:** **Done** (`8402e5a`). Store-raw fallback tests for SEQ and COLUMNAR force each half
-  of the decision independently.
+- **Status:** ❌ **NOT ACHIEVED — reopened 2026-08-24.** `8402e5a` added store-raw tests for SEQ
+  and COLUMNAR and was marked done, but neither condition is covered: `pfc_columnar.c:73` C2 and
+  `pfc_seq.c:111` C2 both remain uncovered in the 2026-08-24 measurement. The tests exercise the
+  decision without establishing either condition's independence.
 
 /goal Resolve the 3 genuinely state-dependent conditions, covering or formally excluding them.
 - **ID:** G3.4d
@@ -281,19 +296,23 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G3.4c
 - **Size:** M
 - **Basis:** verified in repo
-- **Status:** **Done** (`8402e5a`). The `pfc_image.c` gradient tie-break third tier is now covered
-  by a crafted-image test; the two `pfc_arith.c` renorm-underflow conditions are recorded in
-  `requirements.md` as not unit-testable through the public API, the same treatment given to the
-  `pfc_size_mul` CBMC non-convergence.
+- **Status:** ⚠️ **HALF DONE — reopened 2026-08-24.** The documentation half stands: the two
+  `pfc_arith.c` renorm-underflow conditions (`:39` C3, `:118` C3) are recorded in
+  `requirements.md` as not unit-testable through the public API — the same treatment given to the
+  `pfc_size_mul` CBMC non-convergence — and both remain uncovered, as expected. The coverage half
+  does not: `pfc_image.c:121` C4, the gradient tie-break third tier, was claimed covered by a
+  crafted-image test but **is still uncovered** as of 2026-08-24.
 
 > ### Follow-up from the 2026-08-24 verification run
 >
-> **The `MCDC_MIN` ratchet was never moved.** G3.4a's done-when required "total MC/DC ≥ 88%,
-> `MCDC_MIN` ratcheted just below", but `flight/Makefile` still carried `MCDC_MIN ?= 73` after
-> `8402e5a` added 97 assertions' worth of new coverage. A ratchet left below the measurement is not
-> a gate: the coverage those tests bought could regress all the way back to 73% without CI
-> objecting. **Open at the time of writing**; being addressed in the 2026-08-24
-> verification run, which measures the real figure first rather than assuming 88%.
+> **The `MCDC_MIN` ratchet was never moved, and it concealed a shortfall.** G3.4a's done-when
+> required "total MC/DC ≥ 88%, `MCDC_MIN` ratcheted just below", but `flight/Makefile` still
+> carried `MCDC_MIN ?= 73` after `8402e5a` added 97 assertions' worth of tests. Measuring rather
+> than assuming: MC/DC is **80.87%** (93/115), up only **5** conditions from the 76.52% (88/115)
+> baseline, against **17** the G3.4a/c/d work claimed. Had the floor been raised to ~88 as
+> required, `make mcdc` would have failed and shown this immediately; at 73 it reported PASS. A
+> ratchet that is not ratcheted does not merely fail to protect new coverage — it hides whether
+> that coverage ever landed. Floor now set to 80; G3.4a/c/d reopened.
 >
 > **`make check` is not the CI suite.** It runs strict/asan/mcdctest/crosscheck/fuzz/stress only.
 > The commits from `d8f2ad3` to `b4a6d15` were each verified against `make check`, which leaves

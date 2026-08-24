@@ -149,7 +149,10 @@ endif
 # regression fails the build, and is raised as conditions get covered. It is deliberately far below
 # 100% -- see docs/requirements.md for the honest gap statement. Do not read a passing `make mcdc`
 # as "MC/DC compliant".
-MCDC_MIN ?= 73
+# Measured 80.87% (93/115 conditions) on 2026-08-24. Raised from 73, which had been left
+# unchanged when test_mcdc.c grew to 97 assertions -- a floor 8 points below the measurement
+# not only fails to protect new coverage, it hides whether that coverage ever landed.
+MCDC_MIN ?= 80
 CLANG ?= clang-18
 LLVMCOV ?= llvm-cov-18
 LLVMPROF ?= llvm-profdata-18
