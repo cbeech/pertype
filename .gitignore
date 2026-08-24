@@ -46,3 +46,6 @@ secrets.*
 # Native build artifacts
 *.so
 /RESUME.md
+
+# Overnight deletion staging (never committed)
+/Recycle/
