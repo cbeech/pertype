@@ -7,6 +7,7 @@ toolchain.
 import ctypes
 import glob
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -18,10 +19,16 @@ from pertype.codec import compress as text_compress
 from pertype.codec import decompress as text_decompress
 
 _HERE = os.path.dirname(__file__)
+# Match the cdylib name cargo actually emits on THIS platform. Globbing for "libpertype.so"
+# unconditionally meant a Linux .so left in rust/target/ satisfied the skip guard on Windows,
+# and the module then died in CDLL with "not a valid Win32 application" -- 12 errors where the
+# docstring above promises a skip.
+_CDYLIB = {"win32": "pertype.dll", "darwin": "libpertype.dylib"}.get(sys.platform, "libpertype.so")
 _SO = glob.glob(os.path.join(_HERE, "..", "rust", "target", "release", "**",
-                             "libpertype.so"), recursive=True)
+                             _CDYLIB), recursive=True)
 
-pytestmark = pytest.mark.skipif(not _SO, reason="Rust cdylib not built (cargo build --release in rust/)")
+pytestmark = pytest.mark.skipif(
+    not _SO, reason=f"Rust cdylib {_CDYLIB} not built (cargo build --release in rust/)")
 
 
 @pytest.fixture(scope="module")
