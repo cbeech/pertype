@@ -104,6 +104,11 @@ def main():
     # R7 would only ever prove the independent decoder on the refresh=0 path, leaving the whole
     # containment feature unverified against an independent implementation.
     check("spectral-refresh4", 5, Params(W, H, Z, 16, 4, 0), cube.tobytes())
+    # Only ACQUIRING the scene is skippable. The check() calls themselves must stay outside the
+    # try: a bare `except Exception` around them would swallow a real failure -- c_encode()'s
+    # `assert st == 0` on a C encode error -- and report it as a cheerful "skip" line. A test that
+    # cannot fail is worse than no test, so the try covers the import and the load, nothing else.
+    aviris = None
     try:
         import scipy.io as sio
         candidates = [
@@ -118,13 +123,14 @@ def main():
         if mat is None:
             raise FileNotFoundError("Indian_pines_corrected.mat not found in candidate paths")
         a = np.asarray(sio.loadmat(mat)["indian_pines_corrected"]).transpose(2, 0, 1).astype("<u2")
-        a = np.ascontiguousarray(a[:20])     # first 20 bands, full 145x145
-        zz, hh, ww = a.shape
-        check("spectral-aviris", 5, Params(ww, hh, zz, 16, 0, 0), a.tobytes())
-        # Also verify the refresh-band path on real data (R7 coverage of the containment feature).
-        check("spectral-aviris-refresh4", 5, Params(ww, hh, zz, 16, 4, 0), a.tobytes())
-    except Exception as e:
+        aviris = np.ascontiguousarray(a[:20])     # first 20 bands, full 145x145
+    except (ImportError, FileNotFoundError, OSError, KeyError, ValueError) as e:
         print(f"  (skip real AVIRIS spectral cross-check: {e})")
+    if aviris is not None:
+        zz, hh, ww = aviris.shape
+        check("spectral-aviris", 5, Params(ww, hh, zz, 16, 0, 0), aviris.tobytes())
+        # Also verify the refresh-band path on real data (R7 coverage of the containment feature).
+        check("spectral-aviris-refresh4", 5, Params(ww, hh, zz, 16, 4, 0), aviris.tobytes())
 
     # real CyCIF 16-bit (if present)
     pool = "/tmp/claude-1000/-home-craig-Dev-compression/d3fc84dc-5a79-47c9-8f87-528364411598/scratchpad/spatialomics"
