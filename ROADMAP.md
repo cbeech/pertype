@@ -244,7 +244,13 @@ unambiguously the externally-blocked ones.
   The likely cause is the very distinction MC/DC exists to enforce — the tests reach the
   *decisions* but do not supply each condition's **independence pair**. The `MCDC_MIN` ratchet was
   also never moved, which is *why* this went unseen: at a floor of 73 the gate passed comfortably.
-  Floor now raised to 80 against the measured 80.87.
+  **Progress 2026-08-25:** the root cause is structural — `pfc_encode()` validates these same
+  parameters at the front door, so the codec-level guards are unreachable through the dispatcher
+  and the original tests never ran them. `mcdc_internal_guards()` now calls the codec entry points
+  directly, covering `pfc_columnar.c:25` C1/C2, and a defect fix made `pfc_seq.c`'s guard reachable
+  (see below). Total MC/DC **80.87% → 83.48%**; floor raised to 83. Still open:
+  `pfc_spectral.c:199` C3–C6 and `pfc_image.c:309` C3/C4, both needing the same direct-call
+  treatment.
 
 /goal Decide and document the fate of the 8 pfc_size_mul capacity-guard conditions.
 - **ID:** G3.4b
@@ -277,10 +283,16 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G3.4a
 - **Size:** S
 - **Basis:** verified in repo
-- **Status:** ❌ **NOT ACHIEVED — reopened 2026-08-24.** `8402e5a` added store-raw tests for SEQ
-  and COLUMNAR and was marked done, but neither condition is covered: `pfc_columnar.c:73` C2 and
-  `pfc_seq.c:111` C2 both remain uncovered in the 2026-08-24 measurement. The tests exercise the
-  decision without establishing either condition's independence.
+- **Status:** ✅ **Resolved 2026-08-25 as unreachable-in-practice** (not by covering it). The
+  2026-08-24 measurement confirmed `pfc_columnar.c:73` C2 and `pfc_seq.c:111` C2 were never
+  covered despite `8402e5a`'s tests. The mechanism explains why more tests would not have helped:
+  each codec calls `pfc_rc_enc_init(&e, w->scratch, raw_bytes)`, so the coder's capacity *is* the
+  raw size, and `pfc_rc_put` sets `overflow` the moment it cannot write. Incompressible data
+  therefore trips `e.overflow` rather than arriving at `e.pos >= raw_bytes` with overflow clear —
+  that pairing needs the coded output to land on **exactly** `raw_bytes`, a measure-zero
+  coincidence. Documented in `requirements.md` alongside the G3.4b guards. The new tests are kept
+  because they assert the **RAW flag in the block header**, proving the fallback actually fires —
+  the pre-existing ones asserted only `PFC_OK` and a round-trip, which hold either way.
 
 /goal Resolve the 3 genuinely state-dependent conditions, covering or formally excluding them.
 - **ID:** G3.4d

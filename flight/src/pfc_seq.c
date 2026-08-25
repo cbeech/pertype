@@ -66,13 +66,22 @@ static void raw_load(const uint8_t *in, void *dst, uint8_t elem, uint8_t is_sign
 pfc_status pfc_seq_encode(const pfc_params *p, const void *src, uint8_t *dst, size_t cap,
                           size_t *pos, pfc_ctx *w)
 {
-    uint32_t block = PFC_BLOCK_BYTES / p->elem;     /* samples per block */
+    uint32_t block;                                /* samples per block */
     size_t at;
     size_t i0;
 
-    if ((p->count == 0u) || (block == 0u)) {
+    /* Guard BEFORE the division, matching pfc_columnar_encode. Computing the quotient first made
+     * p->elem == 0 a division by zero (undefined behaviour) reached before any validation ran --
+     * latent rather than live, since pfc_encode() rejects elem outside {1,2,4} at the front door,
+     * but pfc_seq_encode is a non-static internal entry point.
+     * The old second half of this test, `block == 0u`, was dead code: PFC_BLOCK_BYTES is 65536 and
+     * p->elem is a uint8_t, so once elem is non-zero the quotient spans 257..65536 and can never
+     * be 0. That is why it was never coverable. The decode side's identical-looking `block == 0u`
+     * check IS live -- there `block` is read from the untrusted stream, not derived. */
+    if ((p->elem == 0u) || (p->count == 0u)) {
         return PFC_E_PARAM;
     }
+    block = PFC_BLOCK_BYTES / p->elem;
     if (cap < PFC_HDR) {
         return PFC_E_BOUND;
     }

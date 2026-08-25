@@ -22,8 +22,10 @@
  * Every case below is also a real robustness test -- nothing here exists purely to move a metric.
  */
 /* pfc_internal.h for PFC_HDR (the shared 20-byte stream header size); it includes pfc.h itself.
- * Everything actually exercised below is the PUBLIC API -- the internal header is only used for
- * named constants, so these tests still reflect what a real caller can reach. */
+ * Almost everything below exercises the PUBLIC API. The exception is mcdc_internal_guards(),
+ * which calls the codec entry points DIRECTLY -- see the comment there for why that is necessary
+ * rather than lazy: pfc_encode() rejects those parameters at the front door, so the codec-level
+ * guards are simply not reachable through the dispatcher. */
 #include "pfc_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -735,6 +737,59 @@ static void mcdc_image_gradient_tiebreak(void)
 }
 
 /* ---------------------------------------------------------------------------------------
+ * Guards on the INTERNAL entry points.
+ *
+ * pfc_encode() validates parameters at the front door (pfc.c), so several codec-level guards
+ * cannot be reached through the public API AT ALL -- the dispatcher rejects the input first and
+ * the guard never runs. An earlier attempt to cover these went through pfc_encode() and moved no
+ * coverage for exactly that reason. The entry points are non-static and declared in
+ * pfc_internal.h, so these remain real robustness tests: anything inside the library, or a future
+ * codec reusing them, can reach them.
+ * --------------------------------------------------------------------------------------- */
+static void mcdc_internal_guards(void)
+{
+    uint8_t src[256], dst[512];
+    size_t out = 0;
+    pfc_params p;
+    pfc_ctx *work = (pfc_ctx *)malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+    memset(src, 0, sizeof src);
+
+    /* pfc_seq.c -- (p->elem == 0) || (p->count == 0).
+     * elem==0 used to be a DIVISION BY ZERO: PFC_BLOCK_BYTES/elem was computed before the guard
+     * ran. The guard's old second half, `block == 0`, was dead code and could never be covered. */
+    memset(&p, 0, sizeof p);
+    p.count = 32u; p.elem = 2u;
+    ck(pfc_seq_encode(&p, src, dst, sizeof dst, &out, work) == PFC_OK,
+       "seq internal guard: both conditions false accepted");
+    p.elem = 0u;
+    ck(pfc_seq_encode(&p, src, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "seq internal guard: elem=0 alone rejected (was a division by zero)");
+    p.elem = 2u; p.count = 0u;
+    ck(pfc_seq_encode(&p, src, dst, sizeof dst, &out, work) == PFC_E_PARAM,
+       "seq internal guard: count=0 alone rejected");
+
+    /* pfc_columnar.c -- (rw == 0) || (rw > PFC_BLOCK_BYTES) || (cnt == 0).
+     * pfc.c rejects width==0 and width>PFC_BLOCK_BYTES before dispatch, so the first two
+     * conditions are reachable only from here. */
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.count = 32u;
+    ck(pfc_columnar_encode((uint8_t)PFC_CODEC_COLUMNAR, &p, src, dst, sizeof dst, &out, work)
+       == PFC_OK, "columnar internal guard: all three conditions false accepted");
+    p.width = 0u;
+    ck(pfc_columnar_encode((uint8_t)PFC_CODEC_COLUMNAR, &p, src, dst, sizeof dst, &out, work)
+       == PFC_E_PARAM, "columnar internal guard: rw=0 alone rejected");
+    p.width = PFC_BLOCK_BYTES + 1u; p.count = 32u;
+    ck(pfc_columnar_encode((uint8_t)PFC_CODEC_COLUMNAR, &p, src, dst, sizeof dst, &out, work)
+       == PFC_E_PARAM, "columnar internal guard: rw>PFC_BLOCK_BYTES alone rejected");
+    p.width = 8u; p.count = 0u;
+    ck(pfc_columnar_encode((uint8_t)PFC_CODEC_COLUMNAR, &p, src, dst, sizeof dst, &out, work)
+       == PFC_E_PARAM, "columnar internal guard: cnt=0 alone rejected");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
  * Store-raw fallback decisions:
  *   pfc_columnar.c:73  (e.overflow != 0) || (e.pos >= block_bytes)
  *   pfc_seq.c:111      (e.overflow != 0) || (e.pos >= raw_bytes)
@@ -771,6 +826,36 @@ static void mcdc_store_raw(void)
            "store-raw seq: random data round-trips");
     }
 
+    /* The two cases above assert only that the encode succeeds -- which is true whether or not
+     * the store-raw fallback was taken, so they never demonstrated the `e.pos >= raw_bytes`
+     * condition at all. These do: elem=1 random bytes leave the coder nothing to exploit, so its
+     * output meets or exceeds the raw size with overflow still 0, and the RAW FLAG in the block
+     * header is checked directly rather than inferred. Block header is plen(4) | flags(1) |
+     * crc(4) at offset PFC_HDR. */
+    memset(&p, 0, sizeof p);
+    p.count = 256u; p.elem = 1u; p.is_signed = 0u;
+    {
+        uint8_t raw_dst[1024];
+        ck(pfc_encode(PFC_CODEC_SEQ, &p, rnd, 256u, raw_dst, sizeof raw_dst, &enc_len, work)
+           == PFC_OK, "store-raw seq: incompressible elem=1 encodes");
+        ck(raw_dst[PFC_HDR + 4u] == PFC_BLK_FLAG_RAW,
+           "store-raw seq: block really took the RAW fallback");
+        ck(pfc_decode(raw_dst, enc_len, dec, 256u, &out, work) == PFC_OK,
+           "store-raw seq: incompressible elem=1 round-trips");
+    }
+
+    memset(&p, 0, sizeof p);
+    p.width = 1u; p.count = 256u;
+    {
+        uint8_t raw_dst[1024];
+        ck(pfc_encode(PFC_CODEC_COLUMNAR, &p, rnd, 256u, raw_dst, sizeof raw_dst, &enc_len, work)
+           == PFC_OK, "store-raw columnar: incompressible width=1 encodes");
+        ck(raw_dst[PFC_HDR + 4u] == PFC_BLK_FLAG_RAW,
+           "store-raw columnar: block really took the RAW fallback");
+        ck(pfc_decode(raw_dst, enc_len, dec, 256u, &out, work) == PFC_OK,
+           "store-raw columnar: incompressible width=1 round-trips");
+    }
+
     /* Incompressible COLUMNAR. */
     memset(&p, 0, sizeof p);
     p.width = 8u; p.count = 32u;
@@ -796,6 +881,7 @@ int main(void)
     mcdc_image_gradient_tiebreak();
     mcdc_encode_param_guards();
     mcdc_store_raw();
+    mcdc_internal_guards();
     mcdc_encode_arg_guard();
     mcdc_decode_arg_guard();
     mcdc_decode_magic();

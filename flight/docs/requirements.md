@@ -170,9 +170,23 @@ cover and for the one decode-side header chain that was missing:
   width>PFC_MAX_COLS).
 - `pfc_image.c:309` IMAGE encode guard (bad bitdepth / width==0 / height==0).
 - `pfc_columnar.c:25` COLUMNAR encode guard (rw==0 / rw>PFC_BLOCK_BYTES / cnt==0).
-- `pfc_seq.c:73` SEQ encode guard (count==0). The `block==0` half is unreachable on a 64-bit model
-  because the dispatcher restricts `elem` to {1,2,4}, so `PFC_BLOCK_BYTES/elem` is always >0; it
-  is classified as unreachable in G3.4b rather than missing coverage.
+- `pfc_seq.c` SEQ encode guard. **Corrected 2026-08-25.** The guard used to read
+  `(count==0) || (block==0)` with `block = PFC_BLOCK_BYTES / p->elem` computed *above* it. Two
+  problems: `block==0` was dead code (`elem` is a `uint8_t`, so the quotient spans 257..65536 and
+  is never 0), and `elem == 0` was a **division by zero** reached before any validation ran —
+  latent rather than live, since `pfc.c` restricts `elem` to {1,2,4} at the front door, but
+  `pfc_seq_encode` is a non-`static` entry point declared in `pfc_internal.h`. Confirmed with
+  UBSan: `src/pfc_seq.c:69:38: runtime error: division by zero`. The guard is now
+  `(p->elem == 0u) || (p->count == 0u)` with the division moved below it, matching
+  `pfc_columnar_encode`'s ordering. Both conditions are now reachable and covered.
+
+**Reachability correction for the rest of G3.4a.** The first round of tests went through
+`pfc_encode()` and moved almost no coverage, because the dispatcher validates these same
+parameters first and the codec-level guard never runs — e.g. `pfc.c:68` rejects `width == 0` and
+`width > PFC_BLOCK_BYTES` before COLUMNAR is called. `mcdc_internal_guards()` now calls the codec
+entry points **directly**, which is the only way to reach them; that covered
+`pfc_columnar.c:25` C1 and C2. The SPECTRAL and IMAGE encode-guard conditions remain uncovered for
+the same structural reason and need the same treatment.
 - `pfc_image.c:383` IMAGE decode header guard (width==0 / height==0 / band==0 /
   width>PFC_MAX_COLS).
 
@@ -196,14 +210,30 @@ not currently part of CI. The unreachable classification is recorded here rather
 
 #### G3.4c — store-raw fallback (2 conditions)
 
-Added `mcdc_store_raw()` forcing both `(e.overflow != 0) || (e.pos >= raw_bytes)` conditions:
-- incompressible random data exercises `e.pos >= raw_bytes` with `e.overflow == 0`;
-- a tiny output capacity exercises `e.overflow == 1` before the store-raw decision.
+**Corrected 2026-08-25 — the second condition is effectively unreachable, and the original claim
+here was wrong.** This section previously stated that incompressible random data exercises
+`e.pos >= raw_bytes` with `e.overflow == 0`. Measurement says otherwise: `pfc_columnar.c:73` C2 and
+`pfc_seq.c:111` C2 are both still uncovered, and the mechanism explains why.
+
+Each codec initialises the coder with `pfc_rc_enc_init(&e, w->scratch, raw_bytes)` — its capacity
+*is* the raw size — and `pfc_rc_put` sets `overflow` as soon as it cannot write. So an
+incompressible block trips `e.overflow` on the way past the limit; it does not arrive at
+`e.pos >= raw_bytes` with `overflow` still clear. That combination requires the coded output to
+land on **exactly** `raw_bytes` bytes — structurally possible, but a measure-zero coincidence that
+cannot be constructed deliberately. Classified as unreachable-in-practice, the same treatment as
+the G3.4b guards, rather than left as an open coverage gap implying more tests would help.
+
+The tests added for it are kept because they verify something the earlier ones did not: they assert
+the **RAW flag in the block header** (`plen(4) | flags(1) | crc(4)` at offset `PFC_HDR`), proving
+the fallback genuinely fired. The pre-existing cases asserted only `PFC_OK` and a round-trip, which
+hold whether or not the fallback was taken.
 
 #### G3.4d — genuinely state-dependent conditions (3 conditions)
 
-- `pfc_image.c:121` gradient sign tie-break: covered by a crafted image where `q1==0`, `q2==0`,
-  `q3<0` (`mcdc_image_gradient_tiebreak()`).
+- `pfc_image.c:121` gradient sign tie-break: a crafted image where `q1==0`, `q2==0`, `q3<0`
+  (`mcdc_image_gradient_tiebreak()`) was written for this, but the 2026-08-24 measurement shows
+  **C4 is still uncovered** — the test reaches the decision without isolating this condition's
+  independent effect. Still open.
 - `pfc_arith.c:39` / `:118` range-coder renorm underflow branch: **not unit-testable with the
   public API**. The branch is reached only when `range < PFC_RC_BOT` while `low` and `low+range`
   straddle a `PFC_RC_TOP` boundary — a state that depends on the exact low/range relationship built
