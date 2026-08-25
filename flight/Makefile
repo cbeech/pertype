@@ -234,7 +234,11 @@ endif
 # the exact guards that exist because of it -- the same reason the cbmc gate runs under --32 rather
 # than the host model, and the same class of bug that CBMC proof found in pfc_block_read.
 #
-# Needs 32-bit libc headers: libc6-dev-i386 (Debian/Ubuntu) or gcc-multilib.
+# Needs gcc-multilib (Debian/Ubuntu). libc6-dev-i386 alone is NOT enough: it supplies the 32-bit
+# libc headers but not gcc's 32-bit runtime, so the link fails with `cannot find crtbeginS.o`
+# and `cannot find -lgcc`. Note gcc-multilib CONFLICTS with gcc-powerpc-linux-gnu, which is why
+# the mcdc32 and bigendian CI jobs must stay in separate containers -- requesting both in one
+# apt invocation installs neither.
 # MCDC32_MIN is a separate ratchet from MCDC_MIN: the two builds reach different conditions, so a
 # single floor across both would be meaningless. Measured 93.91% (108/115) here against 89.57%
 # (103/115) on the 64-bit build -- the difference is exactly the pfc_size_mul guards, which
