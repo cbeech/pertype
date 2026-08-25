@@ -32,7 +32,7 @@ OBJ     := $(SRC:.c=.o)
 #   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
-.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage mcdc32 \
+.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage mcdc32 wfsync \
         stackdepth stackdepth-ppc seu mcdc mcdctest containment seudetect
 all: test
 
@@ -100,6 +100,17 @@ strict: clean test
 # AddressSanitizer + UndefinedBehaviorSanitizer (decoder eats untrusted input).
 asan: CFLAGS += -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 asan: clean test
+
+# CI workflow drift gate.
+#
+# .github/workflows/flight-ci.yml and .gitea/workflows/flight-ci.yml are deliberately
+# near-identical and kept in sync BY HAND -- which is precisely the arrangement that lets a gate be
+# tightened in one copy and silently left weak in the other. That failure is invisible: both files
+# stay valid YAML and both keep passing, while the runner you actually push to quietly tests less
+# than you think. A plain diff cannot police it, because the two are SUPPOSED to differ in their
+# headers and path filters, so the tool compares job/step structure and ignores prose.
+wfsync:
+	python3 tools/workflow_sync.py
 
 # MISRA-C:2012 static analysis gate (CI). Requires cppcheck with the MISRA addon.
 # --suppressions-list applies the project's reviewed deviation policy (see .cppcheck-suppressions

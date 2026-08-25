@@ -60,6 +60,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cppcheck
         run: apt-get update && apt-get install -y cppcheck
+      - name: CI workflow drift — the .github and .gitea copies must stay structurally identical
+        working-directory: flight
+        run: make wfsync
       - name: MISRA-C:2012 static analysis
         working-directory: flight
         run: make misra
