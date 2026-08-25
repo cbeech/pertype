@@ -771,6 +771,130 @@ static void mcdc_image_gradient_tiebreak(void)
 }
 
 /* ---------------------------------------------------------------------------------------
+ * pfc_size_mul capacity guards on a 32-BIT size_t.
+ *
+ * These guards exist for one reason: libpfc's encoder is specified to run on 32-bit flight
+ * targets (RAD750 / LEON / RISC-V-32, see pfc.h), where a product of untrusted header fields can
+ * wrap size_t. On the 64-bit CI host they are unreachable BY CONSTRUCTION -- width is bounded by
+ * PFC_MAX_COLS, elem by {1,2,4}, and so on -- which is exactly why `make mcdc` reports them
+ * uncovered and docs/requirements.md classifies them as such.
+ *
+ * `make mcdc32` builds the same tests with -m32 so the guards become live. The headers below are
+ * crafted so the product overflows a 32-bit size_t but NOT a 64-bit one. That makes each case
+ * assert correctly on both architectures without any #ifdef: on 32-bit the pfc_size_mul call
+ * fails, on 64-bit the product is merely enormous and the `cap < total` half of the same
+ * condition rejects it. Both return PFC_E_BOUND -- one test, two architectures, and the 32-bit
+ * build is where the coverage is actually bought.
+ *
+ * Header offsets (see each codec's file comment):
+ *   SEQ      elem s[6], count s[8..11], block s[12..15]
+ *   IMAGE    bitdepth s[6], width s[8..11], height s[12..15], band s[16..19]
+ *   COLUMNAR rec_width s[8..11], count s[12..15], block_recs s[16..19]
+ * --------------------------------------------------------------------------------------- */
+static void put_u32_le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFFu);
+    p[1] = (uint8_t)((v >> 8) & 0xFFu);
+    p[2] = (uint8_t)((v >> 16) & 0xFFu);
+    p[3] = (uint8_t)((v >> 24) & 0xFFu);
+}
+
+static void mcdc_size_mul_overflow(void)
+{
+    uint8_t src[256];
+    uint8_t enc[2048];
+    uint8_t bad[2048];
+    uint8_t dec[256];
+    size_t enc_len = 0, out = 0;
+    pfc_params p;
+    pfc_ctx *work = (pfc_ctx *)malloc(pfc_workmem_bytes());
+    if (work == NULL) { printf("  oom\n"); g_fail++; return; }
+    memset(src, 0, sizeof src);
+
+    /* SEQ: count * elem. count = 0xFFFFFFFF with elem = 4 needs 34 bits. */
+    memset(&p, 0, sizeof p);
+    p.count = 64u; p.elem = 4u;
+    if (pfc_encode(PFC_CODEC_SEQ, &p, src, 256u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup seq encode failed\n"); g_fail++; free(work); return;
+    }
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 0xFFFFFFFFu);           /* count */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul seq: count*elem overflows a 32-bit size_t, rejected");
+
+    /* IMAGE: width * height * es. 8192 * 524288 is exactly 2^32. */
+    memset(&p, 0, sizeof p);
+    p.width = 16u; p.height = 8u; p.bitdepth = 16u;
+    if (pfc_encode(PFC_CODEC_IMAGE, &p, src, 256u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup image encode failed\n"); g_fail++; free(work); return;
+    }
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 8192u);                 /* width  == PFC_MAX_COLS, still accepted */
+    put_u32_le(&bad[12], 524288u);              /* height -> product is exactly 2^32 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul image: width*height overflows a 32-bit size_t, rejected");
+
+    /* COLUMNAR: rec_width * count. 65536 * 65536 is exactly 2^32. rec_width is accepted at
+     * PFC_BLOCK_BYTES because that guard tests `> PFC_BLOCK_BYTES`, not `>=`. */
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.count = 32u;
+    if (pfc_encode(PFC_CODEC_COLUMNAR, &p, src, 256u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup columnar encode failed\n"); g_fail++; free(work); return;
+    }
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 65536u);                /* rec_width == PFC_BLOCK_BYTES */
+    put_u32_le(&bad[12], 65536u);               /* count     -> product is exactly 2^32 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul columnar: rec_width*count overflows a 32-bit size_t, rejected");
+
+    /* IMAGE again, but overflowing the SECOND multiply instead of the first: width*height must
+     * fit and only the *es step wrap. 8192 * 262144 == 2^31, then *2 == 2^32. Each link in the
+     * chain is a separate MC/DC condition, so each needs its own vector. */
+    memset(&p, 0, sizeof p);
+    p.width = 16u; p.height = 8u; p.bitdepth = 16u;
+    if (pfc_encode(PFC_CODEC_IMAGE, &p, src, 256u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup image encode failed\n"); g_fail++; free(work); return;
+    }
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 8192u);
+    put_u32_le(&bad[12], 262144u);              /* 2^31, so only the *es step overflows */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul image: width*height*es overflows a 32-bit size_t at the es step, rejected");
+
+    /* SPECTRAL chains FOUR multiplies -- width*height*count*es is up to 78 bits of untrusted
+     * header, the only one of the four codecs that can overflow even a 64-bit size_t. Three
+     * separate vectors, one per link, so each condition is independently decisive.
+     * Header: width s[8..11], height s[12..15], count s[16..19], band s[20..23]. */
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.height = 8u; p.count = 2u; p.bitdepth = 16u;
+    if (pfc_encode(PFC_CODEC_SPECTRAL, &p, src, 256u, enc, sizeof enc, &enc_len, work) != PFC_OK) {
+        printf("  setup spectral encode failed\n"); g_fail++; free(work); return;
+    }
+
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 8192u);
+    put_u32_le(&bad[12], 524288u);              /* link 1: width*height == 2^32 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul spectral: width*height overflows at link 1, rejected");
+
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 8192u);
+    put_u32_le(&bad[12], 16u);                  /* width*height == 2^17, fits */
+    put_u32_le(&bad[16], 32768u);               /* link 2: *count == 2^32 */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul spectral: *count overflows at link 2, rejected");
+
+    memcpy(bad, enc, enc_len);
+    put_u32_le(&bad[8], 8192u);
+    put_u32_le(&bad[12], 16u);
+    put_u32_le(&bad[16], 16384u);               /* width*height*count == 2^31, fits */
+    ck(pfc_decode(bad, enc_len, dec, sizeof dec, &out, work) == PFC_E_BOUND,
+       "size_mul spectral: *es overflows at link 3, rejected");
+
+    free(work);
+}
+
+/* ---------------------------------------------------------------------------------------
  * Guards on the INTERNAL entry points.
  *
  * pfc_encode() validates parameters at the front door (pfc.c), so several codec-level guards
@@ -954,6 +1078,7 @@ int main(void)
     mcdc_encode_param_guards();
     mcdc_store_raw();
     mcdc_internal_guards();
+    mcdc_size_mul_overflow();
     mcdc_encode_arg_guard();
     mcdc_decode_arg_guard();
     mcdc_decode_magic();

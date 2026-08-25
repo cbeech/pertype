@@ -20,13 +20,19 @@ roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only
 > **Status** line naming the commit that closed it. R2, R4 and R5 are deferred or shelved under D2
 > and are *not* oversights.
 >
-> **The MC/DC goals were reopened on 2026-08-24 and are now closed (2026-08-25).** They had been
-> marked done without meeting their done-when: 5 of a claimed 17 conditions covered. Reworked via
-> direct calls to the codec entry points, plus a real defect fix in `pfc_seq.c`.
-> **MC/DC 76.52% → 88.70% (102/115)**, meeting G3.4a's ≥88% target, with `MCDC_MIN` ratcheted to 88.
-> The 13 still-uncovered conditions are documented as **unreachable by construction** — 32-bit-only
-> `pfc_size_mul` guards, the store-raw `pos >= raw_bytes` pairing, the range-coder renorm underflow,
-> and one pair of **coupled conditions** — not as missing tests.
+> **The MC/DC goals were reopened on 2026-08-24 and closed on 2026-08-25.** They had been marked
+> done without meeting their done-when: 5 of a claimed 17 conditions covered. Reworked via direct
+> calls to the codec entry points, plus a real defect fix in `pfc_seq.c`.
+> **MC/DC 76.52% → 89.57% (103/115)** on the 64-bit build, meeting G3.4a's ≥88% target, and
+> **93.91% (108/115)** on a new 32-bit build (`make mcdc32`) that exercises the `pfc_size_mul`
+> guards on the word size the encoder actually flies on. `MCDC_MIN` 89, `MCDC32_MIN` 93.
+> The seven still-uncovered conditions are documented as **unreachable by construction** — the
+> `pfc_size_mul` zero-operand case, the range-coder renorm underflow, the store-raw
+> `pos >= raw_bytes` pairing, and one pair of **coupled conditions** — not as missing tests.
+>
+> **CI:** `native` and `libfuzzer` are pinned to `node:22-trixie` after the default
+> bookworm-vintage image was measured to break the ASan runtime (~20% of processes), and a new
+> `mcdc32` job runs the 32-bit measurement.
 
 **Last surveyed:** 2026-08-24 · **Decisions recorded:** 2026-08-15 review
 

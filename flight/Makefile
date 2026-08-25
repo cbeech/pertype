@@ -32,7 +32,7 @@ OBJ     := $(SRC:.c=.o)
 #   make CC=powerpc-linux-gnu-gcc CFLAGS='-O2 -static' clean test
 #   qemu-ppc ./build/test_pfc          # validates R4 endianness-neutrality on a BE target
 
-.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage \
+.PHONY: all test strict asan sharedlib crosscheck fuzz stress check emit clean misra cbmc coverage mcdc32 \
         stackdepth stackdepth-ppc seu mcdc mcdctest containment seudetect
 all: test
 
@@ -173,7 +173,7 @@ endif
 # regression fails the build, and is raised as conditions get covered. It is deliberately far below
 # 100% -- see docs/requirements.md for the honest gap statement. Do not read a passing `make mcdc`
 # as "MC/DC compliant".
-# Measured 88.70% (102/115 conditions) on 2026-08-25, verified on the craig@ai Linux host.
+# Measured 89.57% (103/115 conditions) on 2026-08-25, verified on the craig@ai Linux host.
 # History worth keeping: this sat at 73 while test_mcdc.c grew by 97 assertions. A floor well below
 # the measurement does not merely fail to protect new coverage -- it hides whether that coverage
 # ever landed. It had not: a re-measurement found 5 of a claimed 17 conditions actually covered.
@@ -183,7 +183,7 @@ endif
 # construction (32-bit-only pfc_size_mul guards, the store-raw pos>=raw_bytes pairing, the
 # range-coder renorm underflow, and one pair of COUPLED conditions in pfc_image.c's tie-break),
 # not as missing tests.
-MCDC_MIN ?= 88
+MCDC_MIN ?= 89
 CLANG ?= clang-18
 LLVMCOV ?= llvm-cov-18
 LLVMPROF ?= llvm-profdata-18
@@ -208,6 +208,47 @@ else
 	cd $(MCDCDIR) && $(LLVMCOV) export ./test_pfc -object ./stress -object ./test_mcdc \
 		-instr-profile=merged.profdata --format=text > cov.json
 	python3 tools/mcdc_gate.py $(MCDCDIR)/cov.json --min-percent $(MCDC_MIN)
+endif
+
+# 32-bit MC/DC (R10-adjacent, and the architecture that actually flies).
+#
+# WHY A SECOND MEASUREMENT: eight of the conditions `make mcdc` reports as uncovered are the
+# pfc_size_mul capacity guards, and docs/requirements.md classifies them as unreachable *on a
+# 64-bit model by construction* -- e.g. pfc_image.c's width*height*es cannot overflow a 64-bit
+# size_t given width <= PFC_MAX_COLS and es <= 2. That classification is correct and it is also
+# the wrong architecture to stop at: libpfc's encoder is specified to run on 32-bit flight targets
+# (RAD750 / LEON / RISC-V-32, see pfc.h), where those products CAN wrap and the guards are live.
+#
+# So this target is not a coverage-percentage exercise. It exercises, on the deployment word size,
+# the exact guards that exist because of it -- the same reason the cbmc gate runs under --32 rather
+# than the host model, and the same class of bug that CBMC proof found in pfc_block_read.
+#
+# Needs 32-bit libc headers: libc6-dev-i386 (Debian/Ubuntu) or gcc-multilib.
+# MCDC32_MIN is a separate ratchet from MCDC_MIN: the two builds reach different conditions, so a
+# single floor across both would be meaningless. Measured 93.91% (108/115) here against 89.57%
+# (103/115) on the 64-bit build -- the difference is exactly the pfc_size_mul guards, which
+# test_mcdc.c's mcdc_size_mul_overflow() drives with headers whose products wrap a 32-bit size_t
+# but not a 64-bit one. Those cases assert the same PFC_E_BOUND on both word sizes (on 64-bit the
+# `cap < total` half of the same condition rejects them), so there is no #ifdef anywhere.
+MCDC32DIR := build/mcdc32
+MCDC32FLAGS := -m32 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc
+MCDC32_MIN ?= 93
+
+mcdc32:
+ifeq ($(HAVE_CLANG),)
+	@echo "$(CLANG) not installed (CI gate skipped)"
+else
+	@rm -rf $(MCDC32DIR)
+	@mkdir -p $(MCDC32DIR)
+	$(CLANG) $(CSTD) $(MCDC32FLAGS) $(INC) $(SRC) test/test_pfc.c  -o $(MCDC32DIR)/test_pfc
+	$(CLANG) $(CSTD) $(MCDC32FLAGS) $(INC) $(SRC) test/stress.c    -o $(MCDC32DIR)/stress
+	$(CLANG) $(CSTD) $(MCDC32FLAGS) $(INC) $(SRC) test/test_mcdc.c -o $(MCDC32DIR)/test_mcdc
+	cd $(MCDC32DIR) && LLVM_PROFILE_FILE=test.profraw ./test_pfc >/dev/null
+	cd $(MCDC32DIR) && LLVM_PROFILE_FILE=stress.profraw ./stress 5000 150000 >/dev/null
+	cd $(MCDC32DIR) && LLVM_PROFILE_FILE=mcdc.profraw ./test_mcdc >/dev/null
+	cd $(MCDC32DIR) && $(LLVMPROF) merge -sparse test.profraw stress.profraw mcdc.profraw 		-o merged.profdata
+	cd $(MCDC32DIR) && $(LLVMCOV) export ./test_pfc -object ./stress -object ./test_mcdc 		-instr-profile=merged.profdata --format=text > cov.json
+	python3 tools/mcdc_gate.py $(MCDC32DIR)/cov.json --min-percent $(MCDC32_MIN)
 endif
 
 # The MC/DC-targeted tests also run as ordinary tests in `make check` -- they assert real

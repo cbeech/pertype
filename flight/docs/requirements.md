@@ -192,21 +192,42 @@ fully covered, 5 of 5). **Total MC/DC is 88.70% (102/115)**, which meets G3.4a's
 
 #### G3.4b — `pfc_size_mul` capacity guards (8 conditions)
 
-These guards are defensive 32-bit protections on a 64-bit host. On the 64-bit CI machine model they
-are **unreachable by construction**:
-- `pfc_image.c:391` `width*height*es`: `width <= PFC_MAX_COLS` (8 192) and `es <= 2`, so the
-  product cannot overflow 64-bit `size_t`.
-- `pfc_columnar.c:110` `rw*cnt`: `rw <= PFC_BLOCK_BYTES` and `cnt` is bounded by the caller's
-  `src_len`, so the product cannot overflow 64-bit `size_t`.
-- `pfc_seq.c:144` `count*elem`: `elem in {1,2,4}` and `count` is bounded by `src_len`, so the
-  product cannot overflow 64-bit `size_t`.
-- `pfc_internal.h:183` the `pfc_size_mul` guard itself: a hand-verified CERT C INT30-C idiom;
-  CBMC over the unconstrained domain did not converge and is not worth an unreliable CI gate.
-- `pfc_spectral.c:277` is the **only reachable one**: four untrusted factors up to 78 bits can
-  overflow even 64-bit `size_t`; it has a dedicated regression test (`test_spectral_corruption`).
+**Resolved 2026-08-25 by measuring on the right word size**, rather than left as an unreachability
+note.
 
-A 32-bit MC/DC build would be needed to exercise the unreachable-on-64-bit branches; that build is
-not currently part of CI. The unreachable classification is recorded here rather than left implicit.
+These guards are defensive 32-bit protections. On the 64-bit CI host they are unreachable **by
+construction** — `width <= PFC_MAX_COLS` (8 192), `es <= 2`, `elem in {1,2,4}` and `rw <=
+PFC_BLOCK_BYTES`, so the two- and three-factor products cannot overflow a 64-bit `size_t`. That
+classification was correct and it was also the wrong architecture to stop at: `pfc.h` specifies the
+**encoder runs on 32-bit flight targets** (RAD750 / LEON / RISC-V-32), where those products do
+wrap. A guard that only matters on the deployment word size should be exercised on it — the same
+reasoning that already runs the CBMC proof under `--32` rather than the host model.
+
+`make mcdc32` builds the identical tests with `-m32` (verified: `ELF 32-bit LSB, Intel 80386`), and
+`mcdc_size_mul_overflow()` in `test_mcdc.c` drives them with crafted decode headers:
+
+| codec | crafted header | product |
+|---|---|---|
+| SEQ | `count = 0xFFFFFFFF`, `elem = 4` | 34 bits |
+| IMAGE | `width = 8192`, `height = 524288` | 2³² — overflows at link 1 |
+| IMAGE | `width = 8192`, `height = 262144` | 2³¹ then ×2 — overflows at the `es` link |
+| COLUMNAR | `rec_width = 65536`, `count = 65536` | 2³² |
+| SPECTRAL | three vectors, one per link of its four-deep chain | 2³² at links 1, 2 and 3 |
+
+Each case asserts the **same `PFC_E_BOUND` on both word sizes** and therefore needs no `#ifdef`:
+on 32-bit the `pfc_size_mul` call fails; on 64-bit the product is merely enormous and the
+`cap < total` half of the same condition rejects it.
+
+**Result:** 64-bit **103/115 (89.57%)**, 32-bit **108/115 (93.91%)**. The 64-bit build gains one
+condition too — SPECTRAL's `width*height*count*es` is the one chain that can overflow even 64 bits,
+as this document already noted. The remaining seven uncovered conditions on the 32-bit build are
+all in the documented unreachable categories: `pfc_internal.h:183`'s `a != 0` (no caller can pass
+zero — the dimension guards reject it upstream), the two `pfc_arith.c` renorm-underflow conditions,
+the two store-raw `pos >= raw_bytes` pairings, and `pfc_image.c:121`'s coupled condition.
+
+`MCDC32_MIN` is a **separate ratchet** from `MCDC_MIN` (93 vs 89): the two builds reach different
+conditions, so one floor across both would be meaningless. Both are verified to pass at their floor
+and fail one point above.
 
 #### G3.4c — store-raw fallback (2 conditions)
 

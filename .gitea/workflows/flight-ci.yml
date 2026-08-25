@@ -34,6 +34,21 @@ jobs:
   # the independent-decoder cross-check (R7), decoder fuzz, and randomised property/edge stress).
   native:
     runs-on: ubuntu-latest
+    # Pinned to node:22-trixie rather than the runner's default image. The ASan runtime fails
+    # NONDETERMINISTICALLY AT STARTUP on kernels with a high vm.mmap_rnd_bits (32 on the dev
+    # hosts), and the default self-hosted image is bookworm-vintage, where it is measurably
+    # broken. 60 trials each, on a four-line malloc/free program containing NO project code:
+    #
+    #     debian:bookworm    16/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV
+    #     node:20-bookworm   12/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV  <- the default
+    #     node:22-trixie      0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #
+    # The hang is the dangerous mode: ASan faults during its own startup, its reporting path
+    # faults too, and it recurses -- one captured instance wrote 8.5 GB / 301 M DEADLYSIGNAL
+    # lines, wedging the job indefinitely. `timeout` in the Makefile bounds the time but not the
+    # volume; this pins the cause. A Node-based image is used so JS actions (actions/checkout)
+    # still work inside the job container.
+    container: node:22-trixie
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools + python3/numpy (test_crosscheck.py's only hard dependency)
@@ -100,6 +115,31 @@ jobs:
         working-directory: flight
         run: make mcdc
 
+  # 32-bit MC/DC. The pfc_size_mul capacity guards are unreachable on a 64-bit model BY
+  # CONSTRUCTION (width is bounded by PFC_MAX_COLS, elem by {1,2,4}, and so on), which is why the
+  # `mcdc` job above reports them uncovered and docs/requirements.md classifies them that way.
+  # They are not decoration: libpfc's encoder is specified to run on 32-bit flight targets
+  # (RAD750 / LEON / RISC-V-32, see include/pfc.h), where those products genuinely wrap size_t.
+  # This job exercises them on the deployment word size -- the same reason the `cbmc` job runs
+  # under --32 rather than the host model, and the same class of bug that proof found in
+  # pfc_block_read.
+  #
+  # No sanitizers are involved here, so this job stays on the default runner image; the
+  # bookworm ASan problem documented on `native`/`libfuzzer` does not apply.
+  mcdc32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang 18 (apt.llvm.org) + 32-bit libc headers
+        run: |
+          apt-get update && apt-get install -y wget gnupg build-essential python3             libc6-dev-i386 gcc-multilib
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key             | gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main"             > /etc/apt/sources.list.d/llvm.list
+          apt-get update && apt-get install -y clang-18 llvm-18
+      - name: make mcdc32 — condition coverage on the 32-bit flight word size
+        working-directory: flight
+        run: make mcdc32
+
   # Worst-case stack-depth bound (R10, §2.4). Runs on BOTH the host ABI and the real flight target
   # ABI (big-endian 32-bit PowerPC) because frame layout is ABI-specific -- the host number is not
   # a proxy for the flight number. The tool asserts the two properties that make this bound exact
@@ -149,6 +189,21 @@ jobs:
   # the job terminates on its own; any crash/leak found within that window fails the job.
   libfuzzer:
     runs-on: ubuntu-latest
+    # Pinned to node:22-trixie rather than the runner's default image. The ASan runtime fails
+    # NONDETERMINISTICALLY AT STARTUP on kernels with a high vm.mmap_rnd_bits (32 on the dev
+    # hosts), and the default self-hosted image is bookworm-vintage, where it is measurably
+    # broken. 60 trials each, on a four-line malloc/free program containing NO project code:
+    #
+    #     debian:bookworm    16/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV
+    #     node:20-bookworm   12/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV  <- the default
+    #     node:22-trixie      0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #
+    # The hang is the dangerous mode: ASan faults during its own startup, its reporting path
+    # faults too, and it recurses -- one captured instance wrote 8.5 GB / 301 M DEADLYSIGNAL
+    # lines, wedging the job indefinitely. `timeout` in the Makefile bounds the time but not the
+    # volume; this pins the cause. A Node-based image is used so JS actions (actions/checkout)
+    # still work inside the job container.
+    container: node:22-trixie
     steps:
       - uses: actions/checkout@v4
       - name: Install clang
