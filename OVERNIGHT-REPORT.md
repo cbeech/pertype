@@ -393,6 +393,107 @@ The host-level `mmap_rnd_bits` change is the usual fix and would apply to all lo
 
 ---
 
+## Addendum, 2026-08-25 — the sanitizer finding, corrected and completed
+
+Re-run on `craig@ai` (a Linux host, at the user's suggestion) settled the `rc=139` question and
+corrected two things I got wrong above. Both corrections are left in place rather than edited away.
+
+### The root cause, now fully established
+
+**The ASan/UBSan runtime fails nondeterministically AT STARTUP** on kernels with a high
+`vm.mmap_rnd_bits` — 32 on *both* dev hosts. It fails in **two different ways** depending on the
+compiler. Measured on `debian:bookworm`, 60 trials each, on a four-line `malloc`/`free` program —
+so this is the runtime, not any code under test:
+
+| build | ok | segv | **hang** |
+|---|---|---|---|
+| gcc 12 + ASan | 44 | 0 | **16 / 60 (27%)** |
+| clang 14 + ASan + libFuzzer | 46 | **14 / 60 (23%)** | 0 |
+| **no sanitizer** (baseline) | **60** | 0 | 0 |
+
+The clean no-sanitizer baseline isolates the variable. A libFuzzer control containing **no project
+code** fails at the same rate on both hosts (6/20 on `ai`, 23/100 locally), so libpfc is not
+implicated at any point.
+
+**One cause explains every symptom seen across both machines:**
+
+- `libfuzzer` **rc=139** on both hosts → the **segv** mode (clang runtime).
+- The first `ai` run **wedging** — `make check` burning 74 minutes of CPU on a workload that takes
+  11 seconds standalone → the **hang** mode. `flight/Makefile:39` is explicit that `stress` is
+  *"built under ASan/UBSan"*, so the spinning process was ASan-instrumented.
+- The `tail -60` alongside it burning **41 minutes of CPU** → see the correction below. It was not
+  idle; it was consuming a torrent.
+- Why my A/B pipe test found no difference: at ~27% per run, both arms passing is ~53% likely. The
+  test was underpowered, not informative.
+
+### Two corrections to what this report said earlier
+
+1. **"Most likely resource contention"** (task 1c) — wrong, and already amended above. The soak hit
+   the same failure running alone.
+2. **"`ai` is immune, 0/100 ASan failures"** — wrong, and the more instructive error. That test used
+   **gcc's ASan on the host** (gcc 15.2), while the failing case is **clang's libFuzzer runtime in
+   a bookworm container**. Different runtime, different version. I generalised a measurement across
+   a boundary it never crossed. The correct statement is that the *newer* runtime on the host is
+   clean, while the bookworm-vintage runtimes in the container are not.
+
+### Why this matters for CI, not just for local work
+
+The Gitea runner image is **`node:20-bookworm`** — the same Debian vintage measured above. So the
+`libfuzzer` job can SIGSEGV spuriously, and any ASan gate can **hang a runner indefinitely**. An
+indefinite hang is strictly worse than a failure: it burns the runner and reports nothing.
+
+**Applied:** `RUN_TIMEOUT` (default 900 s) now bounds every test-binary run in `flight/Makefile`
+(`test`, `stress`, `mcdctest`), and the CI `libfuzzer` step is wrapped in `timeout 420`
+(`-max_total_time=300` already bounds the fuzzing itself, so exceeding that wall clock means the
+process wedged). This converts an indefinite wedge into a clean, visible failure a retry can clear.
+It does not mask a genuine hang in the code under test — that also deserves to fail.
+
+**Not applied, for the user to decide:** `sysctl -w vm.mmap_rnd_bits=28` on the affected hosts, or
+moving the sanitizer gates to a newer base image. Both address the cause rather than the symptom;
+both are environment changes rather than repository changes.
+
+### What the "hang" actually is — and a third correction
+
+Caught live when the new `RUN_TIMEOUT` guard fired during verification: `check rc=124`, with the
+captured log at **8.5 GB and 301 368 959 lines**, essentially all of them:
+
+    AddressSanitizer:DEADLYSIGNAL
+
+So the failure is not silent spinning. ASan takes a fatal signal during its own startup, its
+*reporting* path faults as well, and it recurses — emitting that line forever while burning CPU
+**and disk**.
+
+That resolves the loose end: `tail -60` was not idle during the wedge, it was consuming this
+torrent, which is exactly why it burned 41 minutes of CPU.
+
+**Correction:** I earlier wrote that "a hung process emits zero bytes". That was wrong, and wrong
+in an avoidable way — I took it from a 3-second sample whose **exit code was 0**, i.e. a run that
+never hung at all, and read a non-reproduction as evidence about the failure case.
+
+**A consequence worth acting on separately:** a timeout bounds the *time* but not the *volume* —
+this run wrote 8.5 GB before being killed. On a CI runner with a smaller disk that fills the
+volume. The base-image change below addresses the cause; the timeout only limits the blast radius.
+
+### Which base image — measured, 60 trials each
+
+| image | gcc + ASan | clang + libFuzzer |
+|---|---|---|
+| `debian:bookworm` | 16/60 hang | 14/60 segv |
+| **`node:20-bookworm`** — the Gitea runner image | **12/60 hang** | **14/60 segv** |
+| **`ubuntu:24.04`** | **60/60 clean** | **60/60 clean** |
+
+**The CI runner image is affected**, at roughly a 20% failure rate per sanitizer process. Ubuntu
+24.04's newer runtime is completely clean on the same kernel and the same `mmap_rnd_bits=32`, which
+confirms the runtime version — not the host — is the variable. It also ships clang-18 directly, so
+the `mcdc` job would no longer need the `apt.llvm.org` repo.
+
+**Recommendation (not applied — it changes CI infrastructure, which is the user's call):** run the
+sanitizer-dependent jobs on `ubuntu:24.04` rather than a bookworm-vintage image. Alternatively
+`sysctl -w vm.mmap_rnd_bits=28` on the runner host. The `timeout` guards are in place either way as
+a backstop.
+
+---
+
 ## Summary
 
 **Queue: 8 of 8 complete.** Nothing parked, nothing skipped.

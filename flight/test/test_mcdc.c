@@ -733,6 +733,40 @@ static void mcdc_image_gradient_tiebreak(void)
     ck(memcmp(dec, img, sizeof img) == 0,
        "image gradient tie-break: lossless");
 
+    /* Companion vector with q1 != 0, q2 == 0, q3 < 0, so the third clause comes out FALSE.
+     *
+     * This was written to give the third clause's `q1 == 0` (C4) its MC/DC independence pair, and
+     * it does NOT achieve that -- measurement confirms C4 remains uncovered. The reason is
+     * structural rather than a defect in this vector: the decision is
+     *
+     *     (q1 < 0) || ((q1 == 0) && (q2 < 0)) || ((q1 == 0) && (q2 == 0) && (q3 < 0))
+     *      C1          C2           C3            C4           C5           C6
+     *
+     * and C2 and C4 are the SAME EXPRESSION. Coupled conditions cannot be varied independently, so
+     * no input can give C4 an independence pair -- it is uncoverable by construction, like the
+     * pfc_size_mul guards. See docs/requirements.md.
+     *
+     * The vector is kept because it is a genuine robustness test in its own right: it exercises the
+     * q1>0 path through the tie-break and asserts a lossless round-trip.
+     * t1 is 32 at 16-bit, so deltas of 5000 are unambiguously past the quantiser threshold.
+     * Layout (x,y): c=(0,0), b=(1,0), d=(2,0), a=(0,1); q1=quant(d-b), q2=quant(b-c),
+     * q3=quant(c-a). */
+    memset(img, 0, sizeof img);
+    img[0 * 8 + 0] = 1000u;  /* (0,0) c */
+    img[0 * 8 + 1] = 1000u;  /* (1,0) b  -> q2 = quant(0) = 0 */
+    img[0 * 8 + 2] = 6000u;  /* (2,0) d  -> q1 = quant(+5000) = +1, NOT zero */
+    img[1 * 8 + 0] = 6000u;  /* (0,1) a  -> q3 = quant(-5000) = -1 */
+
+    memset(&p, 0, sizeof p);
+    p.width = 8u; p.height = 4u; p.bitdepth = 16u;
+    enc_len = 0; out = 0;
+    ck(pfc_encode(PFC_CODEC_IMAGE, &p, img, sizeof img, enc, sizeof enc, &enc_len, work) == PFC_OK,
+       "image gradient tie-break: q1!=0 companion vector encodes");
+    ck(pfc_decode(enc, enc_len, dec, sizeof dec, &out, work) == PFC_OK,
+       "image gradient tie-break: q1!=0 companion round-trips");
+    ck(memcmp(dec, img, sizeof img) == 0,
+       "image gradient tie-break: q1!=0 companion lossless");
+
     free(work);
 }
 
@@ -785,6 +819,44 @@ static void mcdc_internal_guards(void)
     p.width = 8u; p.count = 0u;
     ck(pfc_columnar_encode((uint8_t)PFC_CODEC_COLUMNAR, &p, src, dst, sizeof dst, &out, work)
        == PFC_E_PARAM, "columnar internal guard: cnt=0 alone rejected");
+
+    /* pfc_spectral.c -- ((bd!=8) && (bd!=16)) || (w==0) || (h==0) || (cnt==0) || (w>PFC_MAX_COLS).
+     * The bitdepth pair is already covered through the dispatcher; the remaining four need the
+     * direct call, since pfc.c rejects these same values before SPECTRAL is ever reached. */
+    {
+        uint8_t big[8u * 8u * 2u * 2u];          /* w*h*count*es for the all-false vector */
+        uint8_t sdst[8192];
+        memset(big, 0, sizeof big);
+
+        memset(&p, 0, sizeof p);
+        p.width = 8u; p.height = 8u; p.count = 2u; p.bitdepth = 16u;
+        ck(pfc_spectral_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_OK,
+           "spectral internal guard: all conditions false accepted");
+        p.width = 0u;
+        ck(pfc_spectral_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "spectral internal guard: width=0 alone rejected");
+        p.width = 8u; p.height = 0u;
+        ck(pfc_spectral_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "spectral internal guard: height=0 alone rejected");
+        p.height = 8u; p.count = 0u;
+        ck(pfc_spectral_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "spectral internal guard: count=0 alone rejected");
+        p.count = 2u; p.width = PFC_MAX_COLS + 1u;
+        ck(pfc_spectral_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "spectral internal guard: width>PFC_MAX_COLS alone rejected");
+
+        /* pfc_image.c -- ((bd!=8) && (bd!=16)) || (w==0) || (h==0) || (w>PFC_MAX_COLS). */
+        memset(&p, 0, sizeof p);
+        p.width = 8u; p.height = 8u; p.bitdepth = 16u;
+        ck(pfc_image_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_OK,
+           "image internal guard: all conditions false accepted");
+        p.width = 0u;
+        ck(pfc_image_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "image internal guard: width=0 alone rejected");
+        p.width = 8u; p.height = 0u;
+        ck(pfc_image_encode(&p, big, sdst, sizeof sdst, &out, work) == PFC_E_PARAM,
+           "image internal guard: height=0 alone rejected");
+    }
 
     free(work);
 }

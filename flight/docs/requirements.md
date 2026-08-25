@@ -180,13 +180,13 @@ cover and for the one decode-side header chain that was missing:
   `(p->elem == 0u) || (p->count == 0u)` with the division moved below it, matching
   `pfc_columnar_encode`'s ordering. Both conditions are now reachable and covered.
 
-**Reachability correction for the rest of G3.4a.** The first round of tests went through
-`pfc_encode()` and moved almost no coverage, because the dispatcher validates these same
+**Reachability correction for the rest of G3.4a — resolved.** The first round of tests went
+through `pfc_encode()` and moved almost no coverage, because the dispatcher validates these same
 parameters first and the codec-level guard never runs — e.g. `pfc.c:68` rejects `width == 0` and
 `width > PFC_BLOCK_BYTES` before COLUMNAR is called. `mcdc_internal_guards()` now calls the codec
-entry points **directly**, which is the only way to reach them; that covered
-`pfc_columnar.c:25` C1 and C2. The SPECTRAL and IMAGE encode-guard conditions remain uncovered for
-the same structural reason and need the same treatment.
+entry points **directly**, which is the only way to reach them. That covered `pfc_columnar.c:25`
+C1/C2, `pfc_spectral.c:199` C3–C6 (all four) and `pfc_image.c:309` C3/C4 (that decision is now
+fully covered, 5 of 5). **Total MC/DC is 88.70% (102/115)**, which meets G3.4a's ≥88% done-when.
 - `pfc_image.c:383` IMAGE decode header guard (width==0 / height==0 / band==0 /
   width>PFC_MAX_COLS).
 
@@ -230,10 +230,20 @@ hold whether or not the fallback was taken.
 
 #### G3.4d — genuinely state-dependent conditions (3 conditions)
 
-- `pfc_image.c:121` gradient sign tie-break: a crafted image where `q1==0`, `q2==0`, `q3<0`
-  (`mcdc_image_gradient_tiebreak()`) was written for this, but the 2026-08-24 measurement shows
-  **C4 is still uncovered** — the test reaches the decision without isolating this condition's
-  independent effect. Still open.
+- `pfc_image.c:121` gradient sign tie-break, condition C4: **uncoverable by construction —
+  coupled conditions.** The decision is
+
+      (q1 < 0) || ((q1 == 0) && (q2 < 0)) || ((q1 == 0) && (q2 == 0) && (q3 < 0))
+       C1          C2           C3            C4           C5           C6
+
+  and **C2 and C4 are the same expression**, `q1 == 0`. Two syntactically identical conditions in
+  one decision always take the same value, so C4 can never be varied while holding C2 fixed and no
+  independence pair exists for it. This is the standard MC/DC *coupled conditions* case, not a
+  missing test. Confirmed empirically: a companion vector with `q1>0, q2==0, q3<0` was added
+  (`mcdc_image_gradient_tiebreak()`) and C4 remained uncovered, exactly as the coupling predicts.
+  C1, C2, C3, C5 and C6 are all covered. The vector is kept as a robustness test of the `q1>0`
+  path. The logic itself is a correct lexicographic sign comparison; it is **not** being rewritten
+  to suit a coverage metric.
 - `pfc_arith.c:39` / `:118` range-coder renorm underflow branch: **not unit-testable with the
   public API**. The branch is reached only when `range < PFC_RC_BOT` while `low` and `low+range`
   straddle a `PFC_RC_TOP` boundary — a state that depends on the exact low/range relationship built

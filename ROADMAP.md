@@ -13,18 +13,20 @@ on both remotes.
 documents don't overstate what's been measured; `pertype` receives only hygiene. Agreed at
 roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only.**
 
-> ## Track A — complete except the reopened MC/DC goals
+> ## Track A is complete
 >
 > Every Track A goal — G0.1, G0.2, G1.1, G1.2, G1.3, G2.1, G3.1, G3.2, G3.3, G3.4a–d and G4.1 —
 > plus Track B's R3 has landed, in commits `d8f2ad3` … `b4a6d15`. Each goal below carries a
 > **Status** line naming the commit that closed it. R2, R4 and R5 are deferred or shelved under D2
 > and are *not* oversights.
 >
-> **Exception — G3.4a, G3.4c and G3.4d are reopened.** A per-condition MC/DC re-measurement on
-> 2026-08-24 found all three had been marked done without meeting their done-when: 5 of 14 class-A
-> conditions covered rather than 14, neither class-C condition covered, and the class-D coverage
-> item not covered. Total MC/DC is 80.87%, against a done-when of ≥88%. G3.4b is unaffected and
-> genuinely complete. See each Status line, the M3 follow-up note, and `OVERNIGHT-REPORT.md`.
+> **The MC/DC goals were reopened on 2026-08-24 and are now closed (2026-08-25).** They had been
+> marked done without meeting their done-when: 5 of a claimed 17 conditions covered. Reworked via
+> direct calls to the codec entry points, plus a real defect fix in `pfc_seq.c`.
+> **MC/DC 76.52% → 88.70% (102/115)**, meeting G3.4a's ≥88% target, with `MCDC_MIN` ratcheted to 88.
+> The 13 still-uncovered conditions are documented as **unreachable by construction** — 32-bit-only
+> `pfc_size_mul` guards, the store-raw `pos >= raw_bytes` pairing, the range-coder renorm underflow,
+> and one pair of **coupled conditions** — not as missing tests.
 
 **Last surveyed:** 2026-08-24 · **Decisions recorded:** 2026-08-15 review
 
@@ -235,22 +237,17 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G0.1
 - **Size:** M
 - **Basis:** verified in repo (measured condition list)
-- **Status:** ⚠️ **PARTIAL — reopened 2026-08-24.** `8402e5a` added the encode-side
-  parameter-guard tests and the missing IMAGE decode-header test, growing `test_mcdc.c` to 97
-  assertions, and was marked done. A per-condition re-measurement shows the done-when was **not**
-  met: total MC/DC is **80.87%**, not the required ≥88%, and **5 of the 14 class-A conditions are
-  covered**, not 14. Covered: `pfc_image.c:383` (3 of 3). Partly: `pfc_spectral.c:199` (2 of 6 —
-  C3–C6 still open). Untouched: `pfc_image.c:309` (2), `pfc_columnar.c:25` (2), `pfc_seq.c:73` (1).
-  The likely cause is the very distinction MC/DC exists to enforce — the tests reach the
-  *decisions* but do not supply each condition's **independence pair**. The `MCDC_MIN` ratchet was
-  also never moved, which is *why* this went unseen: at a floor of 73 the gate passed comfortably.
-  **Progress 2026-08-25:** the root cause is structural — `pfc_encode()` validates these same
-  parameters at the front door, so the codec-level guards are unreachable through the dispatcher
-  and the original tests never ran them. `mcdc_internal_guards()` now calls the codec entry points
-  directly, covering `pfc_columnar.c:25` C1/C2, and a defect fix made `pfc_seq.c`'s guard reachable
-  (see below). Total MC/DC **80.87% → 83.48%**; floor raised to 83. Still open:
-  `pfc_spectral.c:199` C3–C6 and `pfc_image.c:309` C3/C4, both needing the same direct-call
-  treatment.
+- **Status:** ✅ **Done 2026-08-25 — done-when now met.** History kept because it matters: this
+  was marked done by `8402e5a` without meeting its target, and the un-ratcheted `MCDC_MIN` (73 vs a
+  measured 80.87%) is what hid that only 5 of a claimed 17 conditions were covered. The root cause
+  was structural: `pfc_encode()` validates the same parameters at the front door, so tests aimed at
+  the codec guards were rejected upstream and the guards never ran. `mcdc_internal_guards()` now
+  calls the codec entry points **directly**, covering `pfc_columnar.c:25` C1/C2,
+  `pfc_spectral.c:199` C3–C6 and `pfc_image.c:309` C3/C4 (that decision is now 5 of 5). A
+  divide-before-guard defect fix in `pfc_seq.c` made its guard reachable too.
+  **Total MC/DC 76.52% → 88.70% (102/115), meeting the ≥88% done-when**; `MCDC_MIN` ratcheted to 88
+  and verified to fail at 89. Confirmed on the `craig@ai` Linux host: `make check`, `make misra`
+  and `make mcdc` all green.
 
 /goal Decide and document the fate of the 8 pfc_size_mul capacity-guard conditions.
 - **ID:** G3.4b
@@ -308,12 +305,15 @@ unambiguously the externally-blocked ones.
 - **Depends on:** G3.4c
 - **Size:** M
 - **Basis:** verified in repo
-- **Status:** ⚠️ **HALF DONE — reopened 2026-08-24.** The documentation half stands: the two
-  `pfc_arith.c` renorm-underflow conditions (`:39` C3, `:118` C3) are recorded in
-  `requirements.md` as not unit-testable through the public API — the same treatment given to the
-  `pfc_size_mul` CBMC non-convergence — and both remain uncovered, as expected. The coverage half
-  does not: `pfc_image.c:121` C4, the gradient tie-break third tier, was claimed covered by a
-  crafted-image test but **is still uncovered** as of 2026-08-24.
+- **Status:** ✅ **Closed 2026-08-25 — all three conditions resolved, two by documentation.** The
+  two `pfc_arith.c` renorm-underflow conditions (`:39` C3, `:118` C3) remain recorded in
+  `requirements.md` as not unit-testable through the public API. The third, `pfc_image.c:121` C4,
+  turned out to be **uncoverable by construction: coupled conditions.** The decision is
+  `(q1<0) || ((q1==0) && (q2<0)) || ((q1==0) && (q2==0) && (q3<0))`, in which **C2 and C4 are the
+  same expression** `q1 == 0` — they always take the same value, so C4 can never be varied
+  independently and no independence pair exists. Confirmed empirically: a companion `q1>0, q2==0,
+  q3<0` vector was added and C4 stayed uncovered, exactly as the coupling predicts. The tie-break
+  logic is a correct lexicographic sign comparison and is **not** being rewritten to suit a metric.
 
 > ### Follow-up from the 2026-08-24 verification run
 >

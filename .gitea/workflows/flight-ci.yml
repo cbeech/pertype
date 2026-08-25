@@ -172,9 +172,14 @@ jobs:
                 src/*.c test/fuzz_pfc.c -o build/fuzz_pfc
       # 5 minutes per run, from an empty corpus every time -- see the accepted-limitation note
       # above on why coverage doesn't compound across runs here.
+      # Bounded with `timeout`: the ASan runtime can fail nondeterministically AT STARTUP on
+      # kernels with a high vm.mmap_rnd_bits (32 on the dev hosts). clang's libFuzzer runtime
+      # SIGSEGVs (measured 14 of 60 runs on debian:bookworm, on a target containing NO project
+      # code); gcc's ASan hangs instead. -max_total_time already bounds the fuzzing itself, so a
+      # run exceeding this wall clock means the process wedged, not that fuzzing took longer.
       - name: Fuzz the decoder for 5 minutes
         working-directory: flight
-        run: ./build/fuzz_pfc fuzz-corpus -max_total_time=300 -max_len=65536
+        run: timeout 420 ./build/fuzz_pfc fuzz-corpus -max_total_time=300 -max_len=65536
       - name: Upload crash artifact (if any)
         if: failure()
         uses: actions/upload-artifact@v4

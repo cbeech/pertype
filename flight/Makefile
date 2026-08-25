@@ -36,12 +36,36 @@ OBJ     := $(SRC:.c=.o)
         stackdepth stackdepth-ppc seu mcdc mcdctest containment seudetect
 all: test
 
+# Bound every test-binary run.
+#
+# WHY: the ASan/UBSan runtime can fail NONDETERMINISTICALLY AT STARTUP on kernels with a high
+# vm.mmap_rnd_bits (32 on both dev hosts here), and it does so in two different ways depending on
+# the compiler. Measured on debian:bookworm, 60 trials each, on a program that is four lines of
+# malloc/free -- so this is the runtime, not any code under test:
+#
+#     gcc 12   + ASan            16/60 HANG
+#     clang 14 + ASan+libFuzzer  14/60 SIGSEGV
+#     no sanitizer                60/60 clean
+#
+# The hang is the dangerous one. ASan takes a fatal signal during its own startup, its reporting
+# path faults as well, and it recurses -- emitting "AddressSanitizer:DEADLYSIGNAL" forever. One
+# captured instance ran 74 minutes on a workload that takes 11 seconds and wrote 8.5 GB / 301
+# million lines, so it consumes DISK as well as CPU. Bounding the run converts an indefinite wedge
+# into a clean, visible failure a retry can clear; note it bounds the time, not the volume.
+# It does NOT mask a real hang in the code under test -- that also deserves to fail.
+#
+# The cause is the runtime VERSION, not the host: on the same kernel, ubuntu:24.04 measures 60/60
+# clean for both compilers where bookworm-vintage images fail 20-27% of the time. Prefer
+# ubuntu:24.04 for sanitizer work. Set RUN_TIMEOUT= (empty) to disable this guard.
+RUN_TIMEOUT ?= 900
+RUN := $(if $(RUN_TIMEOUT),timeout $(RUN_TIMEOUT),)
+
 # Aggressive randomised property + edge + fuzz stress, built under ASan/UBSan (exact-sized buffers).
 stress:
 	@mkdir -p build
 	$(CC) $(CSTD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
 		$(INC) $(SRC) test/stress.c -o build/stress
-	./build/stress 5000 150000
+	$(RUN) ./build/stress 5000 150000
 
 # Independent-decoder cross-check (R7) and decoder robustness fuzz (R6) — Python harnesses.
 crosscheck: sharedlib
@@ -67,7 +91,7 @@ build/test_pfc: $(OBJ) test/test_pfc.c
 	$(CC) $(CSTD) $(WARN) $(CFLAGS) $(INC) $(OBJ) test/test_pfc.c -o $@
 
 test: build/test_pfc
-	./build/test_pfc
+	$(RUN) ./build/test_pfc
 
 # Treat all warnings as errors (MISRA/JPL discipline gate).
 strict: CFLAGS += -Werror
@@ -149,11 +173,17 @@ endif
 # regression fails the build, and is raised as conditions get covered. It is deliberately far below
 # 100% -- see docs/requirements.md for the honest gap statement. Do not read a passing `make mcdc`
 # as "MC/DC compliant".
-# Measured 83.48% (96/115 conditions) on 2026-08-25. Raised from 73, which had been left
-# unchanged when test_mcdc.c grew to 97 assertions -- a floor 10 points below the measurement not
-# only fails to protect new coverage, it hides whether that coverage ever landed (it had not: the
-# 2026-08-24 re-measurement found 5 of a claimed 17 conditions actually covered).
-MCDC_MIN ?= 83
+# Measured 88.70% (102/115 conditions) on 2026-08-25, verified on the craig@ai Linux host.
+# History worth keeping: this sat at 73 while test_mcdc.c grew by 97 assertions. A floor well below
+# the measurement does not merely fail to protect new coverage -- it hides whether that coverage
+# ever landed. It had not: a re-measurement found 5 of a claimed 17 conditions actually covered.
+# Raise this whenever the measurement rises.
+#
+# The remaining 13 uncovered conditions are documented in docs/requirements.md as unreachable by
+# construction (32-bit-only pfc_size_mul guards, the store-raw pos>=raw_bytes pairing, the
+# range-coder renorm underflow, and one pair of COUPLED conditions in pfc_image.c's tie-break),
+# not as missing tests.
+MCDC_MIN ?= 88
 CLANG ?= clang-18
 LLVMCOV ?= llvm-cov-18
 LLVMPROF ?= llvm-profdata-18
@@ -186,7 +216,7 @@ build/test_mcdc: $(OBJ) test/test_mcdc.c
 	@mkdir -p build
 	$(CC) $(CSTD) $(WARN) $(CFLAGS) $(INC) $(OBJ) test/test_mcdc.c -o $@
 mcdctest: build/test_mcdc
-	./build/test_mcdc
+	$(RUN) ./build/test_mcdc
 
 # Downlink-corruption containment (R6): flip one bit in one block's payload, then measure whether
 # the damage stays in that block. Reports rather than asserts, because the answer is currently
