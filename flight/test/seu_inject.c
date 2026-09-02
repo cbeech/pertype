@@ -354,19 +354,19 @@ int main(int argc, char **argv)
     printf("SHARED failure mode -- but each codec frames blocks differently, so containment must\n");
     printf("be measured per codec rather than inferred from IMAGE alone.\n");
 
-    for (c = 0; c < 4; c++) {
+    for (c = 0; c < 5; c++) {
         fixture f;
         results uni, strat[REG_N];
-        /* Non-IMAGE fixtures are 16x larger, so scale their trial count down to keep the whole
-         * run tractable; IMAGE keeps the full budget since it is the primary analysis. */
-        long codec_trials = (c == 0) ? trials : (trials / 8);
+        /* The SEQ/COLUMNAR/FLOAT fixtures are 16x larger, so their trial count is scaled down to
+         * keep the whole run tractable; IMAGE and SPECTRAL (both 8 KB fixtures) keep the full
+         * budget -- SPECTRAL most of all, since its propagation finding is the headline result. */
+        long codec_trials = ((c == 0) || (c == 4)) ? trials : (trials / 8);
         long per_region = (codec_trials / 4) / REG_N;
         long silent, multi, tot_bytes, worst;
 
         if (per_region < 1) { per_region = 1; }
         if (!setup_fixture(&f, codecs[c])) {
-            printf("\n===== %s: SKIPPED (setup failed) =====\n",
-                   (codecs[c] == PFC_CODEC_SEQ) ? "SEQ" : "codec");
+            printf("\n===== codec %d: SKIPPED (setup failed) =====\n", (int)codecs[c]);
             continue;
         }
 

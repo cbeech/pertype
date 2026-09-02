@@ -23,12 +23,15 @@ non-starter on flight hardware. `libpfc` is the freestanding C99 subset that *ca
   `-DPFC_BAND_ROWS`). The compiled library imports **zero** alloc symbols.
 - **Integer-only & deterministic** — no floating point; canonical little-endian wire format, so a
   big-endian RAD750 encoder and a little-endian RISC-V/LEON/x86 ground decoder interoperate.
-- **Error containment** — every block is independently decodable and CRC-32 protected. For IMAGE,
-  SEQ, COLUMNAR and FLOAT, a corrupted or truncated downlink frame loses exactly one block, is
-  reported, and never reads out of bounds. SPECTRAL is the exception: because it predicts each band
-  from the previous one, a single corrupt block can propagate through the remaining bands of that
-  block column (see `docs/mission-safety.md` §2.5.1). Refresh bands (`pfc_params.elem`) bound that
-  propagation at a configurable interval.
+- **Error containment** — every block is independently framed and CRC-32 protected. For IMAGE,
+  SEQ, COLUMNAR and FLOAT the blocks are also independently decodable: a corrupted frame loses
+  exactly one block, is reported, and never reads out of bounds; a truncated frame loses the
+  truncated block and everything after it (the remaining blocks are filled with a neutral value
+  and the corruption is reported — the missing data never arrived). SPECTRAL is the exception: its
+  blocks are framed and CRC'd but **not** independently decodable, because it predicts each band
+  from the previous one, so a single corrupt block can propagate through the remaining bands of
+  that block column (see `docs/mission-safety.md` §2.5.1). Refresh bands (`pfc_params.elem`) bound
+  that propagation at a configurable interval.
 - **No expansion** — `pfc_bound()` is a hard ceiling; incompressible bands fall back to store-raw.
 - **Lossless** — bit-exact round-trip, verified on synthetic and real 16-bit instrument imagery.
 

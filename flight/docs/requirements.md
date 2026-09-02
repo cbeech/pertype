@@ -330,6 +330,21 @@ SPECTRAL.** It is not a silent failure (decode still returns `PFC_E_CORRUPT`), a
 to the inter-band prediction that gives SPECTRAL its compression advantage — containment and ratio
 are in direct tension for this codec.
 
+The harness's second section is the §2.5.1 refresh demonstration: on its 12-band SPECTRAL cube it
+corrupts block 0 at each refresh interval and reports the damaged-band count and price, measured
+(2026-08-26 doc audit):
+
+| refresh | ratio | cost vs off | bands damaged (of 12) |
+|---------|-------|-------------|-----------------------|
+| 0 (default) | 2.94× | — | 12 |
+| 2 | 2.88× | +2.07% | 2 |
+| 4 | 2.91× | +0.88% | 4 |
+| 6 | 2.93× | +0.33% | 6 |
+| 8 | 2.93× | +0.35% | 8 |
+
+Damage stops exactly at the next refresh band — the N-band bound is structural, and this table is
+what `mission-safety.md` §2.5.1 cites.
+
 **Mitigation, implemented, default-off:** `pfc_params::elem` sets an inter-band refresh interval N;
 every N'th band is coded spatially-only, bounding propagation to N bands. Carried in the stream
 header (previously-reserved byte 7) so streams remain self-describing — the independent Python
@@ -338,14 +353,16 @@ the pre-feature encoder (asserted in `test_spectral_refresh`), so nothing change
 callers.
 
 **The cost is data-dependent.** On a strongly inter-band-correlated 12-band synthetic cube,
-refresh=4 bounds damage to 4 of 12 bands but costs **+14.68%**; refresh=6 costs +7.30%. (An earlier
-figure of +0.88% was measured on a weakly-correlated cube where the inter-band predictor was barely
-working — misleading, and discarded.) On **real AVIRIS Indian Pines** (200 bands, 145×145, uint16),
-the same intervals are much cheaper: refresh=4 costs **+3.96%**, refresh=6 **+2.60%**, refresh=8
-**+1.98%**, and refresh=10 only **+1.44%** (see `mission-safety.md` §2.5.1 for the full curve).
-Pick an interval that divides the band count evenly: refresh=6 dominates refresh=8 on the 12-band
-synthetic cube (same cost, tighter bound), while on the 200-band real scene refresh=8 (divisor) is
-cheaper than refresh=6 (non-divisor).
+refresh=4 bounds damage to 4 of 12 bands but costs **+14.68%**. (An earlier figure of +0.88% was
+called misleading and discarded — but the `make containment` harness fixture, which is only weakly
+inter-band correlated, measures almost exactly that, +0.88% at refresh=4, so the "misleading" figure
+was really just the other end of the fixture-dependence range.) On **real AVIRIS Indian Pines**
+(200 bands, 145×145, uint16), the same intervals are much cheaper: refresh=4 costs **+3.96%**,
+refresh=6 **+2.60%**, refresh=8 **+1.98%**, and refresh=10 only **+1.44%** (see
+`mission-safety.md` §2.5.1 for the full curve). Pick an interval that divides the band count
+evenly: refresh=6 dominates refresh=8 on the harness's 12-band cube (near-identical cost, tighter
+bound), while on the 200-band real scene refresh=8 (divisor) is cheaper than refresh=6
+(non-divisor).
 
 ### SEU fault injection (R11) — `test/seu_inject.c`
 
@@ -392,6 +409,12 @@ Two further findings the prose did not contain:
    band feeds the next band's prediction. Containment and the codec's compression win are in direct
    tension. The same propagation was later confirmed for ordinary **downlink** corruption in
    `mission-safety.md` §2.5.1.
+
+   **Reproducibility note (2026-08-26 doc audit):** the committed harness originally looped over
+   only four codecs — the SPECTRAL row above came from an uncommitted run, so `make seu` could not
+   reproduce its own table. The loop now covers all five codecs, and a fresh committed-harness run
+   (3 000 trials) reproduces the finding: 37 of 48 silent corruptions spanned more than one block,
+   `CONTAINMENT VIOLATED` for SPECTRAL.
 
    The harness also supports multi-bit / burst upset via `make seu SEU_BURST=N`. An 8-bit burst run
    (2 000 trials for IMAGE, 250 for the others) produced the same qualitative containment picture:
@@ -735,7 +758,7 @@ with its exception. No remaining universal safety claim is unbacked.
 | **`pfc_block_read` never reads OOB** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_read.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/165 failed). |
 | **`pfc_block_write` never writes OOB / leaves `pos` unchanged on rejection** | `mission-safety.md` §2.3 | CBMC proof (`proofs/cbmc/harness_block_write.c`, `cbmc` CI job, `--32`) — `VERIFICATION SUCCESSFUL` (0/152 failed). |
 | **Encoder-side SEU is wholly silent** (CRC detects zero encoder-side upsets) | `mission-safety.md` §2.5 | Measured: `make seu`, 7 200 single-bit trials across all five codecs, **0 CRC detections**; 99.9% no effect, 0.1% silently wrong data with `PFC_OK`. `SEU_BURST=N` extends this to adjacent-bit burst upsets. |
-| **IMAGE/SEQ/COLUMNAR/FLOAT contain damage to one block; SPECTRAL does not** | README, R6, §2.5/§2.5.1 | `make seu` and `make containment`: IMAGE/SEQ/COLUMNAR/FLOAT 0 multiblock silent corruptions; SPECTRAL propagates across bands. Refresh bands bound propagation at configurable interval. |
+| **Corrupted frame loses exactly one block for IMAGE/SEQ/COLUMNAR/FLOAT; truncated frame loses the cut block and everything after it (remainder filled with a neutral value, reported); SPECTRAL contains neither way** — its blocks are framed and CRC'd but not independently decodable | README, R6, §2.5/§2.5.1 | `make containment`: IMAGE 1 band, SPECTRAL propagates (refresh bounds damage to N bands, harness-measured). `make seu`: four codecs 0 multiblock silent corruptions; SPECTRAL violated (37/48 spanned >1 block, fresh committed run). Truncation: every codec's decoder fills the cut block and all remaining with a neutral value and stops (`pfc_image.c`/`pfc_seq.c`/`pfc_columnar.c`/`pfc_spectral.c` truncation branches), asserted by `test_truncation`/`corrupt_codec` in `test_pfc.c`. |
 | **No recursion / no function pointers** (exact stack-depth bound) | R10 | Static analysis of disassembly; `stackdepth` CI job asserts acyclicity and call-graph completeness; 464 B worst case on flight target ABI. |
 
 ## Other open items

@@ -72,8 +72,9 @@ typedef enum {
  *
  *            Choosing N: pick a value that divides the band count (count) evenly. An interval
  *            that does not divide Z wastes compression without tightening containment. Example:
- *            for a 12-band cube, N=6 and N=8 both insert two refresh bands, but N=6 bounds damage
- *            to at most 6 bands while N=8 bounds it to at most 8; prefer the divisor. See
+ *            for a 12-band cube, N=6 and N=8 each insert one refresh band (band 0 is coded
+ *            spatially regardless), at near-identical cost, but N=6 bounds damage to at most 6
+ *            bands while N=8 bounds it to at most 8; prefer the divisor. See
  *            docs/mission-safety.md §2.5.1 for measured cost/containment curves. */
 typedef struct {
     uint32_t width;       /* IMAGE/SPECTRAL: pixels/row.  COLUMNAR: bytes/record. */

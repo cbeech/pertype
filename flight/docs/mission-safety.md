@@ -227,7 +227,10 @@ method in `requirements.md`; what changed here:
   simultaneously have bands fail independently.
   **That open question is now ANSWERED, and the answer is yes — see §2.5.1 below.** Downlink
   corruption propagates the same way, so this is not an SEU-only caveat: **R6 as written is wrong
-  for SPECTRAL.**
+  for SPECTRAL.** (Reproducibility note: the harness as committed looped over only four codecs;
+  the SPECTRAL SEU numbers above came from an uncommitted run. Fixed in the 2026-08-26 doc audit —
+  `make seu` now runs SPECTRAL too, and a fresh 3 000-trial run reproduces the propagation:
+  37 of 48 silent corruptions crossed a block boundary.)
 - **Containment holds for the other four codecs — but "contained" is not "small".** For IMAGE,
   within a band the damage is near total: worst observed **2 035 corrupted bytes out of a
   2 048-byte block**. The honest statement of the mitigation is "blast radius is bounded by the
@@ -319,30 +322,33 @@ out-of-band configuration.
 The synthetic 12-band cube used earlier for the containment visualisation gave +14.68% at
 refresh=4; on this real scene the same interval costs **+3.96%**. Real AVIRIS is less sensitive
 than the strongly-correlated synthetic cube because the inter-band correlation is strong enough
-to help, but not so strong that giving it up occasionally is catastrophic. The earlier weakly-
-correlated synthetic figure (+0.88%) remains misleading in the other direction — the real price
-sits between the two extremes.
+to help, but not so strong that giving it up occasionally is catastrophic. The price is
+fixture-dependent, and the two synthetic fixtures mark the extremes: the old strongly-correlated
+cube (+14.68% at refresh=4) and the weakly-correlated `make containment` fixture (+0.88%, below)
+bracket the real scene's +3.96%.
 
-A 12-band synthetic cube is retained below for the direct containment demonstration (it is small
-enough to run the downlink-corruption harness band-by-band):
+A 12-band synthetic cube is retained as the `make containment` fixture for the direct containment
+demonstration (it is small enough to run the downlink-corruption harness band-by-band). Measured
+by `make containment` (`test/downlink_containment.c`, corrupting block 0):
 
 | refresh | ratio | cost vs off | bands damaged (of 12) |
 |---------|-------|-------------|-----------------------|
-| **0 (default)** | 8.31× | — | **12** |
-| 6 | 7.75× | **+7.30%** | 6 |
-| 8 | 7.74× | +7.37% | 8 |
-| 4 | 7.25× | +14.68% | 4 |
-| 2 | 6.09× | +36.56% | 2 |
+| **0 (default)** | **2.94×** | — | **12** |
+| 2 | 2.88× | +2.07% | 2 |
+| 4 | 2.91× | +0.88% | 4 |
+| 6 | 2.93× | +0.33% | 6 |
+| 8 | 2.93× | +0.35% | 8 |
 
 **`refresh=0` is byte-identical to the pre-feature encoder** (asserted in `test_spectral_refresh`),
 so this changes nothing for existing callers — enabling it is a deliberate mission decision, not a
 silent default change. Every interval round-trips losslessly (R1), and the independent Python
 ground decoder honours the header field too (R7, `spectral-refresh4` synthetic cross-check case).
 
-**Pick the interval to divide the band count evenly.** On the 12-band synthetic cube, refresh=6
-*dominates* refresh=8: identical cost (both insert two refresh bands) but a tighter propagation
-bound. On the 200-band real scene, refresh=8 (divides evenly) is cheaper than refresh=6 (does not),
-which is exactly the rule: an interval that does not divide Z can waste compression without buying
+**Pick the interval to divide the band count evenly.** On the 12-band harness cube, refresh=6
+*dominates* refresh=8: near-identical cost (+0.33% vs +0.35% — each inserts one refresh band,
+since band 0 is spatially coded anyway) but a tighter propagation bound (6 vs 8 bands). On the
+200-band real scene, refresh=8 (divides evenly) is cheaper than refresh=6 (does not), which is
+exactly the rule: an interval that does not divide Z can waste compression without buying
 containment. A divisor such as 10, 20 or 25 gives a much cheaper bound for this scene.
 
 **Containment bound as a function of N.** With refresh interval N, a single corrupt block can

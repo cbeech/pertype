@@ -24,6 +24,11 @@
  * For each codec we corrupt exactly ONE block record's payload (flipping one bit, which fails
  * that block's CRC and nothing else) and then report, per band, how many samples differ from the
  * original. "Contained" means only the band owning the corrupted block differs.
+ *
+ * A second section demonstrates the SPECTRAL refresh-band mitigation on a 12-band cube: with
+ * refresh interval N, every N'th band is coded spatially-only, so a corrupt block's damage must
+ * stop by the next refresh band -- at most N bands damaged -- at a measured compression cost.
+ * This is the direct containment demonstration cited by docs/mission-safety.md §2.5.1.
  */
 #include "pfc_internal.h"
 #include <stdio.h>
@@ -108,6 +113,7 @@ static void run_case(const char *label, pfc_codec codec, pfc_params p,
 
     st = pfc_encode(codec, &p, src, n_in, enc, cap, &enc_len, w);
     if (st != PFC_OK) { printf("  %s: encode failed (%d)\n", label, (int)st); g_fail++; return; }
+    printf("    stream: %zu bytes (%.2fx)\n", enc_len, (double)n_in / (double)enc_len);
 
     /* Sanity: an uncorrupted stream must round-trip, or the experiment means nothing. */
     st = pfc_decode(enc, enc_len, dec, n_in, &dec_len, w);
@@ -172,6 +178,26 @@ int main(void)
     p.width = W; p.height = H; p.count = Z; p.bitdepth = 16u;
     run_case("SPECTRAL (subject -- band z predicted from band z-1)", PFC_CODEC_SPECTRAL, p,
              W, H, Z, 16u, TEST_SPEC_HDR, 0u);
+
+    /* MITIGATION DEMONSTRATION (docs/mission-safety.md §2.5.1): on a 12-band cube, refresh
+     * interval N must bound propagation to at most N bands. Same fixture for every interval, so
+     * the printed ratios make the price of each bound visible. */
+    {
+        const uint32_t RW = 32u, RH = 32u, RZ = 12u;
+        const unsigned ivls[5] = { 0u, 2u, 4u, 6u, 8u };
+        char lbl[72];
+        int k;
+
+        printf("\nSPECTRAL refresh bands on a %u-band cube (corrupting block 0):\n", RZ);
+        printf("  with interval N, damage must stop by the next refresh band -- at most N bands.\n");
+        for (k = 0; k < 5; k++) {
+            memset(&p, 0, sizeof p);
+            p.width = RW; p.height = RH; p.count = RZ; p.bitdepth = 16u;
+            p.elem = (uint8_t)ivls[k];
+            (void)snprintf(lbl, sizeof lbl, "SPECTRAL refresh=%u", ivls[k]);
+            run_case(lbl, PFC_CODEC_SPECTRAL, p, RW, RH, RZ, 16u, TEST_SPEC_HDR, 0u);
+        }
+    }
 
     printf("\n%s\n", (g_fail == 0) ? "harness ran clean" : "HARNESS ERRORS -- results unreliable");
     return (g_fail == 0) ? 0 : 1;
