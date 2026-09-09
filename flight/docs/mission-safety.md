@@ -302,7 +302,9 @@ previously reserved byte 7), so streams stay self-describing and a ground decode
 out-of-band configuration.
 
 **Measured on real AVIRIS Indian Pines** (200 bands, 145×145, uint16, public EHU GIC scene, measured
-2026-08-19):
+2026-08-19; **reproducible from a fresh public download — `flight/tools/aviris_refresh_curve.py`
+re-fetches the scene hash-verified (Wayback Machine mirror of the EHU GIC .mat) and regenerates this
+table; the 2026-09-09 re-run matched every documented row exactly**):
 
 | refresh | ratio | cost vs off | divides 200 |
 |---------|-------|-------------|-------------|

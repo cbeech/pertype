@@ -359,7 +359,8 @@ inter-band correlated, measures almost exactly that, +0.88% at refresh=4, so the
 was really just the other end of the fixture-dependence range.) On **real AVIRIS Indian Pines**
 (200 bands, 145×145, uint16), the same intervals are much cheaper: refresh=4 costs **+3.96%**,
 refresh=6 **+2.60%**, refresh=8 **+1.98%**, and refresh=10 only **+1.44%** (see
-`mission-safety.md` §2.5.1 for the full curve). Pick an interval that divides the band count
+`mission-safety.md` §2.5.1 for the full curve; reproducible from a fresh public download via
+`flight/tools/aviris_refresh_curve.py`). Pick an interval that divides the band count
 evenly: refresh=6 dominates refresh=8 on the harness's 12-band cube (near-identical cost, tighter
 bound), while on the 200-band real scene refresh=8 (divisor) is cheaper than refresh=6
 (non-divisor).
