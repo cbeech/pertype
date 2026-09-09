@@ -7,7 +7,9 @@ out of scope under D1), productization plan COMPLETE with the remaining channels
 deferred, data-type sweep backlog exhausted. `libpfc` lives in `flight/` — a freestanding C99
 flight core with 8 CI jobs, CBMC proofs, a traceability matrix and an independent Python ground
 decoder — and is **now public on GitHub** under its Apache-2.0 carve-out. `flight-core` is retired
-on both remotes.
+on both remotes. A 2026-08-26 doc-audit (`e332de1`) cross-checked every containment claim in
+`flight/*.md` against live harness output and fixed three overstatements of the G1.1 class; the
+small items it and the stale `HANDOFF.md` left open are Track C (G5.1–G5.4) below.
 
 **Target:** `libpfc` stops living on an unmerged branch and becomes public Apache-2.0 code whose
 documents don't overstate what's been measured; `pertype` receives only hygiene. Agreed at
@@ -437,6 +439,63 @@ qualification story is now evidenced; this is the one item analysis cannot close
 **Cost:** High — hardware, RTOS, toolchain, plus the WCET work. Months.
 **Skip this if:** No funded opportunity — **which is the current position, so this is shelved, not
 planned.** Recorded so it isn't mistaken for an oversight.
+
+---
+
+## Track C — Post-audit hygiene (opened 2026-08-26)
+
+Small items surfaced by the 2026-08-26 doc-audit (`e332de1`) and the stale state of `HANDOFF.md`.
+Nothing here changes a safety claim; this is reproducibility, CI robustness and bookkeeping.
+
+/goal Commit tooling that reproduces the §2.5.1 AVIRIS price curve from a fresh download.
+- **ID:** G5.1
+- **Why:** The real-data price curve in `flight/docs/mission-safety.md` §2.5.1 (G3.1, 2026-08-19)
+  was measured with throwaway tooling and a `.tmp_aviris/` download; only the numbers are committed.
+  The doc-audit just closed exactly this citation gap for the 12-band synthetic table — the AVIRIS
+  curve is the one remaining figure that cannot be re-derived from the repo.
+- **Done when:** a script under `flight/tools/` (data-acquisition recipe in its docstring; the scene
+  itself stays uncommitted, as with the other benchmark scripts) regenerates the §2.5.1 AVIRIS table
+  within measurement noise from a fresh public download, and §2.5.1/requirements.md cite it.
+- **Touches:** `flight/tools/`, `flight/docs/mission-safety.md`, `flight/docs/requirements.md`
+- **Depends on:** none
+- **Size:** S
+
+/goal Migrate the sanitizer/libFuzzer/MC-DC CI jobs from the node:trixie pin to ubuntu:24.04.
+- **ID:** G5.2
+- **Why:** `HANDOFF.md` §B measured ASan/libFuzzer startup wedges (~20–33% of processes, image-
+  dependent) under high `vm.mmap_rnd_bits` on bookworm-family images; `ubuntu:24.04` measured 60/60
+  clean and ships clang-18, so the `mcdc` job can also drop the apt.llvm.org repo. The trixie pin
+  (`cad952f`) is a workaround, not a fix. Recorded in §B as "user's call" — this goal implements it.
+- **Done when:** both workflow copies (`.github` and `.gitea`, drift-gated by `make wfsync`) run the
+  sanitizer, libFuzzer and MC-DC jobs on `ubuntu:24.04`; the trixie pin is removed; all jobs green
+  on the real self-hosted runner.
+- **Touches:** `.github/workflows/flight-ci.yml`, `.gitea/workflows/flight-ci.yml`
+- **Depends on:** none (but lands after G5.4's first real-runner reading if the run is red)
+- **Size:** S
+
+/goal Refresh HANDOFF.md and bring both remotes back into policy.
+- **ID:** G5.3
+- **Why:** §C's "three commits are LOCAL ONLY" warning is stale (they reached `origin` with the
+  2026-08-26 push), the `github` remote is behind the HANDOFF push policy ("master → both remotes"),
+  and the doc-audit session is unrecorded. The push policy section itself must keep the
+  `research/llm-vram` gitea-only exception explicit.
+- **Done when:** `github` is in sync with `origin`; HANDOFF records the doc-audit (new §D/§E),
+  supersedes §C's local-only warning, and the push policy remains accurate including the llm-vram
+  exception.
+- **Touches:** `HANDOFF.md`, remote refs
+- **Depends on:** none
+- **Size:** S
+
+/goal Validate mcdc32 and wfsync on the real self-hosted runner, and fix whatever the first run shows.
+- **ID:** G5.4
+- **Why:** `HANDOFF.md` §C validated both jobs only with `act` and recorded "the first push will
+  tell you." The push happened (2026-08-26, `e332de1` on `origin`), so the answer is now obtainable.
+  If the jobs are red on the real runner, diagnose and fix before G5.2 changes the same files.
+- **Done when:** a Gitea Actions run at `e332de1` or later shows `mcdc32` and `wfsync` green on the
+  real runner — or their failures are diagnosed, fixed, and re-verified green.
+- **Touches:** `.gitea/workflows/flight-ci.yml`, `flight/Makefile` (only if a real failure surfaces)
+- **Depends on:** none
+- **Size:** S–M
 
 ---
 
