@@ -23,22 +23,33 @@ jobs:
   # the independent-decoder cross-check (R7), decoder fuzz, and randomised property/edge stress).
   native:
     runs-on: ubuntu-latest
-    # Pinned to node:22-trixie rather than the runner's default image. The ASan runtime fails
+    # Pinned to ubuntu:24.04 rather than the runner's default image. The ASan runtime fails
     # NONDETERMINISTICALLY AT STARTUP on kernels with a high vm.mmap_rnd_bits (32 on the dev
     # hosts), and the default self-hosted image is bookworm-vintage, where it is measurably
     # broken. 60 trials each, on a four-line malloc/free program containing NO project code:
     #
     #     debian:bookworm    16/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV
     #     node:20-bookworm   12/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV  <- the default
-    #     node:22-trixie      0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #     node:22 (prev pin)    0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #     ubuntu:24.04           0/60 and 0/60 -- clean on both, gcc 13.2 / clang 18.1.3
     #
+    # (the node:22 row was the first workaround pin; ubuntu:24.04 replaces it with a stock LTS
+    # base the whole matrix can share.)
     # The hang is the dangerous mode: ASan faults during its own startup, its reporting path
     # faults too, and it recurses -- one captured instance wrote 8.5 GB / 301 M DEADLYSIGNAL
     # lines, wedging the job indefinitely. `timeout` in the Makefile bounds the time but not the
-    # volume; this pins the cause. A Node-based image is used so JS actions (actions/checkout)
-    # still work inside the job container.
-    container: node:22-trixie
+    # volume; this pins the cause. ubuntu:24.04 ships no node (archive nodejs is 18, which
+    # checkout@v4's JS runtime rejects), so the NodeSource step below installs node 20 first.
+    container: ubuntu:24.04
     steps:
+      - name: Install node 20 (checkout@v4 needs node inside the job container)
+        run: |
+          apt-get update && apt-get install -y ca-certificates curl gnupg
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update && apt-get install -y nodejs
       - uses: actions/checkout@v4
       - name: Install build tools + python3/numpy (test_crosscheck.py's only hard dependency)
         # actions/setup-python@v5 doesn't work here: it downloads a prebuilt Python matching the
@@ -86,23 +97,26 @@ jobs:
   # highest criticality, and strictly stronger than the `coverage` job's branch percentage: a
   # compound decision can hit both outcomes without any evidence its individual conditions are
   # load-bearing. gcov cannot measure this at all, which is why it stayed an open gap; it needs
-  # clang 18+, which Debian bookworm does not carry (bookworm tops out at clang 16), hence the
-  # upstream apt.llvm.org repo below.
+  # clang 18+, which Debian bookworm does not carry (bookworm tops out at clang 16) -- hence the
+  # ubuntu:24.04 container, whose archive ships clang-18 directly (no third-party LLVM repo).
   #
   # MCDC_MIN is a RATCHET set just under the current measurement, NOT a compliance threshold --
   # a passing run here does not mean "MC/DC compliant". See docs/requirements.md.
   mcdc:
     runs-on: ubuntu-latest
+    container: ubuntu:24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install clang 18 (apt.llvm.org — bookworm only has up to clang 16)
+      - name: Install node 20 (checkout@v4 needs node inside the job container)
         run: |
-          apt-get update && apt-get install -y wget gnupg build-essential python3
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | gpg --dearmor -o /usr/share/keyrings/llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" \
-            > /etc/apt/sources.list.d/llvm.list
-          apt-get update && apt-get install -y clang-18 llvm-18
+          apt-get update && apt-get install -y ca-certificates curl gnupg
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update && apt-get install -y nodejs
+      - uses: actions/checkout@v4
+      - name: Install clang 18 + llvm 18 (Ubuntu 24.04 archive)
+        run: apt-get update && apt-get install -y build-essential python3 clang-18 llvm-18
       - name: make mcdc — condition coverage, gated on the ratchet
         working-directory: flight
         run: make mcdc
@@ -116,18 +130,26 @@ jobs:
   # under --32 rather than the host model, and the same class of bug that proof found in
   # pfc_block_read.
   #
-  # No sanitizers are involved here, so this job stays on the default runner image; the
-  # bookworm ASan problem documented on `native`/`libfuzzer` does not apply.
+  # No sanitizers are involved here, so the ASan problem documented on `native`/`libfuzzer` does
+  # not apply; the ubuntu:24.04 container is for the archive clang-18 + 32-bit libc headers.
+  # NOTE: gcc-multilib conflicts with gcc-powerpc-linux-gnu if installed in ONE apt transaction
+  # (HANDOFF.md §B) — that is why this job is deliberately separate from stackdepth/bigendian.
   mcdc32:
     runs-on: ubuntu-latest
+    container: ubuntu:24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install clang 18 (apt.llvm.org) + 32-bit libc headers
+      - name: Install node 20 (checkout@v4 needs node inside the job container)
         run: |
-          apt-get update && apt-get install -y wget gnupg build-essential python3             libc6-dev-i386 gcc-multilib
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key             | gpg --dearmor -o /usr/share/keyrings/llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main"             > /etc/apt/sources.list.d/llvm.list
-          apt-get update && apt-get install -y clang-18 llvm-18
+          apt-get update && apt-get install -y ca-certificates curl gnupg
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update && apt-get install -y nodejs
+      - uses: actions/checkout@v4
+      - name: Install clang 18 (archive) + 32-bit libc headers
+        run: |
+          apt-get update && apt-get install -y build-essential python3 clang-18 llvm-18 libc6-dev-i386 gcc-multilib
       - name: make mcdc32 — condition coverage on the 32-bit flight word size
         working-directory: flight
         run: make mcdc32
@@ -181,22 +203,33 @@ jobs:
   # the job terminates on its own; any crash/leak found within that window fails the job.
   libfuzzer:
     runs-on: ubuntu-latest
-    # Pinned to node:22-trixie rather than the runner's default image. The ASan runtime fails
+    # Pinned to ubuntu:24.04 rather than the runner's default image. The ASan runtime fails
     # NONDETERMINISTICALLY AT STARTUP on kernels with a high vm.mmap_rnd_bits (32 on the dev
     # hosts), and the default self-hosted image is bookworm-vintage, where it is measurably
     # broken. 60 trials each, on a four-line malloc/free program containing NO project code:
     #
     #     debian:bookworm    16/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV
     #     node:20-bookworm   12/60 gcc-ASan HANG, 14/60 clang-libFuzzer SIGSEGV  <- the default
-    #     node:22-trixie      0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #     node:22 (prev pin)    0/60 and 0/60 -- clean on both, gcc 14.2 / clang 19.1.7
+    #     ubuntu:24.04           0/60 and 0/60 -- clean on both, gcc 13.2 / clang 18.1.3
     #
+    # (the node:22 row was the first workaround pin; ubuntu:24.04 replaces it with a stock LTS
+    # base the whole matrix can share.)
     # The hang is the dangerous mode: ASan faults during its own startup, its reporting path
     # faults too, and it recurses -- one captured instance wrote 8.5 GB / 301 M DEADLYSIGNAL
     # lines, wedging the job indefinitely. `timeout` in the Makefile bounds the time but not the
-    # volume; this pins the cause. A Node-based image is used so JS actions (actions/checkout)
-    # still work inside the job container.
-    container: node:22-trixie
+    # volume; this pins the cause. ubuntu:24.04 ships no node (archive nodejs is 18, which
+    # checkout@v4's JS runtime rejects), so the NodeSource step below installs node 20 first.
+    container: ubuntu:24.04
     steps:
+      - name: Install node 20 (checkout@v4 needs node inside the job container)
+        run: |
+          apt-get update && apt-get install -y ca-certificates curl gnupg
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update && apt-get install -y nodejs
       - uses: actions/checkout@v4
       - name: Install clang
         run: apt-get update && apt-get install -y clang
