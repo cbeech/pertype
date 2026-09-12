@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from pertype import (audiocodec, auto, columnar, csvcolumnar, ctxcoder, floatcodec,
-                        imagecodec, predictors, transform, videocodec)
+                        imagecodec, predictors, qualcodec, transform, videocodec)
 from pertype import model as textmodel
 from pertype.codec import compress as text_compress
 from pertype.codec import decompress as text_decompress
@@ -36,6 +36,7 @@ def lib():
     lb = ctypes.CDLL(_SO[0])
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
+                 "qual_encode", "qual_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
                  "volume_encode", "volume_decode", "audio_encode", "audio_decode",
                  "video_encode", "video_decode", "text_compress", "text_decompress",
@@ -77,6 +78,34 @@ def test_ctxcoder_byte_identical(lib):
         rb = _ctx_encode(lib, s)
         assert rb == ctxcoder.encode(s)                                   # byte-identical
         assert np.array_equal(np.asarray(ctxcoder.decode(rb, len(s)), np.int64), s)
+
+
+def test_qualcodec_byte_identical(lib):
+    # per-(prev-quality, position) adaptive symbol model over raw Phred bytes
+    rng = np.random.default_rng(9)
+    reads = []
+    for _ in range(300):
+        L = int(rng.integers(1, 200))
+        base = int(rng.integers(33, 90))
+        reads.append(np.clip(base + np.cumsum(rng.integers(-2, 2, L)), 33, 126)
+                     .astype(np.uint8).tobytes())
+    qflat = b"".join(reads)
+    lens = [len(r) for r in reads]
+    qb = np.frombuffer(qflat, np.uint8)
+    lb = np.ascontiguousarray(lens, np.int32)
+    out = (ctypes.c_uint8 * (len(qflat) * 2 + 1024))()
+    m = lib.qual_encode(qb.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(qflat),
+                        lb.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), len(lens),
+                        out, len(out))
+    assert m >= 0
+    rb = bytes(out[:m])
+    assert rb == qualcodec._encode_payload_py(qflat, lens)                # byte-identical
+    assert qualcodec._decode_payload_py(rb, len(qflat), lens) == qflat    # py decodes rust
+    dout = (ctypes.c_uint8 * (len(qflat) + 16))()
+    dbuf = (ctypes.c_uint8 * len(rb)).from_buffer_copy(rb)
+    lib.qual_decode(dbuf, len(rb), len(qflat),
+                    lb.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), len(lens), dout)
+    assert bytes(dout[:len(qflat)]) == qflat                              # rust decodes py
 
 
 def test_calic_byte_identical(lib):

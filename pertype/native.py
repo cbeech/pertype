@@ -65,6 +65,12 @@ try:
         _lib.ctx_encode.restype = ctypes.c_long
         _lib.ctx_decode.argtypes = [_U8, ctypes.c_long, ctypes.c_long, _I64]
         _lib.ctx_decode.restype = None
+        _lib.qual_encode.argtypes = [_U8, ctypes.c_long, _I32, ctypes.c_long,
+                                     _U8, ctypes.c_long]
+        _lib.qual_encode.restype = ctypes.c_long
+        _lib.qual_decode.argtypes = [_U8, ctypes.c_long, ctypes.c_long,
+                                     _I32, ctypes.c_long, _U8]
+        _lib.qual_decode.restype = None
         _ci = ctypes.c_int
         _lib.lz_encode.argtypes = [
             _I32, _I64, _I64, ctypes.c_long,
@@ -214,6 +220,30 @@ def ctx_decode(blob, n):
     out = np.empty(n, dtype=np.int64)
     _lib.ctx_decode(_u8ptr(buf), len(blob), n, _ptr(out))
     return out
+
+
+def qual_encode(qual, lengths):
+    """Arithmetic-coded quality payload (mirrors qualcodec._encode_payload_py)."""
+    q = np.frombuffer(bytes(qual), dtype=np.uint8)
+    lens = np.ascontiguousarray(list(lengths), dtype=np.int32)
+    cap = 2 * len(q) + 64
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = _lib.qual_encode(_u8ptr(q), len(q), _i32ptr(lens), len(lens),
+                              _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+
+
+def qual_decode(payload, n, lengths):
+    """Decode a quality payload (mirrors qualcodec._decode_payload_py)."""
+    buf = np.frombuffer(payload, dtype=np.uint8).copy()
+    lens = np.ascontiguousarray(list(lengths), dtype=np.int32)
+    out = np.empty(n, dtype=np.uint8)
+    _lib.qual_decode(_u8ptr(buf), len(payload), n, _i32ptr(lens), len(lens),
+                     _u8ptr(out))
+    return out.tobytes()
 
 
 def lz_encode(kind, aval, bval, mcum, dcum, ocum, len_base, min_match):

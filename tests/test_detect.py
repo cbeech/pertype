@@ -32,3 +32,18 @@ def test_text_subtypes():
 def test_binary_and_empty():
     assert identify(b"").codec == "store"
     assert identify(bytes(range(256)) * 4).kind == "binary/unknown"  # high-entropy bytes
+
+
+def test_fastq():
+    recs = []
+    for i in range(8):
+        recs += [b"@SEQ_ID:%d" % i, b"ACGT" * 30, b"+", b"I" * 120]
+    data = b"\n".join(recs) + b"\n"
+    d = identify(data)
+    assert d.kind == "bio/fastq"
+    assert d.codec == "qualcodec"
+    # quality bytes outside Phred 33..126 -> not FASTQ
+    bad = b"@a\nACGT\n+\n\x01\x02\x03\x04\n" * 3
+    assert identify(bad).codec != "qualcodec"
+    # fewer than 3 complete records -> not FASTQ
+    assert identify(b"\n".join(recs[:4]) + b"\n").codec != "qualcodec"

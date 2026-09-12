@@ -14,6 +14,7 @@ generic codec or to storing as-is, and that's reported rather than hidden.
 # codec recommendations
 IMAGE, VIDEO, AUDIO, ARRAY, TEXT, GENERIC, STORE = (
     "imagecodec", "videocodec", "audiocodec", "imagecodec", "model", "generic", "store")
+FASTQ = "qualcodec"
 
 
 class Detection:
@@ -63,6 +64,20 @@ def _is_wav(data):
     return None
 
 
+def _is_fastq(data):
+    """4-line FASTQ records: '@' header, sequence, '+' line, Phred quality 33..126."""
+    lines = data[:65536].split(b"\n")
+    if len(lines) < 13:                        # want at least 3 complete records
+        return None
+    for i in range(min(len(lines) // 4, 100)):
+        header, seq, plus, q = lines[4 * i:4 * i + 4]
+        if not header.startswith(b"@") or not plus.startswith(b"+") or len(q) != len(seq):
+            return None
+        if any(c < 33 or c > 126 for c in q):
+            return None
+    return Detection("bio/fastq", FASTQ, "FASTQ sequencing reads — quality context codec")
+
+
 def _printable_ratio(sample):
     if not sample:
         return 0.0
@@ -105,7 +120,7 @@ def identify(data, name=None):
     for off, magic, kind, codec, detail in _MAGIC:
         if data[off:off + len(magic)] == magic:
             return Detection(kind, codec, detail)
-    for probe in (_is_tiff_raw, _is_wav):
+    for probe in (_is_tiff_raw, _is_wav, _is_fastq):
         d = probe(data)
         if d is not None:
             return d

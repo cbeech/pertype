@@ -315,6 +315,102 @@ void ctx_decode(const uint8_t *in, long len, long n, int64_t *out) {
     }
 }
 
+/* --- FASTQ quality-score context coder (mirrors qualcodec.py) ---------------
+ *
+ * Adaptive K=94 symbol model per (prev-quality, position-bucket) context on the
+ * same WNC coder; encoder and decoder evolve their counts identically, so nothing
+ * is transmitted. Bit output is MSB-first with a zero-padded final byte, exactly
+ * matching bitio.BitWriter, so the C output is byte-identical to the pure-Python
+ * reference and files are interchangeable. All integer math. The caller passes
+ * the read-length array; the within-read position is rebuilt from it on both sides.
+ */
+#define QUAL_K 94               /* Phred symbols: raw ASCII 33..126 */
+#define QUAL_POSCAP 63          /* within-read position clamp (context bucket) */
+#define QUAL_NCTX (128 * 64)    /* prevq (0 sentinel | 33..126) x position bucket */
+#define QUAL_INCR 24
+#define QUAL_RESCALE (1 << 14)
+
+/* Returns bytes written, or -1 if the output buffer is too small. */
+long qual_encode(const uint8_t *q, long n, const int32_t *lens, long nreads,
+                 uint8_t *out, long cap) {
+    static int cnt[QUAL_NCTX][QUAL_K];
+    static long tot[QUAL_NCTX];
+    for (int c = 0; c < QUAL_NCTX; c++) {       /* lazy-allocation equivalent: */
+        for (int s = 0; s < QUAL_K; s++) cnt[c][s] = 1;   /* unvisited contexts */
+        tot[c] = QUAL_K;                        /* are never read */
+    }
+    bitw w = { out, cap, 0, 0, 0, 0 };
+    aenc e = { 0, AC_MAX, 0, &w };
+    long i = 0;
+    int prevq = 0;
+    for (long r = 0; r < nreads; r++) {
+        long L = lens[r];
+        for (long p = 0; p < L; p++) {
+            int ctx = prevq * 64 + (p < QUAL_POSCAP ? (int)p : QUAL_POSCAP);
+            int *a = cnt[ctx];
+            int s = q[i] - 33;
+            uint64_t cum = 0;
+            for (int j = 0; j < s; j++) cum += (uint64_t)a[j];
+            ae_encode(&e, cum, (uint64_t)a[s], (uint64_t)tot[ctx]);
+            a[s] += QUAL_INCR; tot[ctx] += QUAL_INCR;
+            if (tot[ctx] >= QUAL_RESCALE) {
+                long t = 0;
+                for (int j = 0; j < QUAL_K; j++) { a[j] = (a[j] + 1) >> 1; t += a[j]; }
+                tot[ctx] = t;
+            }
+            prevq = s + 33;
+            i++;
+        }
+        prevq = 0;                              /* start-of-read sentinel */
+        if (w.overflow) return -1;
+    }
+    e.pending++;                                   /* finish() */
+    ae_emit(&e, e.low < AC_QUARTER ? 0 : 1);
+    if (w.overflow) return -1;
+    if (w.nbits > 0) {                             /* getvalue(): pad final byte */
+        if (w.byte >= w.cap) return -1;
+        w.out[w.byte++] = (uint8_t)(w.cur << (8 - w.nbits));
+    }
+    return w.byte;
+}
+
+void qual_decode(const uint8_t *in, long len, long n, const int32_t *lens, long nreads,
+                 uint8_t *out) {
+    (void)n;
+    static int cnt[QUAL_NCTX][QUAL_K];
+    static long tot[QUAL_NCTX];
+    for (int c = 0; c < QUAL_NCTX; c++) {
+        for (int s = 0; s < QUAL_K; s++) cnt[c][s] = 1;
+        tot[c] = QUAL_K;
+    }
+    adec d = { 0, AC_MAX, 0, in, len, 0 };
+    for (int i = 0; i < 32; i++) d.code = (d.code << 1) | (uint64_t)ad_bit(&d);
+    long i = 0;
+    int prevq = 0;
+    for (long r = 0; r < nreads; r++) {
+        long L = lens[r];
+        for (long p = 0; p < L; p++) {
+            int ctx = prevq * 64 + (p < QUAL_POSCAP ? (int)p : QUAL_POSCAP);
+            int *a = cnt[ctx];
+            uint64_t total = (uint64_t)tot[ctx];
+            uint64_t target = ad_target(&d, total);
+            uint64_t cum = 0; int s = 0;
+            while (cum + (uint64_t)a[s] <= target) { cum += (uint64_t)a[s]; s++; }
+            ad_update(&d, cum, (uint64_t)a[s], total);
+            a[s] += QUAL_INCR; tot[ctx] += QUAL_INCR;
+            if (tot[ctx] >= QUAL_RESCALE) {
+                long t = 0;
+                for (int j = 0; j < QUAL_K; j++) { a[j] = (a[j] + 1) >> 1; t += a[j]; }
+                tot[ctx] = t;
+            }
+            out[i] = (uint8_t)(s + 33);
+            prevq = s + 33;
+            i++;
+        }
+        prevq = 0;
+    }
+}
+
 /* --- LZ token-stream coder for codec.py (mirrors codec._encode/_decode_tokens)
  *
  * Drives the same WNC arithmetic coder with three static frequency models

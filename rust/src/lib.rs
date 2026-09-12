@@ -10,6 +10,8 @@
 //! Ported so far:
 //! * `arith`    — the WNC 32-bit arithmetic coder + bit I/O (shared)
 //! * `ctxcoder` — context-adaptive residual coder (every numeric/columnar/float codec)
+//! * `qualcodec` — FASTQ quality-score context coder (per-(prev-quality, position)
+//!   adaptive symbol model over raw Phred bytes)
 //! * `calic`    — full CALIC image codec (GAP + bias + energy-conditional coding)
 //! * `columnar` — complete standalone codec for fixed-width binary record streams
 //! * `imagecodec`/`audiocodec`/`videocodec` — the full image, audio and video codecs
@@ -34,6 +36,7 @@ pub mod ctxcoder;
 pub mod floatcodec;
 pub mod imagecodec;
 pub mod predictors;
+pub mod qualcodec;
 pub mod textcodec;
 pub mod transform;
 pub mod videocodec;

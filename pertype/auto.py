@@ -23,6 +23,10 @@ bytes). Everything else falls back to generic deflate or store.
 back into the file's exact DICOM structure. Everything else falls back to generic deflate
 or store.
 
+**FASTQ** sequencing reads -> the quality-score context codec (:mod:`pertype.qualcodec`):
+the concatenated per-read quality stream is coded against (previous quality, position)
+contexts while the headers, sequences and '+' lines are re-interleaved verbatim.
+
 Honest limits: the trained text codec is model-based, so without a shipped model ``auto``
 can't get its trained-dictionary win on arbitrary prose. **Headerless raw** binary (a bare
 ``.hgt`` DEM, a raw sensor dump) can't be routed to the image/numeric specialists because
@@ -41,7 +45,7 @@ from pertype.detect import identify
 AMAGIC = b"AZ"
 AVERSION = 1
 (M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF, M_Y4M, M_WAV,
- M_DICOM) = range(10)
+ M_DICOM, M_FASTQ) = range(11)
 
 
 def _wrap(method, payload):
@@ -262,11 +266,58 @@ def _wav_decode(payload):
     return prefix + body + tail + suffix
 
 
+# --- FASTQ sequencing reads -> qualcodec (quality stream; rest verbatim) ----
+def _try_fastq(data):
+    """Split 4-line records: quality lines -> qualcodec, the other three per
+    record concatenated verbatim (zlib) with their byte lengths to re-interleave."""
+    parts = data.split(b"\n")
+    trailing = parts[-1] == b""
+    rec = parts[:-1] if trailing else parts
+    if not rec or len(rec) % 4 != 0:
+        return None
+    nrec = len(rec) // 4
+    qual = rec[3::4]
+    qflat = b"".join(qual)
+    if qflat and (min(qflat) < 33 or max(qflat) > 126):
+        return None
+    others = [p for i, p in enumerate(rec) if i % 4 != 3]
+    from pertype import qualcodec
+    zlens = zlib.compress(b"".join(len(p).to_bytes(4, "big") for p in others), 9)
+    zrest = zlib.compress(b"".join(others), 9)
+    return (nrec.to_bytes(4, "big") + bytes([trailing])
+            + len(zlens).to_bytes(4, "big") + zlens
+            + len(zrest).to_bytes(4, "big") + zrest
+            + qualcodec.encode(qflat, [len(q) for q in qual]))
+
+
+def _fastq_decode(payload):
+    from pertype import qualcodec
+    nrec = int.from_bytes(payload[:4], "big")
+    trailing = payload[4]
+    p = 5
+    zl = int.from_bytes(payload[p:p + 4], "big"); p += 4
+    lblob = zlib.decompress(payload[p:p + zl]); p += zl
+    zr = int.from_bytes(payload[p:p + 4], "big"); p += 4
+    rest = zlib.decompress(payload[p:p + zr]); p += zr
+    olens = [int.from_bytes(lblob[i:i + 4], "big") for i in range(0, len(lblob), 4)]
+    qflat, qlens = qualcodec.decode(payload[p:])
+    parts, pos, oi, qi = [], 0, 0, 0
+    for r in range(nrec):
+        for _ in range(3):
+            L = olens[oi]; oi += 1
+            parts.append(rest[pos:pos + L]); pos += L
+        L = qlens[r]
+        parts.append(qflat[qi:qi + L]); qi += L
+    if trailing:
+        parts.append(b"")
+    return b"\n".join(parts)
+
+
 _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
              M_NPY: _npy_decode, M_FITS: _fits_decode,
              M_CSV: csvcolumnar.decode, M_COL: columnar.decode,
              M_NPYF: _npyf_decode, M_Y4M: _y4m_decode, M_WAV: _wav_decode,
-             M_DICOM: _dicom_decode}
+             M_DICOM: _dicom_decode, M_FASTQ: _fastq_decode}
 
 
 def auto_compress(data, name=None):
@@ -291,6 +342,10 @@ def auto_compress(data, name=None):
         payload = _try_wav(data)
         if payload is not None:
             candidates.append((M_WAV, payload))
+    elif det.codec == "qualcodec":                 # FASTQ -> quality context codec
+        payload = _try_fastq(data)
+        if payload is not None:
+            candidates.append((M_FASTQ, payload))
     elif det.codec == "generic":                   # opaque binary -> try record columns
         candidates.append((M_COL, columnar.encode(data)))
 
@@ -319,4 +374,4 @@ def method_name(blob):
             M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
             M_COL: "binary->columnar", M_NPYF: "npy->floatcodec",
             M_Y4M: "y4m->videocodec", M_WAV: "wav->audiocodec",
-            M_DICOM: "dicom->imagecodec"}.get(blob[3], "?")
+            M_DICOM: "dicom->imagecodec", M_FASTQ: "fastq->qualcodec"}.get(blob[3], "?")

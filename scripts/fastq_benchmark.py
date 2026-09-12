@@ -11,7 +11,10 @@ on the arithmetic coder beats the generic bar by ~+16%. So the lever is real, bu
 (small) quality codec — unlike the other validated data types, which reused existing codecs.
 
 Bar: gzip/zstd/xz on the raw quality bytes (the .fastq.gz storage form). Ours: the context model
-below (encode + decode, round-trip verified; read lengths are cheap side-info, cost included).
+below (encode + decode, round-trip verified; read lengths are cheap side-info, cost included),
+then the SHIPPED codec — ``pertype.qualcodec`` (same model on raw Phred bytes, lengths folded
+into its self-contained blob) — and the auto router on the whole FASTQ file (headers, sequences
+and '+' lines verbatim alongside the coded quality stream).
 Data: a FASTQ (set FASTQ_PATH; .gz ok). Default expects a plain quality file (one read/line) at
 FASTQ_QUAL. Download a small real one from ENA:
   curl -O https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR063/DRR063436/DRR063436_1.fastq.gz
@@ -40,13 +43,15 @@ def read_quality():
         op = gzip.open if PATH.endswith(".gz") else open
         with op(PATH, "rt") as fh:
             reads = [l.rstrip("\n") for i, l in enumerate(fh) if i % 4 == 3]
-    vals, pos = [], []
+    vals, pos, lens = [], [], []
     for r in reads:
-        for p, ch in enumerate(r.encode()):
+        b = r.encode()
+        lens.append(len(b))
+        for p, ch in enumerate(b):
             vals.append(ch); pos.append(p)
         if len(vals) >= MAXQ:
             break
-    return np.array(vals, np.int32), np.array(pos, np.int32)
+    return np.array(vals, np.int32), np.array(pos, np.int32), lens
 
 
 def ctx_of(prevq, p):
@@ -97,7 +102,7 @@ def decode(blob, P, K, n):
 
 
 def main():
-    Q, P = read_quality()
+    Q, P, qlens = read_quality()
     n = Q.size
     raw = Q.astype(np.uint8).tobytes()
     alpha = sorted(set(Q.tolist())); idx = {v: i for i, v in enumerate(alpha)}; K = len(alpha)
@@ -108,8 +113,9 @@ def main():
     def sh(cmd):
         return len(subprocess.run(cmd, input=raw, stdout=subprocess.PIPE).stdout)
 
-    def row(label, size):
-        print(f"{label:<28}{n/size:>8.2f}{8*size/n:>9.3f}")
+    def row(label, size, total=None):
+        total = n if total is None else total
+        print(f"{label:<28}{total/size:>8.2f}{8*size/total:>9.3f}")
 
     row("gzip -9 (.fastq.gz form)", sh(["gzip", "-9"]))
     bar = sh(["zstd", "-19", "-c"]); row("zstd -19 (BAR)", bar)
@@ -125,9 +131,28 @@ def main():
     side = len(subprocess.run(["zstd", "-19", "-c"],
               input=P.astype(np.uint16).tobytes(), stdout=subprocess.PIPE).stdout)  # read-length side info
     ours = len(blob) + len(alpha) + side
-    row("ours (prev-q + position)", ours)
+    row("ours (prev-q + position) [proto]", ours)
+
+    # shipped codec: same model on raw Phred bytes, lengths folded into the blob
+    from pertype import qualcodec
+    ts = time.time(); sblob = qualcodec.encode(raw, qlens)
+    assert qualcodec.decode(sblob) == (raw, qlens), "shipped round-trip FAILED"
+    st = time.time() - ts
+    row("ours qualcodec (shipped)", len(sblob))
+
+    # shipped auto router on the whole FASTQ file (quality + verbatim rest)
+    if PATH:
+        from pertype import auto
+        op = gzip.open if PATH.endswith(".gz") else open
+        with op(PATH, "rb") as fh:
+            whole = fh.read()
+        ablob = auto.auto_compress(whole)
+        assert auto.auto_decompress(ablob) == whole, "auto round-trip FAILED"
+        row("ours auto (whole FASTQ)", len(ablob), total=len(whole))
     print(f"\nours vs zstd-19: {(bar-ours)/bar*100:+.1f}%  ({'WIN' if ours < bar else 'lose'} vs generic; "
           f"specialist fqzcomp/SPRING not run — the harder bar)   [{time.time()-t:.0f}s]   round-trip OK")
+    print(f"shipped qualcodec vs zstd-19: {(bar-len(sblob))/bar*100:+.1f}%  "
+          f"({'WIN' if len(sblob) < bar else 'lose'} vs generic)   [{st:.0f}s]   round-trip OK")
 
 
 if __name__ == "__main__":
