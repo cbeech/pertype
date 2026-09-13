@@ -494,7 +494,10 @@ Nothing here changes a safety claim; this is reproducibility, CI robustness and 
 - **Status:** **Done** (`c4e3a17`). Both workflow copies run native/libfuzzer/mcdc/mcdc32 on
   `ubuntu:24.04` (plus a NodeSource node-20 step for checkout@v4); clang-18/llvm-18 come from the
   24.04 archive, apt.llvm.org dropped; the trixie pin is gone. Live-verified: gitea run 543 of
-  `8cf6e851` went **9/9 green on the real self-hosted runner**.
+  `8cf6e851` went **9/9 green on the real self-hosted runner**. **Caveat (found 2026-09-13):**
+  the GitHub-*hosted* flight-ci copy has been red since `cad952fb` — every failing job stops at
+  an apt install step on the hosted ubuntu:24.04 runner; root cause unconfirmed (logs need
+  repo-admin `gh` auth). The gitea self-hosted runner — the done-when's "real runner" — is green.
 
 /goal Refresh HANDOFF.md and bring both remotes back into policy.
 - **ID:** G5.3
