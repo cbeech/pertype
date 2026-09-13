@@ -1,7 +1,8 @@
 # Roadmap — pertype / libpfc
 
 **Current state:** One repository, one branch. **`master`** carries both workstreams since the
-2026-08-19 merge. `pertype` is released and published (v0.1.1 on GitHub Releases, PyPI, crates.io;
+2026-08-19 merge. `pertype` is released and published (v0.1.1 on GitHub Releases + PyPI; the crates.io
+publish is outstanding — no cargo token on the dev hosts, see HANDOFF §F;
 dual-licensed AGPL-3.0 + commercial), `TODO.md` 68 done / 3 low-priority open (all features, so all
 out of scope under D1), productization plan COMPLETE with the remaining channels explicitly
 deferred, data-type sweep backlog exhausted. `libpfc` lives in `flight/` — a freestanding C99
