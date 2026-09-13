@@ -1,15 +1,28 @@
 # Roadmap — pertype / libpfc
 
 **Current state:** One repository, one branch. **`master`** carries both workstreams since the
-2026-08-19 merge. `pertype` is released and published (v0.1.0 on GitHub Releases, PyPI, crates.io;
+2026-08-19 merge. `pertype` is released and published (v0.1.1 on GitHub Releases, PyPI, crates.io;
 dual-licensed AGPL-3.0 + commercial), `TODO.md` 68 done / 3 low-priority open (all features, so all
 out of scope under D1), productization plan COMPLETE with the remaining channels explicitly
 deferred, data-type sweep backlog exhausted. `libpfc` lives in `flight/` — a freestanding C99
-flight core with 8 CI jobs, CBMC proofs, a traceability matrix and an independent Python ground
+flight core with 9 CI jobs, CBMC proofs, a traceability matrix and an independent Python ground
 decoder — and is **now public on GitHub** under its Apache-2.0 carve-out. `flight-core` is retired
 on both remotes. A 2026-08-26 doc-audit (`e332de1`) cross-checked every containment claim in
 `flight/*.md` against live harness output and fixed three overstatements of the G1.1 class; the
-small items it and the stale `HANDOFF.md` left open are Track C (G5.1–G5.4) below.
+small items it and the stale `HANDOFF.md` left open were Track C (G5.1–G5.4) below, **all four now
+done** (AVIRIS tooling `7da598b`/`8cf6e85`, ubuntu:24.04 CI migration `c4e3a17` live-verified 9/9
+green in gitea run 543, HANDOFF refreshed, both remotes in policy).
+A 2026-09-12 session amended D1 with the user's explicit authorization to ship one new pertype
+feature — the FASTQ quality-stream codec `pertype.qualcodec` (C1, `fe06ae2`) — and ran the
+measure-first solidifications C2a/C2b (`cd4b71d`, `3046faa`, `4fe2059`, verdicts `9312799`):
+**qualcodec +13.5% vs zstd-19 on quality bytes but −41% vs the fqzcomp specialist whole-file**
+(sequence stored verbatim — a FASTQ *sequence* model is the known follow-up, **deferred, needs a
+further D1 amendment**); **CAN-bus +55% vs gzip on the 989k-frame HCRL log after ID-grouping,
+conditional on that layout** (time-ordered mixed-ID loses); **mass-spec float32 amplifies the
+profile-m/z win (+83% vs zlib) but centroided m/z is a no-win** (route profile→columnar,
+centroided→shuffle, intensity→xz). The sweep backlog is now genuinely exhausted: every Tier-1/2
+lead is validated, conditional, or ruled out (MRI k-space was ruled out earlier — ~1.9×
+mantissa floor, `docs/data-type-opportunities.md`).
 
 **Target:** `libpfc` stops living on an unmerged branch and becomes public Apache-2.0 code whose
 documents don't overstate what's been measured; `pertype` receives only hygiene. Agreed at
@@ -36,7 +49,7 @@ roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only
 > bookworm-vintage image was measured to break the ASan runtime (~20% of processes), and a new
 > `mcdc32` job runs the 32-bit measurement.
 
-**Last surveyed:** 2026-08-24 · **Decisions recorded:** 2026-08-15 review
+**Last surveyed:** 2026-09-13 · **Decisions recorded:** 2026-08-15 review; D1 amended 2026-09-12 (user-authorized qualcodec feature)
 
 ## Decisions taken at review (these override the earlier draft)
 
@@ -50,6 +63,7 @@ roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only
 | D6 | **Merge `flight-core` into `master`**, keeping `flight/` as a subdirectory with its Apache-2.0 licence boundary. Not a separate repo. |
 | D7 | Merging **publishes libpfc on public GitHub** — confirmed as intended. |
 | D8 | **Merge first; do all of M1 after.** Recorded as a deliberate choice: this publishes `flight/README.md` while it still asserts a containment property measured false (see M1 risk note). |
+| D1a | **D1 amended 2026-09-12 (user decision):** one new pertype feature authorized — the FASTQ quality-stream codec `pertype.qualcodec` (shipped `fe06ae2`). The FASTQ *sequence*-model follow-up (closes the whole-file gap to fqzcomp) is **not** authorized and stays deferred pending a further amendment. |
 
 ---
 
@@ -459,6 +473,10 @@ Nothing here changes a safety claim; this is reproducibility, CI robustness and 
 - **Touches:** `flight/tools/`, `flight/docs/mission-safety.md`, `flight/docs/requirements.md`
 - **Depends on:** none
 - **Size:** S
+- **Status:** **Done** (`7da598b` + docs `8cf6e85`). `flight/tools/aviris_refresh_curve.py`
+  downloads the Indian Pines scene from a public Wayback-Machine mirror, sha256-verifies it, and
+  regenerates the §2.5.1 table; `--check` diffs against the documented numbers. Fresh-download
+  re-run on the Linux host (2026-09-09): every documented row matched exactly.
 
 /goal Migrate the sanitizer/libFuzzer/MC-DC CI jobs from the node:trixie pin to ubuntu:24.04.
 - **ID:** G5.2
@@ -472,6 +490,10 @@ Nothing here changes a safety claim; this is reproducibility, CI robustness and 
 - **Touches:** `.github/workflows/flight-ci.yml`, `.gitea/workflows/flight-ci.yml`
 - **Depends on:** none (but lands after G5.4's first real-runner reading if the run is red)
 - **Size:** S
+- **Status:** **Done** (`c4e3a17`). Both workflow copies run native/libfuzzer/mcdc/mcdc32 on
+  `ubuntu:24.04` (plus a NodeSource node-20 step for checkout@v4); clang-18/llvm-18 come from the
+  24.04 archive, apt.llvm.org dropped; the trixie pin is gone. Live-verified: gitea run 543 of
+  `8cf6e851` went **9/9 green on the real self-hosted runner**.
 
 /goal Refresh HANDOFF.md and bring both remotes back into policy.
 - **ID:** G5.3
@@ -485,6 +507,9 @@ Nothing here changes a safety claim; this is reproducibility, CI robustness and 
 - **Touches:** `HANDOFF.md`, remote refs
 - **Depends on:** none
 - **Size:** S
+- **Status:** **Done.** `github` reached sync with `origin` at `8cf6e85` (2026-09-09 push);
+  HANDOFF §E records the doc-audit and supersedes §C's local-only warning; the push policy keeps
+  the `research/llm-vram` gitea-only exception explicit.
 
 /goal Validate mcdc32 and wfsync on the real self-hosted runner, and fix whatever the first run shows.
 - **ID:** G5.4
@@ -496,6 +521,9 @@ Nothing here changes a safety claim; this is reproducibility, CI robustness and 
 - **Touches:** `.gitea/workflows/flight-ci.yml`, `flight/Makefile` (only if a real failure surfaces)
 - **Depends on:** none
 - **Size:** S–M
+- **Status:** **Done.** Gitea run 457 (`5c38c2e`, 2026-09-01): `mcdc32` and `wfsync` green on the
+  real runner. Run 472's all-jobs-in-<1s failure was diagnosed as infrastructure (NAS reboot), not
+  code, and run 543 later confirmed the migrated workflows 9/9 green.
 
 ---
 

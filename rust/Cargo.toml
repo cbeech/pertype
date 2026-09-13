@@ -1,6 +1,6 @@
 [package]
 name = "pertype"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Lossless per-file-type compressor: trained dictionary + LZ + arithmetic coding, plus specialist image/audio/video/columnar/float codecs — byte-identical to the Python/C reference, and trains its own models."
 # Dual-licensed: AGPL-3.0-or-later for everyone, commercial license available (see ../COMMERCIAL.md).

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pertype"
-version = "0.1.0"
+version = "0.1.1"
 description = "Per-file-type trained lossless compressor — dictionary + LZ + arithmetic coding, with specialist image/audio/video/numeric/columnar codecs"
 readme = "README.md"
 requires-python = ">=3.9"
