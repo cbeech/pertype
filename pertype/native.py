@@ -437,3 +437,89 @@ def dict_match_all(combined, base, min_match, flat):
         _i32ptr(out_pid), _i32ptr(out_len),
     )
     return out_pid, out_len
+
+
+# --- fastqcodec (FQS1) native twin: separate lazy-built library --------------
+# Kept apart from audio.so so a system without liblzma (the FQS1 sequence
+# stream needs it) loses only the FASTQ path, not the other primitives.
+_FSRC = os.path.join(_DIR, "_native", "fastq.c")
+_FSO = os.path.join(_DIR, "_native", "fastq.so")
+_flib = None
+_flib_tried = False
+
+
+def _fbuild():
+    if not os.path.exists(_FSRC):
+        return False
+    if os.path.exists(_FSO) and os.path.getmtime(_FSO) >= os.path.getmtime(_FSRC):
+        return True
+    try:
+        subprocess.run(
+            ["gcc", "-O3", "-fPIC", "-fwrapv", "-ffp-contract=off", "-shared",
+             "-o", _FSO, _FSRC],
+            check=True, capture_output=True,
+        )
+        return os.path.exists(_FSO)
+    except Exception:
+        return False
+
+
+def _get_fastq_lib():
+    global _flib, _flib_tried
+    if _flib_tried:
+        return _flib
+    _flib_tried = True
+    try:
+        if not _fbuild():
+            return None
+        lib = ctypes.CDLL(_FSO)
+        if lib.fastq_native_available() != 1:
+            return None
+        lib.fastq_encode.argtypes = [_U8, ctypes.c_long, _U8, ctypes.c_long,
+                                     _U8, ctypes.c_long]
+        lib.fastq_encode.restype = ctypes.c_long
+        lib.fastq_decode.argtypes = [_U8, ctypes.c_long, _U8, ctypes.c_long,
+                                     _U8, ctypes.c_long]
+        lib.fastq_decode.restype = ctypes.c_long
+        _flib = lib
+    except Exception:
+        _flib = None
+    return _flib
+
+
+def fastq_encode_native(data, qpayload):
+    """Whole FQS1 blob (mirrors fastqcodec.encode) or None if unavailable."""
+    lib = _get_fastq_lib()
+    if lib is None:
+        return None
+    d = np.frombuffer(bytes(data), dtype=np.uint8)
+    qp = np.frombuffer(bytes(qpayload), dtype=np.uint8)
+    cap = len(d) + len(d) // 2 + len(qp) + (1 << 16)
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = lib.fastq_encode(_u8ptr(d), len(d), _u8ptr(qp), len(qp),
+                              _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+        if cap > (1 << 31):
+            return None
+
+
+def fastq_decode_native(blob, qflat):
+    """Whole FASTQ bytes (mirrors fastqcodec.decode) or None if unavailable."""
+    lib = _get_fastq_lib()
+    if lib is None:
+        return None
+    b = np.frombuffer(bytes(blob), dtype=np.uint8).copy()
+    qf = np.frombuffer(bytes(qflat), dtype=np.uint8)
+    cap = 2 * len(qf) + len(b) + (1 << 16)
+    while True:
+        out = np.empty(cap, dtype=np.uint8)
+        ln = lib.fastq_decode(_u8ptr(b), len(b), _u8ptr(qf), len(qf),
+                              _u8ptr(out), cap)
+        if ln >= 0:
+            return out[:ln].tobytes()
+        cap *= 2
+        if cap > (1 << 31):
+            return None

@@ -437,6 +437,11 @@ def encode(fastq):
     else:
         qpayload = qualcodec._encode_payload_py(qflat, lengths)
 
+    from pertype import native as _nat
+    cblob = _nat.fastq_encode_native(fastq, qpayload)
+    if cblob is not None:
+        return cblob
+
     out = bytearray(MAGIC)
     out += nrec.to_bytes(8, "big")
     out.append(1 if trailing else 0)
@@ -540,6 +545,11 @@ def decode(blob):
         qflat = nat.qual_decode(qpayload, sum(lengths), lengths)
     else:
         qflat = qualcodec._decode_payload_py(qpayload, sum(lengths), lengths)
+
+    from pertype import native as _nat
+    cout = _nat.fastq_decode_native(blob, qflat)
+    if cout is not None:
+        return cout
 
     lines = []
     qi = 0

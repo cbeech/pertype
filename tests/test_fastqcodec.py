@@ -114,3 +114,43 @@ def test_width_deviating_header_becomes_exception():
             (b"@r7", b"GGGG", b"+", b"FFFF")]   # width deviation -> verbatim exception
     data = _fq(recs)
     assert fastqcodec.decode(fastqcodec.encode(data)) == data
+
+
+# --- C native twin (fastq.so) byte-identity ----------------------------------
+import pertype.native as _nat
+
+
+def _c_available():
+    probe = _fq([(b"@p", b"ACGT", b"+", b"FFFF")])
+    return _nat.fastq_encode_native(probe, b"\x00") is not None
+
+
+pytestmark_c = pytest.mark.skipif(not _c_available(), reason="fastq.so/liblzma unavailable")
+
+
+def _force_python_encode(monkeypatch, data):
+    monkeypatch.setattr(_nat, "fastq_encode_native", lambda *a: None)
+    return fastqcodec.encode(data)
+
+
+def _force_python_decode(monkeypatch, blob):
+    monkeypatch.setattr(_nat, "fastq_decode_native", lambda *a: None)
+    return fastqcodec.decode(blob)
+
+
+@pytest.mark.skipif(not _c_available(), reason="fastq.so/liblzma unavailable")
+def test_c_encode_byte_identical(monkeypatch):
+    for data in (_fq(_gen(40)), _fq(_gen(15), trailing=False),
+                 _fq([(b"@n", b"NNACGTNN", b"+", b"FFFFFFFF")])):
+        py_blob = _force_python_encode(monkeypatch, data)
+        monkeypatch.undo()
+        c_blob = fastqcodec.encode(data)
+        assert c_blob == py_blob
+        monkeypatch.setattr(_nat, "fastq_encode_native", lambda *a: None)
+
+
+@pytest.mark.skipif(not _c_available(), reason="fastq.so/liblzma unavailable")
+def test_c_decode_matches_python(monkeypatch):
+    data = _fq(_gen(40))
+    blob = fastqcodec.encode(data)
+    assert fastqcodec.decode(blob) == _force_python_decode(monkeypatch, blob) == data
