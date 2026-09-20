@@ -86,6 +86,8 @@ def test_fastq_file_routes_through_auto():
     data = b"\n".join(recs) + b"\n"
     blob = auto.auto_compress(data)
     assert auto.auto_decompress(blob) == data          # byte-exact guarantee
-    assert auto.method_name(blob) == "fastq->qualcodec"
+    assert auto.method_name(blob) == "fastq->fastqcodec"
     # the candidate route itself is wired and provably reversible
-    assert auto._fastq_decode(auto._try_fastq(data)) == data
+    assert auto._fastq2_decode(auto._try_fastq(data)) == data
+    # and the legacy M_FASTQ (v0.1.1 zlib layout) decode path still works
+    assert auto._fastq_decode(auto._try_fastq_legacy(data)) == data

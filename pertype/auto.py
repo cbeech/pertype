@@ -45,7 +45,7 @@ from pertype.detect import identify
 AMAGIC = b"AZ"
 AVERSION = 1
 (M_STORE, M_ZLIB, M_NPY, M_FITS, M_CSV, M_COL, M_NPYF, M_Y4M, M_WAV,
- M_DICOM, M_FASTQ) = range(11)
+ M_DICOM, M_FASTQ, M_FASTQ2) = range(12)
 
 
 def _wrap(method, payload):
@@ -268,6 +268,22 @@ def _wav_decode(payload):
 
 # --- FASTQ sequencing reads -> qualcodec (quality stream; rest verbatim) ----
 def _try_fastq(data):
+    """Whole-file FASTQ -> fastqcodec (FQS1): template+delta headers,
+    RC-oriented 2-bit sequences under LZMA, qualcodec qualities. Returns None
+    on anything the codec rejects, so the generic routes still apply."""
+    from pertype import fastqcodec
+    try:
+        return fastqcodec.encode(data)
+    except ValueError:
+        return None
+
+
+def _fastq2_decode(payload):
+    from pertype import fastqcodec
+    return fastqcodec.decode(payload)
+
+
+def _try_fastq_legacy(data):
     """Split 4-line records: quality lines -> qualcodec, the other three per
     record concatenated verbatim (zlib) with their byte lengths to re-interleave."""
     parts = data.split(b"\n")
@@ -317,7 +333,8 @@ _DECODERS = {M_STORE: lambda p: p, M_ZLIB: zlib.decompress,
              M_NPY: _npy_decode, M_FITS: _fits_decode,
              M_CSV: csvcolumnar.decode, M_COL: columnar.decode,
              M_NPYF: _npyf_decode, M_Y4M: _y4m_decode, M_WAV: _wav_decode,
-             M_DICOM: _dicom_decode, M_FASTQ: _fastq_decode}
+             M_DICOM: _dicom_decode, M_FASTQ: _fastq_decode,
+             M_FASTQ2: _fastq2_decode}
 
 
 def auto_compress(data, name=None):
@@ -342,10 +359,10 @@ def auto_compress(data, name=None):
         payload = _try_wav(data)
         if payload is not None:
             candidates.append((M_WAV, payload))
-    elif det.codec == "qualcodec":                 # FASTQ -> quality context codec
+    elif det.codec == "qualcodec":                 # FASTQ -> fastqcodec (FQS1)
         payload = _try_fastq(data)
         if payload is not None:
-            candidates.append((M_FASTQ, payload))
+            candidates.append((M_FASTQ2, payload))
     elif det.codec == "generic":                   # opaque binary -> try record columns
         candidates.append((M_COL, columnar.encode(data)))
 
@@ -374,4 +391,5 @@ def method_name(blob):
             M_FITS: "fits->imagecodec", M_CSV: "csv->columnar",
             M_COL: "binary->columnar", M_NPYF: "npy->floatcodec",
             M_Y4M: "y4m->videocodec", M_WAV: "wav->audiocodec",
-            M_DICOM: "dicom->imagecodec", M_FASTQ: "fastq->qualcodec"}.get(blob[3], "?")
+            M_DICOM: "dicom->imagecodec", M_FASTQ: "fastq->qualcodec",
+            M_FASTQ2: "fastq->fastqcodec"}.get(blob[3], "?")
