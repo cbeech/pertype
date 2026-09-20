@@ -65,6 +65,7 @@ roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only
 | D7 | Merging **publishes libpfc on public GitHub** — confirmed as intended. |
 | D8 | **Merge first; do all of M1 after.** Recorded as a deliberate choice: this publishes `flight/README.md` while it still asserts a containment property measured false (see M1 risk note). |
 | D1a | **D1 amended 2026-09-12 (user decision):** one new pertype feature authorized — the FASTQ quality-stream codec `pertype.qualcodec` (shipped `fe06ae2`). The FASTQ *sequence*-model follow-up (closes the whole-file gap to fqzcomp) is **not** authorized and stays deferred pending a further amendment. |
+| D1b | **D1 amended again 2026-09-13 (user decision):** the FASTQ *sequence*-model follow-up is now authorized — measure-first, ship only if it beats fqzcomp whole-file (byte-exact), else record a ruled-out verdict. |
 
 ---
 
