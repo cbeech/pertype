@@ -10,6 +10,13 @@ LOSES here (~-25% vs zstd). But a small adaptive **(prev-q, position-bucket) sym
 on the arithmetic coder beats the generic bar by ~+16%. So the lever is real, but it needs a new
 (small) quality codec — unlike the other validated data types, which reused existing codecs.
 
+Follow-up (D1b, 2026-09-13): the whole-file gap to the fqzcomp specialist was sequence- and
+header-side, and is now CLOSED by ``pertype.fastqcodec`` (FQS1): template+delta headers,
+per-read reverse-complement orientation + 2-bit packing under raw LZMA2, and the qualcodec
+quality payload. On ENA DRR063436 (22 MB) the whole file goes **6.174× vs fqzcomp default
+5.976× (+3.3%) and vs fqzcomp's best mode (-s9 -b) 6.138× (+0.6%)** — byte-exact, whereas
+fqzcomp's default rewrites Q0 `#`→`!` (not byte-identical on this data).
+
 Bar: gzip/zstd/xz on the raw quality bytes (the .fastq.gz storage form). Ours: the context model
 below (encode + decode, round-trip verified; read lengths are cheap side-info, cost included),
 then the SHIPPED codec — ``pertype.qualcodec`` (same model on raw Phred bytes, lengths folded
@@ -149,6 +156,18 @@ def main():
         ablob = auto.auto_compress(whole)
         assert auto.auto_decompress(ablob) == whole, "auto round-trip FAILED"
         row("ours auto (whole FASTQ)", len(ablob), total=len(whole))
+        # shipped whole-file codec directly, plus the fqzcomp specialist bar if present
+        from pertype import fastqcodec
+        ts = time.time()
+        fblob = fastqcodec.encode(whole)
+        assert fastqcodec.decode(fblob) == whole, "fastqcodec round-trip FAILED"
+        row("ours fastqcodec (shipped)", len(fblob), total=len(whole))
+        fqz = os.environ.get("FQZCOMP")
+        if fqz:
+            for name, args in (("fqzcomp (default)", []),
+                               ("fqzcomp -s9 -b (best)", ["-s9", "-b"])):
+                r = subprocess.run([fqz] + args, input=whole, capture_output=True)
+                row(name, len(r.stdout), total=len(whole))
     print(f"\nours vs zstd-19: {(bar-ours)/bar*100:+.1f}%  ({'WIN' if ours < bar else 'lose'} vs generic; "
           f"specialist fqzcomp/SPRING not run — the harder bar)   [{time.time()-t:.0f}s]   round-trip OK")
     print(f"shipped qualcodec vs zstd-19: {(bar-len(sblob))/bar*100:+.1f}%  "
