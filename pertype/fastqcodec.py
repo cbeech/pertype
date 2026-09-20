@@ -144,14 +144,19 @@ def _ctx_decode(blob):
 
 # ----------------------------------------------------------------- headers --
 def _parse_header(h):
-    """Split a header into alternating text/integer runs -> (flags, txts, ints)."""
-    flags, txts, ints = [], [], []
+    """Split a header into alternating text/integer runs.
+
+    Returns (flags, txts, ints, iraws): per run a flag (1 = integer), the text
+    runs verbatim, the integer values, and the integer runs' raw bytes (kept
+    so leading-zero widths survive the round trip)."""
+    flags, txts, ints, iraws = [], [], [], []
     i, n = 0, len(h)
     while i < n:
         j = i
         if 48 <= h[i] <= 57:
             while j < n and 48 <= h[j] <= 57:
                 j += 1
+            iraws.append(bytes(h[i:j]))
             ints.append(int(h[i:j]))
             flags.append(1)
         else:
@@ -160,14 +165,20 @@ def _parse_header(h):
             txts.append(bytes(h[i:j]))
             flags.append(0)
         i = j
-    return tuple(flags), tuple(txts), tuple(ints)
+    return tuple(flags), tuple(txts), tuple(ints), tuple(iraws)
+
+
+def _padint(v, width):
+    """Decimal form of ``v`` zero-padded to ``width`` (never truncated)."""
+    t = str(v)
+    return ("0" * (width - len(t)) + t) if len(t) < width else t
 
 
 def _encode_headers(heads):
-    flags, txts, ints = _parse_header(heads[0])
+    flags, txts, ints, iraws = _parse_header(heads[0])
     tmpl = bytearray()
     _wv(tmpl, len(flags))
-    ti = 0
+    ti = ii = 0
     for f in flags:
         tmpl.append(f)
         if not f:
@@ -175,6 +186,10 @@ def _encode_headers(heads):
             ti += 1
             _wv(tmpl, len(t))
             tmpl += t
+        else:
+            _wv(tmpl, len(iraws[ii]))
+            ii += 1
+    widths = [len(r) for r in iraws]
     dstream = bytearray()
     for v in ints:
         _wv(dstream, v)
@@ -183,8 +198,10 @@ def _encode_headers(heads):
     last_idx = 0
     prev = ints
     for idx in range(1, len(heads)):
-        f2, t2, i2 = _parse_header(heads[idx])
-        if f2 != flags or t2 != txts:
+        f2, t2, i2, r2 = _parse_header(heads[idx])
+        if (f2 != flags or t2 != txts
+                or any(_padint(v, w).encode() != raw
+                       for v, w, raw in zip(i2, widths, r2))):
             nexc += 1
             _wv(exc, idx - last_idx)
             last_idx = idx
@@ -201,7 +218,7 @@ def _encode_headers(heads):
 def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
     pos = 0
     nruns, pos = _rv(tmpl, pos)
-    flags, txts = [], []
+    flags, txts, widths = [], [], []
     for _ in range(nruns):
         f = tmpl[pos]
         pos += 1
@@ -210,6 +227,9 @@ def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
             L, pos = _rv(tmpl, pos)
             txts.append(tmpl[pos:pos + L])
             pos += L
+        else:
+            w, pos = _rv(tmpl, pos)
+            widths.append(w)
     ddata = _ctx_decode(dblob)
     dpos = 0
     ints = []
@@ -241,7 +261,7 @@ def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
         ti = ii = 0
         for f in flags:
             if f:
-                parts.append(str(prev[ii]).encode())
+                parts.append(_padint(prev[ii], widths[ii]).encode())
                 ii += 1
             else:
                 parts.append(txts[ti])

@@ -98,3 +98,19 @@ def test_strand_heavy_reads():
         recs.append((b"@g.%d" % i, s.encode(), b"+", b"F" * 60))
     data = _fq(recs)
     assert fastqcodec.decode(fastqcodec.encode(data)) == data
+
+
+def test_leading_zero_integer_runs():
+    recs = [(b"@DRR063436.1 1/1", b"ACGTACGT", b"+", b"FFFFFFFF"),
+            (b"@DRR063436.2 2/1", b"TTTTGGGG", b"+", b"GGGGGGGG"),
+            (b"@DRR063436.103 103/1", b"CCCCAAAA", b"+", b"HHHHHHHH")]
+    data = _fq(recs)
+    assert fastqcodec.decode(fastqcodec.encode(data)) == data
+
+
+def test_width_deviating_header_becomes_exception():
+    recs = [(b"@r01", b"ACGT", b"+", b"FFFF"),
+            (b"@r02", b"TGCA", b"+", b"FFFF"),
+            (b"@r7", b"GGGG", b"+", b"FFFF")]   # width deviation -> verbatim exception
+    data = _fq(recs)
+    assert fastqcodec.decode(fastqcodec.encode(data)) == data
