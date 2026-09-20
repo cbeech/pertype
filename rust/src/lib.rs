@@ -36,6 +36,7 @@ pub mod ctxcoder;
 pub mod floatcodec;
 pub mod imagecodec;
 pub mod predictors;
+pub mod fastqcodec;
 pub mod qualcodec;
 pub mod textcodec;
 pub mod transform;

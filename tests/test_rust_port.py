@@ -36,7 +36,7 @@ def lib():
     lb = ctypes.CDLL(_SO[0])
     for name in ("ctx_encode", "calic_codec_encode", "columnar_encode", "columnar_decode",
                  "float_encode", "float_decode", "csv_encode", "csv_decode",
-                 "qual_encode", "qual_decode",
+                 "qual_encode", "qual_decode", "fastq_encode", "fastq_decode",
                  "auto_encode", "auto_decode", "image_encode", "image_decode",
                  "volume_encode", "volume_decode", "audio_encode", "audio_decode",
                  "video_encode", "video_decode", "text_compress", "text_decompress",
@@ -373,3 +373,53 @@ def test_auto_cross_compatible(lib):
     rb = _col(lib, lib.auto_encode, data)
     assert auto.auto_decompress(rb) == data                               # py decodes rust .az
     assert _col(lib, lib.auto_decode, auto.auto_compress(data)) == data   # rust decodes py .az
+
+
+def test_fastqcodec_byte_identical(lib):
+    # whole-file FQS1: headers template+delta, RC-oriented 2-bit seqs under
+    # LZMA2, qualcodec payload — rust must match the Python assembly byte for byte
+    from pertype import fastqcodec
+    rng = np.random.default_rng(11)
+    genome = "".join("ACGT"[i] for i in rng.integers(0, 4, 4000))
+    comp = str.maketrans("ACGT", "TGCA")
+    recs = []
+    for i in range(80):
+        st = int(rng.integers(0, len(genome) - 80))
+        s = genome[st:st + 60]
+        if rng.random() < 0.5:
+            s = s.translate(comp)[::-1]
+        if i % 17 == 0:
+            s = s[:5] + "N" + s[6:]
+        q = bytes(rng.integers(35, 74, 60).astype(np.uint8).tolist())
+        recs.append(b"@INST.1.%d %d:N:0:AC" % (i + 1, i + 1))
+        recs += [s.encode(), b"+", q]
+    recs[4 * 30] = b"@ODD header with no template fit"   # -> exception path
+    data = b"\n".join(recs) + b"\n"
+    qflat = b"".join(recs[3::4])
+    lens = [len(q) for q in recs[3::4]]
+    qp = qualcodec._encode_payload_py(qflat, lens)
+    py_blob = fastqcodec.encode(data)
+
+    db = np.frombuffer(data, np.uint8)
+    qb = np.frombuffer(qp, np.uint8)
+    out = (ctypes.c_uint8 * (len(py_blob) + 1024))()
+    n = lib.fastq_encode(db.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(data),
+                         qb.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(qp),
+                         out, len(out))
+    assert n >= 0
+    rust_blob = bytes(out[:n])
+    assert rust_blob == py_blob                                   # byte-identical
+    assert fastqcodec.decode(rust_blob) == data                   # py decodes rust
+
+    qf = np.frombuffer(qflat, np.uint8)
+    dout = (ctypes.c_uint8 * (len(data) + 64))()
+    m = lib.fastq_decode(db.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(rust_blob),
+                         qf.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(qflat),
+                         dout, len(dout))
+    # note: decode input must be the rust blob, not the original data
+    m = lib.fastq_decode(np.frombuffer(rust_blob, np.uint8).ctypes.data_as(
+                             ctypes.POINTER(ctypes.c_uint8)), len(rust_blob),
+                         qf.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), len(qflat),
+                         dout, len(dout))
+    assert m >= 0
+    assert bytes(dout[:m]) == data                                # rust decodes exactly
