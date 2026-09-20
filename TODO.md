@@ -415,8 +415,9 @@ Fits structured / numeric data; useless on already-compressed / encrypted / nois
 > Sentinel-2 multispectral +48% vs GeoTIFF-DEFLATE; depth/disparity +23% vs PNG (+10% vs WebP-LL).
 > **Ruled out:** Neuropixels ephys (cross-channel lever disconfirmed). **Down-ranked:**
 > microscopy/4D-STEM (noisy/float real data). Former next leads — all tested 2026-09-12:
-> FASTQ quality ⚠️ (qualcodec shipped, +13.5% vs zstd-19 on quality bytes; fqzcomp −41% on
-> whole file); CAN-bus ⚠️→see the opportunities doc (multi-MB logs overturn the small-sample
+> FASTQ ✅ (whole-file `fastqcodec` shipped 2026-09-13: **6.174× beats fqzcomp default
+> 5.976× AND best-mode `-s9 -b` 6.138×**, byte-exact where fqzcomp's default Q0 rewrite is
+> not; quality codec +13.5% vs zstd-19); CAN-bus ⚠️→see the opportunities doc (multi-MB logs overturn the small-sample
 > +18% — mixed-ID interleave defeats per-column Δ unless ID-grouped); mass-spec ⚠️ (profile
 > m/z +35%/+83% float64/float32 vs zlib, centroided no-win → three-way routing); MRI
 > k-space ❌ (ruled out, mantissa-limited ~1.9× floor).

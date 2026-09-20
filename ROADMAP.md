@@ -16,9 +16,11 @@ green in gitea run 543, HANDOFF refreshed, both remotes in policy).
 A 2026-09-12 session amended D1 with the user's explicit authorization to ship one new pertype
 feature — the FASTQ quality-stream codec `pertype.qualcodec` (C1, `fe06ae2`) — and ran the
 measure-first solidifications C2a/C2b (`cd4b71d`, `3046faa`, `4fe2059`, verdicts `9312799`):
-**qualcodec +13.5% vs zstd-19 on quality bytes but −41% vs the fqzcomp specialist whole-file**
-(sequence stored verbatim — a FASTQ *sequence* model is the known follow-up, **deferred, needs a
-further D1 amendment**); **CAN-bus +55% vs gzip on the 989k-frame HCRL log after ID-grouping,
+**qualcodec +13.5% vs zstd-19 on quality bytes**; the whole-file gap to fqzcomp was closed the
+next day under D1b by `pertype.fastqcodec` (FQS1: template+delta headers, RC-oriented 2-bit
+sequences under LZMA2, qualcodec qualities — byte-identical Python/C/Rust): **6.174× vs fqzcomp
+default 5.976× (+3.3%) and best-mode `-s9 -b` 6.138× (+0.6%)**, byte-exact where fqzcomp's
+default Q0 rewrite is not; **CAN-bus +55% vs gzip on the 989k-frame HCRL log after ID-grouping,
 conditional on that layout** (time-ordered mixed-ID loses); **mass-spec float32 amplifies the
 profile-m/z win (+83% vs zlib) but centroided m/z is a no-win** (route profile→columnar,
 centroided→shuffle, intensity→xz). The sweep backlog is now genuinely exhausted: every Tier-1/2
@@ -65,7 +67,7 @@ roadmap review: **libpfc gets the real work, pertype gets bug-fix attention only
 | D7 | Merging **publishes libpfc on public GitHub** — confirmed as intended. |
 | D8 | **Merge first; do all of M1 after.** Recorded as a deliberate choice: this publishes `flight/README.md` while it still asserts a containment property measured false (see M1 risk note). |
 | D1a | **D1 amended 2026-09-12 (user decision):** one new pertype feature authorized — the FASTQ quality-stream codec `pertype.qualcodec` (shipped `fe06ae2`). The FASTQ *sequence*-model follow-up (closes the whole-file gap to fqzcomp) is **not** authorized and stays deferred pending a further amendment. |
-| D1b | **D1 amended again 2026-09-13 (user decision):** the FASTQ *sequence*-model follow-up is now authorized — measure-first, ship only if it beats fqzcomp whole-file (byte-exact), else record a ruled-out verdict. |
+| D1b | **D1 amended again 2026-09-13 (user decision):** the FASTQ *sequence*-model follow-up is authorized — measure-first, ship only if it beats fqzcomp whole-file (byte-exact). **Discharged same day:** shipped as `pertype.fastqcodec`, 6.174× vs fqzcomp 5.976× default / 6.138× best-mode. |
 
 ---
 

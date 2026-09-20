@@ -137,8 +137,9 @@ data** — compress once, store for years, read occasionally — plus **constrai
 telemetry**. Each use case below is anchored to a measured result in the table above.
 
 - **Scientific data archives** — petabyte-scale repositories where lossless is mandatory and
-  data is cold: cryo-EM (EMPIAR, **+30%** vs zstd), genomics FASTQ quality (ENA/SRA, **+13.5%**
-  vs zstd-19 with the shipped `qualcodec`), neurophysiology (DANDI/EEG, **+25%** vs EDF/gzip). A 25–50% cut on a PB
+  data is cold: cryo-EM (EMPIAR, **+30%** vs zstd), genomics FASTQ (ENA/SRA, **6.17× whole-file
+  with the shipped `fastqcodec` — beats the fqzcomp specialist on its default AND best modes**),
+  neurophysiology (DANDI/EEG, **+25%** vs EDF/gzip). A 25–50% cut on a PB
   archive is real storage + egress savings; slow compression is fine for write-once data.
 - **Earth observation** — Sentinel-2 / Landsat, **+48%** vs GeoTIFF-DEFLATE. Both ground
   archives (Copernicus/USGS hold exabytes) and bandwidth-constrained satellite downlink.
