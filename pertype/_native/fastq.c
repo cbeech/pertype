@@ -611,17 +611,22 @@ long fastq_encode(const uint8_t *data, long dlen, const uint8_t *qp, long qplen,
         pos = 4;
         for (int i = 7; i >= 0; i--) out[pos++] = (uint8_t)((uint64_t)nrec >> (8 * i));
         out[pos++] = (uint8_t)trailing;
-        const uint8_t *secraw[1 + FQ_MAX_RUNS + 3];
-        long secn[1 + FQ_MAX_RUNS + 3];
-        secraw[0] = tmpl; secn[0] = tpos;
+        /* the template section is stored RAW; every later section is a
+         * ctxblob (mirrors the Python assembly order) */
+        fq_wv(out, &pos, (uint64_t)tpos);
+        if (pos + tpos > cap) goto oom;
+        memcpy(out + pos, tmpl, (size_t)tpos);
+        pos += tpos;
+        const uint8_t *secraw[FQ_MAX_RUNS + 3];
+        long secn[FQ_MAX_RUNS + 3];
         for (int c = 0; c < ncols; c++) {
-            secraw[1 + c] = colraw + (size_t)c * colstride;
-            secn[1 + c] = colpos[c];
+            secraw[c] = colraw + (size_t)c * colstride;
+            secn[c] = colpos[c];
         }
-        secraw[1 + ncols] = lraw; secn[1 + ncols] = lpos;
-        secraw[2 + ncols] = bmp; secn[2 + ncols] = bpos;
-        secraw[3 + ncols] = npraw; secn[3 + ncols] = nppos;
-        for (int s2 = 0; s2 < 1 + ncols + 3; s2++) {
+        secraw[ncols] = lraw; secn[ncols] = lpos;
+        secraw[1 + ncols] = bmp; secn[1 + ncols] = bpos;
+        secraw[2 + ncols] = npraw; secn[2 + ncols] = nppos;
+        for (int s2 = 0; s2 < ncols + 3; s2++) {
             long ccap = secn[s2] * 2 + 4096;
             uint8_t *coded = malloc((size_t)ccap);
             if (!coded) goto oom;
