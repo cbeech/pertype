@@ -6,11 +6,11 @@ Self-contained lossless container for 4-line FASTQ records. Three streams,
 each coded to its own structure (the sweep's route-don't-unify lesson):
 
 - **Headers** — a run template (alternating text / integer runs parsed from
-  the first header) plus zigzag-varint deltas of each integer column, the
-  resulting byte stream order-1-context arithmetic coded. Headers whose text
-  runs deviate from the template are stored verbatim as exceptions. On
-  instrument-generated names the integer columns advance by near-constant
-  deltas, so this stream costs ~bits per record.
+  the first header, integer runs keeping their leading-zero widths), then one
+  ctxblob per integer column holding its first value plus per-record
+  zigzag-varint deltas. Instrument columns advance by near-constant deltas,
+  so each column costs ~bits per record. Headers whose runs deviate from the
+  template are stored verbatim as exceptions.
 - **Sequences** — per-read reverse-complement orientation (reads arrive from
   both strands; orienting each read against the k-mers seen so far makes
   cross-read LZ matches strand-independent, measured -6% on real ENA data),
@@ -190,9 +190,9 @@ def _encode_headers(heads):
             _wv(tmpl, len(iraws[ii]))
             ii += 1
     widths = [len(r) for r in iraws]
-    dstream = bytearray()
-    for v in ints:
-        _wv(dstream, v)
+    cols = [bytearray() for _ in ints]
+    for c, v in enumerate(ints):
+        _wv(cols[c], v)
     exc = bytearray()
     nexc = 0
     last_idx = 0
@@ -209,13 +209,14 @@ def _encode_headers(heads):
             _wv(exc, len(h))
             exc += h
             continue
-        for a, b in zip(i2, prev):
-            _wv(dstream, _zz(a - b))
+        for c, (a, b) in enumerate(zip(i2, prev)):
+            _wv(cols[c], _zz(a - b))
         prev = i2
-    return bytes(tmpl), _ctx_encode(bytes(dstream)), nexc, bytes(exc), len(ints)
+    col_blobs = [_ctx_encode(bytes(c)) for c in cols]
+    return bytes(tmpl), col_blobs, nexc, bytes(exc)
 
 
-def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
+def _decode_headers(tmpl, col_blobs, nexc, exc, nrec):
     pos = 0
     nruns, pos = _rv(tmpl, pos)
     flags, txts, widths = [], [], []
@@ -230,12 +231,18 @@ def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
         else:
             w, pos = _rv(tmpl, pos)
             widths.append(w)
-    ddata = _ctx_decode(dblob)
-    dpos = 0
-    ints = []
-    for _ in range(ncols):
-        v, dpos = _rv(ddata, dpos)
-        ints.append(v)
+    ncols = len(widths)
+    col_vals = []
+    for cb in col_blobs:
+        data = _ctx_decode(cb)
+        vals = []
+        dpos = 0
+        v, dpos = _rv(data, dpos)
+        vals.append(v)
+        while dpos < len(data):
+            m, dpos = _rv(data, dpos)
+            vals.append(vals[-1] + _unzz(m))
+        col_vals.append(vals)
     exc_map = {}
     epos = 0
     last = 0
@@ -246,17 +253,13 @@ def _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec):
         exc_map[last] = exc[epos:epos + L]
         epos += L
     heads = []
-    prev = ints
+    seq_idx = 0
     for idx in range(nrec):
         if idx in exc_map:
             heads.append(exc_map[idx])
             continue
-        if idx > 0:
-            nxt = []
-            for b in prev:
-                m, dpos = _rv(ddata, dpos)
-                nxt.append(b + _unzz(m))
-            prev = nxt
+        prev = [col_vals[c][seq_idx] for c in range(ncols)]
+        seq_idx += 1
         parts = []
         ti = ii = 0
         for f in flags:
@@ -389,25 +392,6 @@ def _undeltas(data):
     return out
 
 
-def _zz_deltas(vals):
-    out = bytearray()
-    _wv(out, vals[0])
-    for a, b in zip(vals[1:], vals[:-1]):
-        _wv(out, _zz(a - b))
-    return bytes(out)
-
-
-def _zz_undeltas(data, n):
-    out = []
-    pos = 0
-    v, pos = _rv(data, pos)
-    out.append(v)
-    for _ in range(n - 1):
-        m, pos = _rv(data, pos)
-        out.append(out[-1] + _unzz(m))
-    return out
-
-
 # -------------------------------------------------------------------- codec --
 def encode(fastq):
     """Encode raw FASTQ bytes to the self-contained FQS1 blob."""
@@ -428,8 +412,11 @@ def encode(fastq):
     if qflat and (min(qflat) < 33 or max(qflat) > 126):
         raise ValueError("quality byte outside 33..126")
 
-    tmpl, dblob, nexc, exc, ncols = _encode_headers(heads)
-    lblob = _ctx_encode(_zz_deltas(lengths))
+    tmpl, col_blobs, nexc, exc = _encode_headers(heads)
+    lraw = bytearray()
+    for L in lengths:
+        _wv(lraw, L)
+    lblob = _ctx_encode(bytes(lraw))
     if all(p == b"+" for p in plus):
         pflag, pblob = 0, b""
     else:
@@ -453,7 +440,7 @@ def encode(fastq):
     out = bytearray(MAGIC)
     out += nrec.to_bytes(8, "big")
     out.append(1 if trailing else 0)
-    for section in (tmpl, dblob, lblob, bblob, npblob):
+    for section in [tmpl] + col_blobs + [lblob, bblob, npblob]:
         _wv(out, len(section))
         out += section
     _wv(out, nexc)
@@ -467,7 +454,6 @@ def encode(fastq):
     out += lz
     _wv(out, len(qpayload))
     out += qpayload
-    _wv(out, ncols)
     return bytes(out)
 
 
@@ -478,12 +464,33 @@ def decode(blob):
     nrec = int.from_bytes(blob[4:12], "big")
     trailing = blob[12]
     pos = 13
+    L, pos = _rv(blob, pos)
+    tmpl = blob[pos:pos + L]
+    pos += L
+    # derive the integer-column count by walking the template
+    _p = 0
+    _nr, _p = _rv(tmpl, _p)
+    ncols = 0
+    for _ in range(_nr):
+        f = tmpl[_p]
+        _p += 1
+        if f:
+            ncols += 1
+            _, _p = _rv(tmpl, _p)
+        else:
+            _L, _p = _rv(tmpl, _p)
+            _p += _L
+    col_blobs = []
+    for _ in range(ncols):
+        L, pos = _rv(blob, pos)
+        col_blobs.append(blob[pos:pos + L])
+        pos += L
     sections = []
-    for _ in range(5):
+    for _ in range(3):
         L, pos = _rv(blob, pos)
         sections.append(blob[pos:pos + L])
         pos += L
-    tmpl, dblob, lblob, bblob, npblob = sections
+    lblob, bblob, npblob = sections
     nexc, pos = _rv(blob, pos)
     epos = pos
     for _ in range(nexc):
@@ -514,12 +521,16 @@ def decode(blob):
     L, pos = _rv(blob, pos)
     qpayload = blob[pos:pos + L]
     pos += L
-    ncols, pos = _rv(blob, pos)
     if pos != len(blob):
         raise ValueError("trailing bytes after FQS1 payload")
 
-    lengths = _zz_undeltas(_ctx_decode(lblob), nrec)
-    heads = _decode_headers(tmpl, dblob, nexc, exc, ncols, nrec)
+    ldata = _ctx_decode(lblob)
+    lengths = []
+    lpos = 0
+    for _ in range(nrec):
+        L2, lpos = _rv(ldata, lpos)
+        lengths.append(L2)
+    heads = _decode_headers(tmpl, col_blobs, nexc, exc, nrec)
     bmp = _ctx_decode(bblob)
     npos = _undeltas(_ctx_decode(npblob))
     seqs = _unorient(_unpack(packed, nbase, lengths, npos), bmp, nrec)
