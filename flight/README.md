@@ -106,4 +106,4 @@ build dependency on the Python/Rust code in the root; a normal C99 toolchain (`m
 
 **No separate tagged release exists yet.** `libpfc` is published as part of the public `master`
 branch so integrators can review and build it now; a dedicated release artifact is deferred until a
-concrete flight opportunity justifies the packaging work (see `ROADMAP.md` M2).
+concrete flight opportunity justifies the packaging work.
