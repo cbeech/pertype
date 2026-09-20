@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install cppcheck
-        run: apt-get update && apt-get install -y cppcheck
+        run: if [ "$(id -u)" -ne 0 ]; then SUDO=sudo; else SUDO=; fi; $SUDO apt-get update && $SUDO apt-get install -y cppcheck
       - name: CI workflow drift — the .github and .gitea copies must stay structurally identical
         working-directory: flight
         run: make wfsync
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools + gcovr
-        run: apt-get update && apt-get install -y build-essential gcovr
+        run: if [ "$(id -u)" -ne 0 ]; then SUDO=sudo; else SUDO=; fi; $SUDO apt-get update && $SUDO apt-get install -y build-essential gcovr
       - name: make coverage — line + branch, gated on the measured baseline
         working-directory: flight
         run: make coverage
@@ -164,7 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools + PowerPC cross toolchain
-        run: apt-get update && apt-get install -y build-essential python3 gcc-powerpc-linux-gnu
+        run: if [ "$(id -u)" -ne 0 ]; then SUDO=sudo; else SUDO=; fi; $SUDO apt-get update && $SUDO apt-get install -y build-essential python3 gcc-powerpc-linux-gnu
       - name: Worst-case stack depth — host ABI
         working-directory: flight
         run: make stackdepth
@@ -190,11 +190,12 @@ jobs:
       # locally: without it, cbmc --32 fails with "bits/libc-header-start.h: No such file").
       - name: Install cbmc (checksum-verified upstream release .deb) + 32-bit libc headers
         run: |
-          apt-get update && apt-get install -y gcc-multilib
+          if [ "$(id -u)" -ne 0 ]; then SUDO=sudo; else SUDO=; fi
+          $SUDO apt-get update && $SUDO apt-get install -y gcc-multilib
           curl -fsSL -o /tmp/cbmc.deb \
             https://github.com/diffblue/cbmc/releases/download/cbmc-6.10.0/ubuntu-22.04-cbmc-6.10.0-Linux.deb
           echo "75421d8037afe2ff6bde4e31c054218b7eb88e19aa7590435ec44b57a39347bd  /tmp/cbmc.deb" | sha256sum -c -
-          dpkg -i /tmp/cbmc.deb || apt-get install -y -f
+          $SUDO dpkg -i /tmp/cbmc.deb || $SUDO apt-get install -y -f
       - name: CBMC proof — pfc_block_read never reads OOB (32-bit size_t model)
         working-directory: flight
         run: make cbmc
@@ -281,7 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install the PowerPC (big-endian) cross toolchain + qemu-user
-        run: apt-get update && apt-get install -y gcc-powerpc-linux-gnu qemu-user
+        run: if [ "$(id -u)" -ne 0 ]; then SUDO=sudo; else SUDO=; fi; $SUDO apt-get update && $SUDO apt-get install -y gcc-powerpc-linux-gnu qemu-user
       - name: Native (little-endian) reference run of emit.c, then clean
         working-directory: flight
         run: |
