@@ -7,4 +7,4 @@ A trained dictionary + LZ + arithmetic-coding pipeline for text/byte data, plus 
 codecs for images, audio, video, scientific arrays, columnar records and delimited tables.
 See ``pertype.cli`` (the ``pertype`` command) and ``README.md``.
 """
-__version__ = "0.1.0"
+__version__ = "0.1.2"
