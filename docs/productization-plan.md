@@ -1,10 +1,11 @@
 # Productization plan
 
 Turning the validated research codec into an installable, runnable tool. Three phases —
-**all shipped**, and **`v0.1.0` is released and published on all three channels**:
-- GitHub binaries — `github.com/cbeech/pertype/releases/tag/v0.1.0`
-- PyPI — `pip install pertype` (https://pypi.org/project/pertype/0.1.0/)
-- crates.io — `cargo install pertype` (https://crates.io/crates/pertype/0.1.0)
+**all shipped**. Releases through **`v0.1.2`** are published on all three channels
+(v0.1.2 = first release uniformly shipping fastqcodec):
+- GitHub binaries — `github.com/cbeech/pertype/releases/tag/v0.1.2`
+- PyPI — `pip install pertype` (https://pypi.org/project/pertype/0.1.2/)
+- crates.io — `cargo install pertype` (https://crates.io/crates/pertype/0.1.2)
 
 The install story is complete on every channel.
 

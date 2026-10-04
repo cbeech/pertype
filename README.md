@@ -1055,9 +1055,9 @@ The honest open frontier (full list in `TODO.md`):
   `zlib`-using codecs cross-decodable both directions), with `rayon` block parallelism. It
   ships a standalone `pertype` binary (no Python), cross-compatible with the Python tool.
   Verified in `tests/test_rust_port.py`; speed in `scripts/rust_vs_python*benchmark.py`
-  (decode 1–10×, training 11–115×). See `rust/README.md`. **`v0.1.0` is released and published
+  (decode 1–10×, training 11–115×). See `rust/README.md`. **`v0.1.2` is released and published
   on all three channels:** per-OS binaries on the
-  [GitHub Release](https://github.com/cbeech/pertype/releases/tag/v0.1.0),
+  [GitHub Release](https://github.com/cbeech/pertype/releases/tag/v0.1.2),
   [`pip install pertype`](https://pypi.org/project/pertype/) (PyPI), and
   [`cargo install pertype`](https://crates.io/crates/pertype) (crates.io).
 

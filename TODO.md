@@ -209,6 +209,9 @@ training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
       (`github.com/cbeech/pertype/releases/tag/v0.1.0`), PyPI (`pip install pertype`), crates.io
       (`cargo install pertype`). Release pipeline verified end-to-end; `publish.yml` adds OIDC
       Trusted Publishing for tokenless future releases. Install story complete on every channel.
+      **Latest: `v0.1.2`** (2026-09-13) on all three channels — first release uniformly shipping
+      fastqcodec (FQS1). Note: `publish.yml` does not auto-fire from token-created releases —
+      publish PyPI/crates.io manually or dispatch the workflow by hand.
 
 ---
 
