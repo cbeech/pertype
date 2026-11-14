@@ -3,8 +3,8 @@ name: release
 # Build the standalone `pertype` CLI for Linux / Windows / macOS and attach the binaries to a
 # GitHub Release. Triggered by pushing a version tag (e.g. `v0.1.0`), or run manually.
 #
-# The binary is pure-Rust (flate2/rayon, no system libs), so each runner builds natively for its
-# own OS — no cross toolchains. Linux uses musl for a fully-static, distro-independent binary.
+# Each runner builds natively for its OS except aarch64 Linux, which uses a musl cross-container
+# so lzma-sys gets its matching C toolchain. Both Linux targets are fully static.
 
 on:
   push:
@@ -23,6 +23,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl, ext: "" }   # static, any distro
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl, ext: "" }   # static ARM64, cross-built
           - { os: windows-latest, target: x86_64-pc-windows-msvc,    ext: ".exe" }
           - { os: macos-latest,   target: x86_64-apple-darwin,       ext: "" }    # Intel Mac (cross-built on Apple Silicon — macos-13 runners are scarce)
           - { os: macos-latest,   target: aarch64-apple-darwin,      ext: "" }    # Apple Silicon
@@ -30,16 +31,29 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         with:
           targets: ${{ matrix.target }}
 
       - name: Install musl tools
-        if: contains(matrix.target, 'linux-musl')
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
+      - name: Install cross for aarch64 musl
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
       - name: Build the pertype binary
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         working-directory: rust
         run: cargo build --release --target ${{ matrix.target }} --bin pertype
+
+      - name: Cross-build the aarch64 pertype binary
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        working-directory: rust
+        run: cross build --release --target aarch64-unknown-linux-musl --bin pertype
 
       - name: Package
         shell: bash

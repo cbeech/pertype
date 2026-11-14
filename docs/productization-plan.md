@@ -57,21 +57,24 @@ suffices. The text/image/audio/arithmetic core is the lowest-priority area for p
 ## Cross-platform distribution — wired
 
 The standalone `pertype` CLI ships as a single self-contained binary per OS, built by CI:
-- **`.github/workflows/release.yml`** — on a `v*` tag, a matrix builds the binary natively on
-  Linux / Windows / macOS runners and attaches the archives (+ SHA-256) to a GitHub Release.
-  Targets: `x86_64-unknown-linux-musl` (fully static, any distro), `x86_64-pc-windows-msvc`,
-  `x86_64-apple-darwin` (Intel), `aarch64-apple-darwin` (Apple Silicon). Pure-Rust deps
-  (flate2/rayon, no system libs) → no cross toolchains needed; verified locally as a static musl
-  build that round-trips byte-exact.
-- **`.github/workflows/ci.yml`** — build + test (Rust + Python, sans the slow parity suite) on
-  every push/PR, so a release tag is never the first build.
+- **`.github/workflows/release.yml`** — on a `v*` tag, a matrix builds the binaries and attaches
+  the archives (+ SHA-256) to a GitHub Release. Targets: `x86_64-unknown-linux-musl` and
+  `aarch64-unknown-linux-musl` (both fully static), `x86_64-pc-windows-msvc`,
+  `x86_64-apple-darwin` (Intel), `aarch64-apple-darwin` (Apple Silicon). ARM64 Linux uses a musl
+  cross-container so `lzma-sys` builds with its matching C toolchain; verified on Linux as a static
+  AArch64 build with an emulated lossless round-trip.
+- **`.github/workflows/ci.yml`** — build + test (Rust + Python, sans the slow parity suite) plus
+  the aarch64-musl cross-build and static-linkage check on every push/PR, so a release tag is never
+  the first build.
 - The binary covers `train`/`compress`/`decompress` + auto-routing (text/byte/CSV/columnar/
   telemetry — patent-clean, no video). The image/audio/video/scientific codecs stay in the
   Python `pip` package. Both install paths documented in the README.
 - **`.github/workflows/publish.yml`** — on the same `v*` tag, builds and publishes the Python
   sdist/wheel to PyPI and the crate to crates.io using OIDC Trusted Publishing (no stored registry
   tokens). It no longer waits for `release: published`: releases created with `GITHUB_TOKEN` do not
-  emit follow-on workflow events. Manual dispatch remains available as a fallback.
+  emit follow-on workflow events. Manual dispatch remains available as a fallback; its `verify_only`
+  input proves both registry authentication paths without uploading new artifacts (PyPI skips
+  existing files and Cargo uses `--dry-run`).
 - Remaining (optional, post-first-release): see "Deferred distribution items" below.
 
 ## Deferred distribution items
@@ -82,7 +85,6 @@ work until a concrete integrator or release justifies it):
 
 | Item | Why deferred |
 |------|--------------|
-| **aarch64-Linux target** | No hardware demand identified; the existing x86_64-linux-musl binary covers the likely server/CI users. Revisit if an ARM64 Linux user appears. |
 | **Homebrew tap / Scoop / winget manifests** | Package-manager manifests are nice-to-have, but `cargo install pertype`, `pip install pertype`, and the GitHub Release binary already cover the three main install paths. Revisit for `v0.2.0` if there is user demand. |
 | **`cargo binstall` metadata** | Depends on the above manifests being worth maintaining; defer with them. |
 | **Python wheels via `cibuildwheel`** | The sdist + wheel published to PyPI already install on all platforms; pre-built wheels would only speed up installs. Revisit if install-time compilation becomes a support burden. |

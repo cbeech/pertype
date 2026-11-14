@@ -20,6 +20,24 @@ jobs:
           cargo test --release
           cargo build --release --bin pertype
 
+  rust-aarch64:
+    name: Rust (aarch64 musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Cross-build the aarch64 binary (including lzma-sys)
+        working-directory: rust
+        run: cross build --release --target aarch64-unknown-linux-musl --bin pertype
+      - name: Verify architecture and static linkage
+        run: |
+          bin=rust/target/aarch64-unknown-linux-musl/release/pertype
+          file "$bin"
+          readelf -h "$bin" | grep AArch64
+          ! readelf -l "$bin" | grep INTERP
+
   python:
     runs-on: ubuntu-latest
     steps:
