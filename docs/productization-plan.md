@@ -22,7 +22,8 @@ The install story is complete on every channel.
   `COMMERCIAL.md` (the paid offer + contact), `CLA.md` (contributor relicensing grant); SPDX
   `license` set in `pyproject.toml` (PEP 639) and `Cargo.toml`, SPDX headers on the entry
   points, README licensing section. Open-source for everyone; closed/SaaS use buys a commercial
-  license. Publishing is now unblocked (PyPI/crates.io accounts + the publish run remain).
+  license. Publishing is live on PyPI and crates.io; future version tags use the automated
+  Trusted Publishing workflow (subject to the registry-side publisher configuration).
 
 ## Phase 2 — Unified UX ✅
 - The routing brain already exists (`detect.identify`) and `auto` already covers most
@@ -67,6 +68,10 @@ The standalone `pertype` CLI ships as a single self-contained binary per OS, bui
 - The binary covers `train`/`compress`/`decompress` + auto-routing (text/byte/CSV/columnar/
   telemetry — patent-clean, no video). The image/audio/video/scientific codecs stay in the
   Python `pip` package. Both install paths documented in the README.
+- **`.github/workflows/publish.yml`** — on the same `v*` tag, builds and publishes the Python
+  sdist/wheel to PyPI and the crate to crates.io using OIDC Trusted Publishing (no stored registry
+  tokens). It no longer waits for `release: published`: releases created with `GITHUB_TOKEN` do not
+  emit follow-on workflow events. Manual dispatch remains available as a fallback.
 - Remaining (optional, post-first-release): see "Deferred distribution items" below.
 
 ## Deferred distribution items
@@ -81,9 +86,8 @@ work until a concrete integrator or release justifies it):
 | **Homebrew tap / Scoop / winget manifests** | Package-manager manifests are nice-to-have, but `cargo install pertype`, `pip install pertype`, and the GitHub Release binary already cover the three main install paths. Revisit for `v0.2.0` if there is user demand. |
 | **`cargo binstall` metadata** | Depends on the above manifests being worth maintaining; defer with them. |
 | **Python wheels via `cibuildwheel`** | The sdist + wheel published to PyPI already install on all platforms; pre-built wheels would only speed up installs. Revisit if install-time compilation becomes a support burden. |
-| **Trusted Publishing one-time registry config** | Requires manual configuration on the PyPI and crates.io accounts (the repo-side workflow is already in `.github/workflows/publish.yml`). This is blocked on the account owner completing the registry-side setup, not on code changes. |
 
-The first three channels (GitHub Release, PyPI, crates.io) are live and sufficient for `v0.1.0`.
+The three channels (GitHub Release, PyPI, crates.io) are live and sufficient for the current release.
 
 ## Done since this plan
 - **`v0.1.0` GitHub Release cut** (2026-06-22) — the release matrix produced all four per-OS
@@ -94,7 +98,11 @@ The first three channels (GitHub Release, PyPI, crates.io) are live and sufficie
 - **Published to PyPI + crates.io** (2026-06-22) — `pip install pertype` and
   `cargo install pertype` are live. Added `.github/workflows/publish.yml` (OIDC Trusted
   Publishing) for tokenless future releases. The install story is complete on all three channels.
+- **Automatic registry publishing wired** (2026-09-13) — `publish.yml` now starts directly from
+  `v*` tag pushes, in parallel with the binary release workflow. The account-private publisher
+  settings must still be configured at both registries; the next version tag is the end-to-end test.
 
 ## Still out of scope (external / the user's call)
-- A docs site. The FTO search above (an attorney's job). Wiring up Trusted Publishing requires a
-  one-time "pending publisher" config on each registry site (the user's accounts).
+- A docs site. The FTO search above (an attorney's job). Trusted Publishing requires the one-time
+  publisher configuration on each registry site (the user's accounts); its presence is not publicly
+  verifiable from this repository.

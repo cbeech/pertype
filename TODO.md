@@ -210,8 +210,9 @@ training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
       (`cargo install pertype`). Release pipeline verified end-to-end; `publish.yml` adds OIDC
       Trusted Publishing for tokenless future releases. Install story complete on every channel.
       **Latest: `v0.1.2`** (2026-09-13) on all three channels — first release uniformly shipping
-      fastqcodec (FQS1). Note: `publish.yml` does not auto-fire from token-created releases —
-      publish PyPI/crates.io manually or dispatch the workflow by hand.
+      fastqcodec (FQS1). `publish.yml` now triggers directly on `v*` tags alongside `release.yml`;
+      future tags run both registry publishes automatically (registry-side OIDC configuration is
+      external and must be present). Manual dispatch and token-based publishing remain fallbacks.
 
 ---
 

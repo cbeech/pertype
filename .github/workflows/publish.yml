@@ -10,11 +10,13 @@ name: publish
 #   crates.io: https://crates.io/  → crate (or pending) settings → Trusted Publishing →
 #                add GitHub  owner=cbeech  repo=pertype  workflow=publish.yml
 #
-# Trigger: when a GitHub Release is published, or manually via the Actions tab.
+# Trigger: pushing a v* tag, or manually via the Actions tab. Trigger directly on the tag:
+# release.yml creates its GitHub Release with GITHUB_TOKEN, and token-created release events
+# do not start another workflow.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
