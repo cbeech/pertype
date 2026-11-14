@@ -213,9 +213,10 @@ training 11–115×; see `scripts/rust_vs_python*benchmark.py`).
       fastqcodec (FQS1). `publish.yml` now triggers directly on `v*` tags alongside `release.yml`;
       future tags run both registry publishes automatically (registry-side OIDC configuration is
       external and must be present). Manual dispatch and token-based publishing remain fallbacks;
-      `verify_only` checks both registries without uploading new artifacts. The release matrix also
-      includes static `aarch64-unknown-linux-musl`, cross-built with `lzma-sys` and round-trip
-      verified under ARM emulation.
+      `verify_only` checks both registries without uploading new artifacts. Verification run
+      43653587940 found both account-side publisher entries missing; add them before automatic
+      publishing can succeed. The release matrix also includes static `aarch64-unknown-linux-musl`,
+      cross-built with `lzma-sys` and round-trip verified under ARM emulation.
 
 ---
 

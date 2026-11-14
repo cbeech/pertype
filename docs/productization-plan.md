@@ -101,10 +101,18 @@ The three channels (GitHub Release, PyPI, crates.io) are live and sufficient for
   `cargo install pertype` are live. Added `.github/workflows/publish.yml` (OIDC Trusted
   Publishing) for tokenless future releases. The install story is complete on all three channels.
 - **Automatic registry publishing wired** (2026-09-13) — `publish.yml` now starts directly from
-  `v*` tag pushes, in parallel with the binary release workflow. The account-private publisher
-  settings must still be configured at both registries; the next version tag is the end-to-end test.
+  `v*` tag pushes, in parallel with the binary release workflow. Manual `verify_only` run
+  43653587940 then proved that **neither registry has its publisher entry yet**: PyPI returned
+  `invalid-publisher` and crates.io returned `No Trusted Publishing config found`. No files were
+  uploaded. Add the account-side entries below, then rerun `verify_only`.
+- **aarch64 Linux wired and verified** (2026-11-14) — `cross` builds a static ARM64 musl binary
+  including `lzma-sys`; an emulated compress/decompress round-trip passed on `ai`, and the hosted
+  `Rust (aarch64 musl)` CI job is green on `6dcb1d1`.
 
 ## Still out of scope (external / the user's call)
-- A docs site. The FTO search above (an attorney's job). Trusted Publishing requires the one-time
-  publisher configuration on each registry site (the user's accounts); its presence is not publicly
-  verifiable from this repository.
+- A docs site. The FTO search above (an attorney's job).
+- **PyPI Trusted Publisher:** owner `cbeech`, repository `pertype`, workflow `publish.yml`,
+  environment `pypi` (https://pypi.org/manage/account/publishing/).
+- **crates.io Trusted Publishing:** GitHub owner `cbeech`, repository `pertype`, workflow
+  `publish.yml` (crate Settings → Trusted Publishing). The registry APIs and settings pages require
+  the account owner; the failed verification run is the precise diagnostic, not an upload failure.
